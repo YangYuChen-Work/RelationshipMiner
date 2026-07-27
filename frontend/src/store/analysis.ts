@@ -34,6 +34,13 @@ interface AnalysisState {
 
   // ── 图谱数据 ──
   graph: GraphData | null;
+  taskId: string | null;
+
+  // ── 图谱交互状态 ──
+  hoveredNodeId: string | null;
+  selectedNodeId: string | null;
+  detailPanelNodeId: string | null;
+  confidenceThreshold: number;
 
   // ── 操作：元数据 ──
   loadTables: () => Promise<void>;
@@ -45,6 +52,13 @@ interface AnalysisState {
   // ── 操作：分析 ──
   startAnalysis: () => Promise<void>;
   resetAnalysis: () => void;
+
+  // ── 操作：图谱交互 ──
+  setHoveredNode: (id: string | null) => void;
+  setSelectedNode: (id: string | null) => void;
+  openDetailPanel: (id: string) => void;
+  closeDetailPanel: () => void;
+  setConfidenceThreshold: (value: number) => void;
 }
 
 /** 不可变更新 selectedTables Map：clone → 修改指定表 → set。 */
@@ -73,6 +87,11 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   progressMessage: "",
   progressValue: 0,
   graph: null,
+  taskId: null,
+  hoveredNodeId: null,
+  selectedNodeId: null,
+  detailPanelNodeId: null,
+  confidenceThreshold: 0,
 
   // ── 元数据操作 ──
 
@@ -194,6 +213,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
     try {
       const taskId = await submitAnalysis(tableList);
+      set({ taskId });
 
       createAnalysisSocket(
         taskId,
@@ -218,7 +238,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
             });
           }
         },
-        (err) => {
+        (_err) => {
           set({
             phase: "error",
             errorMessage: "WebSocket 连接失败，请检查后端服务是否运行",
@@ -250,6 +270,33 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       progressMessage: "",
       progressValue: 0,
       graph: null,
+      taskId: null,
+      hoveredNodeId: null,
+      selectedNodeId: null,
+      detailPanelNodeId: null,
+      confidenceThreshold: 0,
     });
+  },
+
+  // ── 图谱交互操作 ──
+
+  setHoveredNode: (id) => {
+    set({ hoveredNodeId: id });
+  },
+
+  setSelectedNode: (id) => {
+    set({ selectedNodeId: id });
+  },
+
+  openDetailPanel: (id) => {
+    set({ detailPanelNodeId: id });
+  },
+
+  closeDetailPanel: () => {
+    set({ detailPanelNodeId: null });
+  },
+
+  setConfidenceThreshold: (value) => {
+    set({ confidenceThreshold: value });
   },
 }));
