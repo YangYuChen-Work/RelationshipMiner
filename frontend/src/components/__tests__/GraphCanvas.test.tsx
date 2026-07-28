@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import * as d3 from "d3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { GraphData } from "../../api/analysis";
 import { useAnalysisStore } from "../../store/analysis";
@@ -113,6 +114,59 @@ describe("GraphCanvas", () => {
     expect(container.querySelector(".edge-label text")).toHaveTextContent("owns");
   });
 
+  it("keeps interactive cards exposed and reports their pressed state", () => {
+    const { container } = render(<GraphCanvas />);
+    const canvas = screen.getByRole("group", {
+      name: "3 个实体，2 条可见关系",
+    });
+    const account = container.querySelector<SVGGElement>(
+      '[data-node-id="a"]',
+    )!;
+
+    expect(canvas).toContainElement(account);
+    expect(account).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(account);
+
+    expect(account).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("exposes complete long identities in accessible names and tooltips", () => {
+    const firstId = "entity-with-a-shared-long-prefix-0000000000000001";
+    const secondId = "entity-with-a-shared-long-prefix-0000000000000002";
+    setGraph({
+      nodes: [
+        {
+          id: firstId,
+          source_table: "entities",
+          class_name: null,
+          field_values: {},
+          degree: 0,
+        },
+        {
+          id: secondId,
+          source_table: "entities",
+          class_name: null,
+          field_values: {},
+          degree: 0,
+        },
+      ],
+      edges: [],
+    });
+    const { container } = render(<GraphCanvas />);
+    const firstCard = container.querySelector<SVGGElement>(
+      `[data-node-id="${firstId}"]`,
+    )!;
+    const secondCard = container.querySelector<SVGGElement>(
+      `[data-node-id="${secondId}"]`,
+    )!;
+
+    expect(firstCard.getAttribute("aria-label")).toContain(firstId);
+    expect(secondCard.getAttribute("aria-label")).toContain(secondId);
+    expect(firstCard.querySelector("title")).toHaveTextContent(firstId);
+    expect(secondCard.querySelector("title")).toHaveTextContent(secondId);
+  });
+
   it("selects cards from the keyboard and clears selection on canvas click", () => {
     const { container } = render(<GraphCanvas />);
     const invoice = container.querySelector<SVGGElement>(
@@ -197,5 +251,26 @@ describe("GraphCanvas", () => {
       useAnalysisStore.getState().requestRelayout();
     });
     expect(firstCard).not.toHaveAttribute("transform", "translate(999,999)");
+  });
+
+  it("resets D3 zoom state when the graph is replaced", () => {
+    const { container } = render(<GraphCanvas />);
+    const svg = container.querySelector<SVGSVGElement>("svg")!;
+    const priorTransform = d3.zoomIdentity.translate(120, 80).scale(1.6);
+
+    (svg as SVGSVGElement & { __zoom: d3.ZoomTransform }).__zoom =
+      priorTransform;
+    container
+      .querySelector<SVGGElement>(".zoom-group")!
+      .setAttribute("transform", priorTransform.toString());
+
+    act(() => {
+      setGraph(disconnectedGraph);
+    });
+
+    expect(d3.zoomTransform(svg)).toEqual(d3.zoomIdentity);
+    expect(
+      container.querySelector<SVGGElement>(".zoom-group"),
+    ).toHaveAttribute("transform", d3.zoomIdentity.toString());
   });
 });

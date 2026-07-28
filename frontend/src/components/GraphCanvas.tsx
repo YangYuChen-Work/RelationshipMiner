@@ -58,6 +58,13 @@ function nodeTitle(node: NodeData): string {
   return clipped(shortClassName(node.class_name) || node.id, 24);
 }
 
+function nodeAccessibleLabel(node: NodeData): string {
+  const identity = node.class_name
+    ? `${node.class_name}，ID ${node.id}`
+    : `ID ${node.id}`;
+  return `${identity}，来源 ${node.source_table}，${node.degree} 个关联`;
+}
+
 function edgeLabel(edge: Pick<EdgeData, "labels">): string {
   return clipped(edge.labels.join(" · ") || "关联", 28);
 }
@@ -141,6 +148,7 @@ export default function GraphCanvas() {
 
     const svg = d3.select(svgElement);
     svg.selectAll("*").remove();
+    svg.property("__zoom", d3.zoomIdentity);
 
     let { width, height } = canvasSize(container);
     svg
@@ -186,7 +194,10 @@ export default function GraphCanvas() {
       .attr("height", height)
       .attr("fill", "url(#graph-canvas-grid)");
 
-    const zoomGroup = svg.append("g").attr("class", "zoom-group");
+    const zoomGroup = svg
+      .append("g")
+      .attr("class", "zoom-group")
+      .attr("transform", d3.zoomIdentity.toString());
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.25, 2.5])
@@ -248,13 +259,11 @@ export default function GraphCanvas() {
       .attr("data-node-id", (node) => node.id)
       .attr("role", "button")
       .attr("tabindex", 0)
-      .attr(
-        "aria-label",
-        (node) =>
-          `${nodeTitle(node)}，来源 ${node.source_table}，${node.degree} 个关联`,
-      )
+      .attr("aria-label", nodeAccessibleLabel)
+      .attr("aria-pressed", "false")
       .attr("cursor", "pointer");
 
+    nodeElements.append("title").text(nodeAccessibleLabel);
     nodeElements
       .append("rect")
       .attr("class", "node-card")
@@ -530,6 +539,9 @@ export default function GraphCanvas() {
 
     svg
       .selectAll<SVGGElement, D3Node>("[data-node-id]")
+      .attr("aria-pressed", (node) =>
+        node.id === selectedNodeId ? "true" : "false",
+      )
       .attr("opacity", (node) =>
         !neighbors || neighbors.has(node.id) ? 1 : 0.18,
       )
@@ -634,7 +646,7 @@ export default function GraphCanvas() {
       <svg
         ref={svgRef}
         className="block h-full w-full bg-[#0a1622]"
-        role="img"
+        role="group"
         aria-label={`${graph.nodes.length} 个实体，${visibleEdgeCount} 条可见关系`}
       />
     </div>
