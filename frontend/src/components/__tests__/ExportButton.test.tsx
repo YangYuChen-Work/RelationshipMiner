@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import ExportButton from "../ExportButton";
 import { useAnalysisStore } from "../../store/analysis";
 
@@ -10,6 +10,7 @@ describe("ExportButton", () => {
       graph: null,
     });
     vi.restoreAllMocks();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   });
 
   it("renders disabled button when no taskId", () => {
@@ -40,21 +41,6 @@ describe("ExportButton", () => {
       .mockReturnValue("blob:test");
     const revokeObjectURLSpy = vi.spyOn(URL, "revokeObjectURL");
 
-    // Spy on anchor click via a real anchor element
-    let clickCalled = false;
-    const origCreateElement = document.createElement.bind(document);
-    vi.spyOn(document, "createElement").mockImplementation((tag, ...args) => {
-      const el = origCreateElement(tag, ...args);
-      if (tag === "a") {
-        const origClick = el.click.bind(el);
-        vi.spyOn(el, "click").mockImplementation(() => {
-          clickCalled = true;
-          origClick();
-        });
-      }
-      return el;
-    });
-
     render(<ExportButton />);
     const btn = screen.getByText("导出 JSON");
     fireEvent.click(btn);
@@ -65,7 +51,7 @@ describe("ExportButton", () => {
 
     expect(createObjectURLSpy).toHaveBeenCalledWith(mockBlob);
     expect(revokeObjectURLSpy).toHaveBeenCalledWith("blob:test");
-    expect(clickCalled).toBe(true);
+    expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1);
   });
 
   it("shows error message when export fails", async () => {
@@ -103,9 +89,11 @@ describe("ExportButton", () => {
       expect(screen.getByText("导出中...")).toBeInTheDocument();
     });
 
-    resolvePromise({
-      ok: true,
-      blob: () => Promise.resolve(new Blob(["{}"])),
-    } as Response);
+    await act(async () => {
+      resolvePromise({
+        ok: true,
+        blob: () => Promise.resolve(new Blob(["{}"])),
+      } as Response);
+    });
   });
 });

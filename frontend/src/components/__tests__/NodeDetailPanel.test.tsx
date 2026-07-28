@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import NodeDetailPanel from "../NodeDetailPanel";
 import { useAnalysisStore } from "../../store/analysis";
@@ -52,6 +52,16 @@ describe("NodeDetailPanel", () => {
     expect(screen.getByText("2 个节点 · 1 条关系")).toBeInTheDocument();
   });
 
+  it("falls back to the graph overview when the selected node is absent", () => {
+    // This fails if a stale selection keeps the inspector stuck in an empty detail state.
+    useAnalysisStore.setState({ selectedNodeId: "removed-node" });
+
+    render(<NodeDetailPanel />);
+
+    expect(screen.getByText("图谱概览")).toBeInTheDocument();
+    expect(screen.queryByText("节点概览")).not.toBeInTheDocument();
+  });
+
   it("renders the selected node's complete details and direct relationship metadata", () => {
     useAnalysisStore.setState({ selectedNodeId: "users|1" });
 
@@ -78,6 +88,28 @@ describe("NodeDetailPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /orders\|1/ }));
 
     expect(useAnalysisStore.getState().selectedNodeId).toBe("orders|1");
+  });
+
+  it("renders repeated raw relationships without duplicate React keys", () => {
+    // This fails if raw edges that share endpoints and labels use the same list key.
+    useAnalysisStore.setState({
+      selectedNodeId: "users|1",
+      graph: {
+        ...mockGraph,
+        edges: [
+          ...mockGraph.edges,
+          { ...mockGraph.edges[0], confidence: 0.75 },
+        ],
+      },
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(<NodeDetailPanel />);
+
+    expect(screen.getAllByRole("button", { name: /orders\|1/ })).toHaveLength(2);
+    expect(
+      consoleError.mock.calls.some((call) => call.join(" ").includes("same key")),
+    ).toBe(false);
   });
 
   it("uses the selected-node state for the mobile close action", () => {

@@ -113,6 +113,31 @@ describe("GraphCanvas", () => {
     expect(container.querySelector(".edge-label text")).toHaveTextContent("owns");
   });
 
+  it("scopes SVG definition IDs to each canvas instance", () => {
+    // This fails if two canvases share grid or marker IDs and one SVG resolves URLs from the other.
+    const { container } = render(
+      <>
+        <GraphCanvas />
+        <GraphCanvas />
+      </>,
+    );
+
+    const gridIds = [
+      ...container.querySelectorAll<SVGPatternElement>("pattern[id]"),
+    ].map((pattern) => pattern.id);
+    const markerIds = [
+      ...container.querySelectorAll<SVGMarkerElement>("marker[id]"),
+    ].map((marker) => marker.id);
+
+    expect(new Set(gridIds).size).toBe(2);
+    expect(new Set(markerIds).size).toBe(4);
+    expect(
+      [...container.querySelectorAll<SVGLineElement>("[data-edge-id]")].every(
+        (edge) => markerIds.includes(edge.getAttribute("marker-end")?.slice(5, -1) ?? ""),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps interactive cards exposed and reports their pressed state", () => {
     const { container } = render(<GraphCanvas />);
     const canvas = screen.getByRole("group", {

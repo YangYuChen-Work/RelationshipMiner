@@ -136,8 +136,10 @@ export default function NodeDetailPanel() {
               <p className="mt-3 text-sm text-slate-400">没有直接关系。</p>
             ) : (
               <ul className="mt-3 space-y-2">
-                {relations.map(({ edge, node: relatedNode, nodeId }) => (
-                  <li key={`${edge.source}-${edge.target}-${edge.labels.join("-")}`}>
+                {relations.map(({ edge, node: relatedNode, nodeId }, index) => (
+                  <li
+                    key={`${edge.source}-${edge.target}-${edge.labels.join("-")}-${edge.confidence}-${index}`}
+                  >
                     <button
                       type="button"
                       onClick={() => setSelectedNode(nodeId)}

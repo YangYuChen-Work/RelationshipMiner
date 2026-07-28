@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import * as d3 from "d3";
 import type { EdgeData, NodeData } from "../api/analysis";
 import { useAnalysisStore } from "../store/analysis";
@@ -100,6 +100,10 @@ function arrangeGrid(nodes: D3Node[], width: number) {
 }
 
 export default function GraphCanvas() {
+  const instanceId = useId().replace(/:/g, "");
+  const gridId = `graph-canvas-grid-${instanceId}`;
+  const arrowId = `graph-arrow-${instanceId}`;
+  const accentArrowId = `graph-arrow-accent-${instanceId}`;
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<d3.Simulation<D3Node, D3Edge> | null>(null);
@@ -157,7 +161,7 @@ export default function GraphCanvas() {
     const defs = svg.append("defs");
     const pattern = defs
       .append("pattern")
-      .attr("id", "graph-canvas-grid")
+      .attr("id", gridId)
       .attr("width", 24)
       .attr("height", 24)
       .attr("patternUnits", "userSpaceOnUse");
@@ -183,15 +187,15 @@ export default function GraphCanvas() {
         .attr("d", "M0,-4L10,0L0,4Z")
         .attr("fill", fill);
     };
-    makeMarker("graph-arrow", BASE_EDGE);
-    makeMarker("graph-arrow-accent", ACCENT);
+    makeMarker(arrowId, BASE_EDGE);
+    makeMarker(accentArrowId, ACCENT);
 
     const background = svg
       .append("rect")
       .attr("class", "canvas-grid")
       .attr("width", width)
       .attr("height", height)
-      .attr("fill", "url(#graph-canvas-grid)");
+      .attr("fill", `url(#${gridId})`);
 
     const zoomGroup = svg
       .append("g")
@@ -216,7 +220,7 @@ export default function GraphCanvas() {
       })
       .attr("stroke", BASE_EDGE)
       .attr("stroke-width", 1.25)
-      .attr("marker-end", "url(#graph-arrow)");
+      .attr("marker-end", `url(#${arrowId})`);
 
     const labelElements = zoomGroup
       .append("g")
@@ -518,7 +522,10 @@ export default function GraphCanvas() {
       relayoutRef.current = () => {};
     };
   }, [
+    accentArrowId,
+    arrowId,
     graph,
+    gridId,
     setHoveredNode,
     setSelectedNode,
   ]);
@@ -571,8 +578,8 @@ export default function GraphCanvas() {
           (endpointId(edge.source) === hoveredNodeId ||
             endpointId(edge.target) === hoveredNodeId);
         return emphasized
-          ? "url(#graph-arrow-accent)"
-          : "url(#graph-arrow)";
+          ? `url(#${accentArrowId})`
+          : `url(#${arrowId})`;
       });
 
     svg
@@ -584,7 +591,7 @@ export default function GraphCanvas() {
           ? 1
           : 0.08;
       });
-  }, [graph, hoveredNodeId, selectedNodeId]);
+  }, [accentArrowId, arrowId, graph, hoveredNodeId, selectedNodeId]);
 
   useEffect(() => {
     if (!svgRef.current) return;
