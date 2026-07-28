@@ -20,8 +20,11 @@ def list_tables(engine: Engine = Depends(get_engine)):
         raise HTTPException(
             status_code=500,
             detail={
-                "detail": f"数据库连接失败: {str(e)}",
-                "suggestion": "请检查 .env 文件中的数据库配置 (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME)",
+                "detail": "数据库连接失败，请检查 .env 文件中的数据库配置",
+                "suggestion": (
+                    "确认 DB_HOST、DB_PORT、DB_USER、DB_PASSWORD、DB_NAME 配置正确，"
+                    "并确保 MySQL 服务正在运行"
+                ),
             },
         )
 
@@ -68,7 +71,7 @@ def list_fields(table_name: str, engine: Engine = Depends(get_engine)):
         raise HTTPException(
             status_code=500,
             detail={
-                "detail": f"数据库查询失败: {str(e)}",
-                "suggestion": "请确认数据库连接正常且表名正确",
+                "detail": "数据库查询失败，请确认数据库连接正常",
+                "suggestion": "检查 MySQL 服务是否正常运行，以及网络连接是否畅通",
             },
         )

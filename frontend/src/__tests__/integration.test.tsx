@@ -395,4 +395,205 @@ describe("Integration: full user flow", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("displays DB connection error when tables fetch fails", async () => {
+    // Mock fetch to simulate database connection failure
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url === "/api/tables") {
+        return {
+          ok: false,
+          status: 500,
+          json: () =>
+            Promise.resolve({
+              detail: {
+                detail: "数据库连接失败，请检查 .env 文件中的数据库配置",
+                suggestion: "确认 DB_HOST、DB_PORT、DB_USER、DB_PASSWORD、DB_NAME 配置正确",
+              },
+            }),
+        } as Response;
+      }
+
+      return { ok: false, json: () => Promise.resolve({}) } as Response;
+    });
+
+    render(<App />);
+
+    // TableSelector shows inline error state with "加载失败" title
+    await waitFor(() => {
+      expect(screen.getByText("加载失败")).toBeInTheDocument();
+    });
+
+    // Should show the error message
+    expect(
+      screen.getByText(/数据库连接失败/)
+    ).toBeInTheDocument();
+
+    // Should show retry button (TableSelector's inline retry)
+    expect(screen.getByText("重试")).toBeInTheDocument();
+
+    vi.restoreAllMocks();
+  });
+
+  it("shows empty state when analysis completes with no edges", async () => {
+    setupFetchMock();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+
+    const graphWithNoEdges = {
+      nodes: [
+        {
+          id: "users|1",
+          source_table: "users",
+          class_name: "com.example.User",
+          field_values: { id: 1, name: "Alice" },
+          degree: 0,
+        },
+        {
+          id: "users|2",
+          source_table: "users",
+          class_name: "com.example.Admin",
+          field_values: { id: 2, name: "Bob" },
+          degree: 0,
+        },
+      ],
+      edges: [],
+    };
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("users")).toBeInTheDocument();
+    });
+
+    // Select users table and run analysis
+    fireEvent.click(screen.getByText("users").closest("label")!);
+    await waitFor(() => {
+      expect(screen.getByText("email")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("开始分析"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
+    });
+
+    const ws = FakeWebSocket.instances[0];
+    ws.sendMessage({
+      phase: 5,
+      message: "分析完成",
+      progress: 1.0,
+      graph: graphWithNoEdges,
+    });
+
+    // Should still reach done phase
+    await waitFor(() => {
+      expect(screen.getByText("分析完成")).toBeInTheDocument();
+    });
+
+    // Should show empty state prompt
+    await waitFor(() => {
+      expect(
+        screen.getByText(/未发现任何关系/)
+      ).toBeInTheDocument();
+    });
+
+    // Should show node count (2 nodes, 0 edges)
+    expect(
+      screen.getByText(/0 条关系/)
+    ).toBeInTheDocument();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("displays timeout error when analysis times out via WebSocket", async () => {
+    setupFetchMock();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("users")).toBeInTheDocument();
+    });
+
+    // Select users table and run analysis
+    fireEvent.click(screen.getByText("users").closest("label")!);
+    await waitFor(() => {
+      expect(screen.getByText("email")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("开始分析"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
+    });
+
+    const ws = FakeWebSocket.instances[0];
+    ws.sendMessage({
+      phase: -1,
+      message: "分析超时（180 秒），建议减少表数量或行数后重试",
+      progress: 0,
+      error: "分析超时（180 秒），建议减少表数量或行数后重试",
+    });
+
+    // Should show error banner
+    await waitFor(() => {
+      expect(screen.getByText("分析失败")).toBeInTheDocument();
+    });
+
+    // Should show timeout message (may appear in both App banner and TableSelector error state)
+    const timeoutMatches = screen.getAllByText(/分析超时/);
+    expect(timeoutMatches.length).toBeGreaterThanOrEqual(1);
+    const suggestionMatches = screen.getAllByText(/建议减少表数量或行数后重试/);
+    expect(suggestionMatches.length).toBeGreaterThanOrEqual(1);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("handles WebSocket onError connection failure", async () => {
+    setupFetchMock();
+
+    // Override WebSocket to simulate immediate error
+    class ErrorWebSocket {
+      url: string;
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      onclose: (() => void) | null = null;
+
+      constructor(url: string) {
+        this.url = url;
+        // Fire error immediately after construction
+        setTimeout(() => {
+          if (this.onerror) this.onerror(new Event("error"));
+          if (this.onclose) this.onclose();
+        }, 0);
+      }
+    }
+    vi.stubGlobal("WebSocket", ErrorWebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("users")).toBeInTheDocument();
+    });
+
+    // Select users table and run analysis
+    fireEvent.click(screen.getByText("users").closest("label")!);
+    await waitFor(() => {
+      expect(screen.getByText("email")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("开始分析"));
+
+    // Should show connection error
+    await waitFor(() => {
+      expect(screen.getByText("分析失败")).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getAllByText(/WebSocket 连接失败/).length
+    ).toBeGreaterThanOrEqual(1);
+
+    vi.unstubAllGlobals();
+  });
 });

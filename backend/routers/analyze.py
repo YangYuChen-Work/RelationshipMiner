@@ -1,4 +1,4 @@
-"""分析任务 API — 提交分析 + WebSocket 进度推送。"""
+"""分析任务 API — 提交分析 + WebSocket 进度推送 + 导出。"""
 
 import uuid
 from fastapi import APIRouter, Depends, WebSocket, HTTPException
@@ -106,11 +106,13 @@ async def analyze_progress(
                 {"phase": phase, "message": message, "progress": progress}
             )
 
-        graph = await run_analysis_pipeline(
+        result = await run_analysis_pipeline(
             engine=engine,
             tables=tables,
             on_progress=send_progress,
         )
+
+        graph = result["graph"]
 
         # 发送最终完成消息（含图谱数据）
         await ws.send_json(
@@ -124,6 +126,9 @@ async def analyze_progress(
 
         task["status"] = "done"
         task["graph"] = graph
+        task["records"] = result["records"]
+        task["ai_decisions"] = result["ai_decisions"]
+        task["class_name_fields"] = result["class_name_fields"]
 
     except AnalysisTimeoutError as e:
         task["status"] = "error"
@@ -159,3 +164,50 @@ async def analyze_progress(
             await ws.close()
         except Exception:
             pass
+
+
+# ── 导出端点 ──────────────────────────────────────────────────
+
+
+@router.get("/export/{task_id}")
+def export_analysis_snapshot(task_id: str):
+    """返回分析结果的完整 JSON 快照。
+
+    包含：
+    - graph: 图谱数据（节点 + 边）
+    - raw_data: 所有字段原始值（按表分组）
+    - config: 分析配置（表/字段选择 + AI 决策）
+    - layout: 布局坐标（由前端 D3 填充，后端返回空列表）
+    """
+    task = _task_registry.get(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "detail": "任务不存在或已过期",
+                "suggestion": "请重新运行分析后再导出",
+            },
+        )
+
+    if task["status"] != "done":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "detail": "分析尚未完成，无法导出",
+                "suggestion": f"当前状态: {task['status']}，请等待分析完成后再导出",
+            },
+        )
+
+    # AI 决策已在 pipeline 中通过 asdict() 转换为 dict，直接使用
+    ai_decisions_serializable = task.get("ai_decisions", [])
+
+    return {
+        "graph": task.get("graph"),
+        "raw_data": task.get("records", {}),
+        "config": {
+            "tables": task.get("request", {}).get("tables", []),
+            "ai_decisions": ai_decisions_serializable,
+            "class_name_fields": task.get("class_name_fields", {}),
+        },
+        "layout": [],
+    }

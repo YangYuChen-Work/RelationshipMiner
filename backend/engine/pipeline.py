@@ -62,7 +62,12 @@ async def run_analysis_pipeline(
         timeout_seconds: 分析超时秒数，默认 180（3 分钟）。
 
     Returns:
-        包含 nodes 和 edges 的图谱字典。
+        {
+            "graph": {nodes, edges} — 图谱数据,
+            "records": {table_name: [row_dict]} — 原始数据,
+            "ai_decisions": [FieldMatchDecision] — AI 字段匹配决策,
+            "class_name_fields": {table_name: str|None} — class_name 字段映射,
+        }
 
     Raises:
         AnalysisTimeoutError: 分析超时。
@@ -162,7 +167,7 @@ async def run_analysis_pipeline(
         ai_decisions = []
         await progress(
             3,
-            "AI 服务暂不可用，跳过语义分析",
+            "AI 服务暂不可用，请稍后重试",
             0.40,
         )
 
@@ -197,4 +202,9 @@ async def run_analysis_pipeline(
 
     await progress(5, "图谱生成完成", 1.0)
 
-    return graph
+    return {
+        "graph": graph,
+        "records": records,
+        "ai_decisions": ai_decisions,
+        "class_name_fields": class_name_fields,
+    }

@@ -96,10 +96,14 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   // ── 元数据操作 ──
 
   loadTables: async () => {
-    set({ tablesLoading: true, errorMessage: null });
+    const { tables, tablesLoading } = get();
+    // 避免重复加载：表已加载或正在加载时跳过
+    if (tables.length > 0 || tablesLoading) return;
+
+    set({ tablesLoading: true });
     try {
-      const tables = await fetchTables();
-      set({ tables, tablesLoading: false });
+      const result = await fetchTables();
+      set({ tables: result, tablesLoading: false, errorMessage: null });
     } catch (e: any) {
       set({
         errorMessage: e.message || "无法加载表列表",
