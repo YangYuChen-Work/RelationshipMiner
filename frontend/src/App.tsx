@@ -1,6 +1,4 @@
-import TableSelector from "./components/TableSelector";
-import FieldSelector from "./components/FieldSelector";
-import AnalysisLauncher from "./components/AnalysisLauncher";
+import SelectionWorkspace from "./components/SelectionWorkspace";
 import ProgressIndicator from "./components/ProgressIndicator";
 import GraphCanvas from "./components/GraphCanvas";
 import NodeDetailPanel from "./components/NodeDetailPanel";
@@ -28,15 +26,7 @@ function App() {
         {(phase === "select" || phase === "error") && (
           <>
             <section className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-              <TableSelector />
-            </section>
-
-            <section className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-              <FieldSelector />
-            </section>
-
-            <section className="flex items-center justify-between">
-              <AnalysisLauncher />
+              <SelectionWorkspace />
             </section>
           </>
         )}

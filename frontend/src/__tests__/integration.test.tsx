@@ -135,7 +135,9 @@ describe("Integration: full user flow", () => {
       errorMessage: null,
       tables: [],
       tablesLoading: false,
+      tablesError: null,
       selectedTables: new Map(),
+      tableErrors: new Map(),
       maxTables: 10,
       currentPhase: 0,
       progressMessage: "",
@@ -354,8 +356,38 @@ describe("Integration: full user flow", () => {
     await waitFor(() => {
       expect(screen.getByText("分析失败")).toBeInTheDocument();
     });
+    expect(
+      screen.getByRole("checkbox", { name: "选择表 users" })
+    ).toBeInTheDocument();
 
     vi.unstubAllGlobals();
+  });
+
+  it("disables unselected tables when the workspace has reached its limit", () => {
+    // This fails if the workspace does not derive the disabled state from all ten selections.
+    const selectedTables = new Map(
+      Array.from({ length: 10 }, (_, index) => [
+        `table_${index}`,
+        {
+          name: `table_${index}`,
+          columns: MOCK_COLUMNS.columns,
+          selectedFields: new Set(["class_name"]),
+        },
+      ])
+    );
+    useAnalysisStore.setState({
+      tables: [{ name: "overflow" }],
+      tablesLoading: false,
+      tablesError: null,
+      selectedTables,
+      maxTables: 10,
+    });
+
+    render(<App />);
+
+    expect(
+      screen.getByRole("checkbox", { name: "选择表 overflow" })
+    ).toBeDisabled();
   });
 
   it("resets to select phase when '开始新分析' is clicked", async () => {
@@ -397,7 +429,7 @@ describe("Integration: full user flow", () => {
 
     // Should go back to select phase
     await waitFor(() => {
-      expect(screen.getByText("选择数据表")).toBeInTheDocument();
+      expect(screen.getByText("选择数据表与字段")).toBeInTheDocument();
     });
 
     vi.unstubAllGlobals();

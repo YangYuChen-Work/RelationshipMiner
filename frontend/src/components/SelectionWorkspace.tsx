@@ -1,0 +1,76 @@
+import { useEffect } from "react";
+import AnalysisLauncher from "./AnalysisLauncher";
+import DatabaseTableAccordion from "./DatabaseTableAccordion";
+import { useAnalysisStore } from "../store/analysis";
+
+export default function SelectionWorkspace() {
+  const tables = useAnalysisStore((s) => s.tables);
+  const tablesLoading = useAnalysisStore((s) => s.tablesLoading);
+  const tablesError = useAnalysisStore((s) => s.tablesError);
+  const selectedTables = useAnalysisStore((s) => s.selectedTables);
+  const maxTables = useAnalysisStore((s) => s.maxTables);
+  const loadTables = useAnalysisStore((s) => s.loadTables);
+
+  useEffect(() => {
+    loadTables();
+  }, [loadTables]);
+
+  const selectedCount = selectedTables.size;
+
+  return (
+    <section className="space-y-4" aria-label="数据表与字段选择">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">选择数据表与字段</h2>
+          <p className="mt-1 text-sm text-gray-500">展开表后可精确选择用于关系分析的字段。</p>
+        </div>
+        <span className="rounded-full bg-blue-100 px-2.5 py-1 text-sm font-medium text-blue-800">
+          {selectedCount} / {maxTables} 表
+        </span>
+      </div>
+
+      {tablesError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+          <p className="font-medium">加载失败</p>
+          <p className="mt-1 text-sm">{tablesError}</p>
+          <button type="button" onClick={loadTables} className="mt-2 text-sm underline">
+            重试
+          </button>
+        </div>
+      )}
+
+      {tablesLoading && (
+        <div className="space-y-2" aria-label="正在加载数据表">
+          <div className="h-14 animate-pulse rounded-xl bg-gray-100" />
+          <div className="h-14 animate-pulse rounded-xl bg-gray-100" />
+          <div className="h-14 animate-pulse rounded-xl bg-gray-100" />
+        </div>
+      )}
+
+      {!tablesLoading && !tablesError && tables.length === 0 && (
+        <p className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
+          未发现任何表，请检查数据库连接。
+        </p>
+      )}
+
+      {!tablesLoading && tables.length > 0 && (
+        <div className="space-y-2">
+          {tables.map((table) => (
+            <DatabaseTableAccordion
+              key={table.name}
+              tableName={table.name}
+              disabled={
+                !selectedTables.has(table.name) && selectedCount >= maxTables
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between border-t border-gray-200 pt-4">
+        <span className="text-xs text-gray-500">主键与类名字段会始终保留。</span>
+        <AnalysisLauncher />
+      </div>
+    </section>
+  );
+}

@@ -14,6 +14,10 @@ interface SelectedTable {
   selectedFields: Set<string>;
 }
 
+export function isRequiredColumn(column: ColumnInfo): boolean {
+  return column.is_class_name || column.is_primary_key;
+}
+
 interface AnalysisState {
   // ── 阶段 ──
   phase: Phase;
@@ -22,9 +26,11 @@ interface AnalysisState {
   // ── 数据库元数据 ──
   tables: TableInfo[];
   tablesLoading: boolean;
+  tablesError: string | null;
 
   // ── 用户选择 ──
   selectedTables: Map<string, SelectedTable>;
+  tableErrors: Map<string, string>;
   maxTables: number;
 
   // ── 分析进度 ──
@@ -81,7 +87,9 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   errorMessage: null,
   tables: [],
   tablesLoading: false,
+  tablesError: null,
   selectedTables: new Map(),
+  tableErrors: new Map(),
   maxTables: 10,
   currentPhase: 0,
   progressMessage: "",
@@ -103,10 +111,10 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     set({ tablesLoading: true });
     try {
       const result = await fetchTables();
-      set({ tables: result, tablesLoading: false, errorMessage: null });
+      set({ tables: result, tablesLoading: false, tablesError: null });
     } catch (e: any) {
       set({
-        errorMessage: e.message || "无法加载表列表",
+        tablesError: e.message || "无法加载表列表",
         tablesLoading: false,
       });
     }
@@ -122,17 +130,26 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       if (selectedTables.size >= get().maxTables) return;
       try {
         const { columns } = await fetchTableColumns(tableName);
-        const classFields = columns.filter((c) => c.is_class_name);
-        const selectedFields = new Set(classFields.map((c) => c.name));
-        const next = new Map(selectedTables);
+        const requiredFields = columns.filter(isRequiredColumn);
+        const selectedFields = new Set(requiredFields.map((c) => c.name));
+        const currentSelectedTables = get().selectedTables;
+        if (currentSelectedTables.size >= get().maxTables) return;
+        const next = new Map(currentSelectedTables);
+        const tableErrors = new Map(get().tableErrors);
+        tableErrors.delete(tableName);
         next.set(tableName, {
           name: tableName,
           columns,
           selectedFields,
         });
-        set({ selectedTables: next });
+        set({ selectedTables: next, tableErrors });
       } catch (e: any) {
-        set({ errorMessage: e.message || `加载表 ${tableName} 字段失败` });
+        const tableErrors = new Map(get().tableErrors);
+        tableErrors.set(
+          tableName,
+          e.message || `加载表 ${tableName} 字段失败`
+        );
+        set({ tableErrors });
       }
     }
   },
@@ -143,7 +160,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     if (!entry) return;
 
     const col = entry.columns.find((c) => c.name === fieldName);
-    if (col?.is_class_name) return;
+    if (col && isRequiredColumn(col)) return;
 
     const next = patchSelectedTable(selectedTables, tableName, (e) => {
       const nextFields = new Set(e.selectedFields);
@@ -171,7 +188,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     const next = patchSelectedTable(selectedTables, tableName, (e) => ({
       ...e,
       selectedFields: new Set(
-        e.columns.filter((c) => c.is_class_name).map((c) => c.name)
+        e.columns.filter(isRequiredColumn).map((c) => c.name)
       ),
     }));
     set({ selectedTables: next });
@@ -189,21 +206,6 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     // ── 验证 ──
     if (tableList.length === 0) {
       set({ errorMessage: "请至少选择一张表" });
-      return;
-    }
-
-    // 验证每张表都有 class_name 字段
-    const missingClassNames = tableList.filter((t) => {
-      const entry = selectedTables.get(t.name);
-      if (!entry) return true;
-      return !entry.columns.some(
-        (c) => c.is_class_name && t.fields.includes(c.name)
-      );
-    });
-    if (missingClassNames.length > 0) {
-      set({
-        errorMessage: `表 "${missingClassNames.map((t) => t.name).join("、")}" 缺少 class_name 字段，请确保每张表都包含 class_name 相关字段`,
-      });
       return;
     }
 
@@ -279,6 +281,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       selectedNodeId: null,
       detailPanelNodeId: null,
       confidenceThreshold: 0,
+      tableErrors: new Map(),
     });
   },
 
