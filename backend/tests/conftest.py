@@ -2,7 +2,16 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text, MetaData, Table, Column, Integer, String
+from sqlalchemy import (
+    create_engine,
+    text,
+    MetaData,
+    Table,
+    Column,
+    Integer,
+    String,
+    ForeignKey,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 
@@ -36,7 +45,7 @@ def create_test_engine() -> Engine:
         "orders",
         metadata,
         Column("id", Integer, primary_key=True),
-        Column("user_id", Integer),
+        Column("user_id", Integer, ForeignKey("users.id")),
         Column("amount", Integer),
         Column("className", String(500)),
     )

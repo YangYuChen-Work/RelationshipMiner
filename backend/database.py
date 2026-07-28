@@ -62,8 +62,15 @@ def get_table_columns(
     """
     inspector = inspect(engine)
     columns = inspector.get_columns(table_name)
-    pk_constraint = inspector.get_pk_constraint(table_name)
-    primary_key_columns = set(pk_constraint.get("constrained_columns") or [])
+
+    # 获取主键列名
+    try:
+        pk_constraint = inspector.get_pk_constraint(table_name)
+        primary_key_columns = set(
+            pk_constraint.get("constrained_columns") or []
+        )
+    except Exception:
+        primary_key_columns = set()
 
     # 约定命名识别 class_name 字段
     CLASS_NAME_CANDIDATES = {"class_name", "classname", "class"}

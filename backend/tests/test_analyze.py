@@ -41,6 +41,67 @@ class TestPostAnalyze:
 class TestAnalyzeWebSocket:
     """WebSocket /ws/analyze/{task_id} — 实时进度推送。"""
 
+    def test_analysis_adds_primary_key_when_not_selected(
+        self, client: TestClient
+    ):
+        """未勾选主键时仍应生成稳定、唯一的节点 ID。"""
+        payload = {
+            "tables": [
+                {"name": "users", "fields": ["name", "class_name"]},
+            ]
+        }
+        resp = client.post("/api/analyze", json=payload)
+        task_id = resp.json()["task_id"]
+
+        with client.websocket_connect(f"/api/ws/analyze/{task_id}") as ws:
+            messages = []
+            for _ in range(20):
+                data = ws.receive_json()
+                messages.append(data)
+                if data.get("error") or (
+                    data.get("phase") == 5 and "graph" in data
+                ):
+                    break
+
+        final = messages[-1]
+        assert "error" not in final
+        assert {node["id"] for node in final["graph"]["nodes"]} == {
+            "users:1",
+            "users:2",
+        }
+
+    def test_analysis_adds_foreign_key_when_not_selected(
+        self, client: TestClient
+    ):
+        """未勾选外键列时仍应发现数据库声明的外键关系。"""
+        payload = {
+            "tables": [
+                {"name": "users", "fields": ["name", "class_name"]},
+                {"name": "orders", "fields": ["amount", "className"]},
+            ]
+        }
+        resp = client.post("/api/analyze", json=payload)
+        task_id = resp.json()["task_id"]
+
+        with client.websocket_connect(f"/api/ws/analyze/{task_id}") as ws:
+            messages = []
+            for _ in range(20):
+                data = ws.receive_json()
+                messages.append(data)
+                if data.get("error") or (
+                    data.get("phase") == 5 and "graph" in data
+                ):
+                    break
+
+        final = messages[-1]
+        assert "error" not in final
+        fk_edges = [
+            edge
+            for edge in final["graph"]["edges"]
+            if "外键关联" in edge["labels"]
+        ]
+        assert len(fk_edges) == 2
+
     def test_progress_messages_in_order(self, client: TestClient):
         """应收到按阶段顺序的进度消息。"""
         # 1. 创建分析任务

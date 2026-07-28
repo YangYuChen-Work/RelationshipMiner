@@ -1,3 +1,5 @@
+# 兼容入口；uv 项目的依赖真源位于根目录 pyproject.toml。
+# 推荐在项目根目录运行 `uv sync`，解释器版本由 .python-version 固定为 3.12。
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 sqlalchemy==2.0.40

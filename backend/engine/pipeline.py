@@ -98,7 +98,14 @@ async def run_analysis_pipeline(
         fields = table_cfg["fields"]
         metadata = MetaData()
         table = Table(tname, metadata, autoload_with=engine)
-        columns = [table.c[f] for f in fields]
+        required_fields = list(fields)
+        for pk_column in table.primary_key.columns:
+            if pk_column.name not in required_fields:
+                required_fields.append(pk_column.name)
+        for foreign_key in table.foreign_keys:
+            if foreign_key.parent.name not in required_fields:
+                required_fields.append(foreign_key.parent.name)
+        columns = [table.c[f] for f in required_fields]
         from sqlalchemy import select as sa_select
 
         with engine.connect() as conn:
