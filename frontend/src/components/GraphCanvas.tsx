@@ -1,436 +1,642 @@
-/** GraphCanvas — D3 力导向图谱核心渲染组件。
-
-使用 D3 forceSimulation 渲染节点和边的 SVG。
-支持缩放、拖拽、悬停高亮（不限深度）、单击居中、双击详情面板。
-消费 Zustand store 中的图谱数据与交互状态。
-*/
-
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import * as d3 from "d3";
+import type { EdgeData, NodeData } from "../api/analysis";
 import { useAnalysisStore } from "../store/analysis";
-import type { NodeData, EdgeData } from "../api/analysis";
+import {
+  getDirectNeighborIds,
+  getRectBoundaryPoint,
+  getVisibleEdgeCount,
+} from "./graphGeometry";
+
+const CARD_WIDTH = 168;
+const CARD_HEIGHT = 64;
+const HALF_CARD_WIDTH = CARD_WIDTH / 2;
+const HALF_CARD_HEIGHT = CARD_HEIGHT / 2;
+const FALLBACK_WIDTH = 960;
+const FALLBACK_HEIGHT = 600;
+const GRID_COLUMN_GAP = 48;
+const GRID_ROW_GAP = 44;
+const GRID_PADDING = 56;
+const ACCENT = "#2dd4bf";
+const BASE_EDGE = "#52677a";
+const BASE_CARD_STROKE = "#354b60";
+
+const TABLE_COLORS = [
+  "#8795a6",
+  "#858aa3",
+  "#76969a",
+  "#938a9a",
+  "#7f91a0",
+  "#8a9186",
+];
 
 type D3Node = d3.SimulationNodeDatum & NodeData;
-type D3Edge = d3.SimulationLinkDatum<D3Node> & EdgeData;
 
-/** BFS 计算与给定节点连通的所有节点 ID（不限深度）。 */
-function getConnectedNodeIds(
-  nodeId: string,
-  edges: EdgeData[]
-): Set<string> {
-  const visited = new Set<string>([nodeId]);
-  const queue = [nodeId];
+type D3Edge = d3.SimulationLinkDatum<D3Node> &
+  Omit<EdgeData, "source" | "target"> & {
+    source: string | D3Node;
+    target: string | D3Node;
+  };
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    for (const edge of edges) {
-      const sourceId = typeof edge.source === "string" ? edge.source : (edge.source as { id: string }).id;
-      const targetId = typeof edge.target === "string" ? edge.target : (edge.target as { id: string }).id;
-
-      if (sourceId === current && !visited.has(targetId)) {
-        visited.add(targetId);
-        queue.push(targetId);
-      }
-      if (targetId === current && !visited.has(sourceId)) {
-        visited.add(sourceId);
-        queue.push(sourceId);
-      }
-    }
-  }
-
-  return visited;
+function endpointId(endpoint: string | D3Node): string {
+  return typeof endpoint === "string" ? endpoint : endpoint.id;
 }
 
-/** 截取 Java 全限定名的简短类名。 */
 function shortClassName(fullName: string | null): string {
   if (!fullName) return "";
   const parts = fullName.split(".");
-  return parts[parts.length - 1] || fullName;
+  return parts.at(-1) || fullName;
+}
+
+function clipped(value: string, maxLength: number): string {
+  return value.length > maxLength
+    ? `${value.slice(0, maxLength - 1)}…`
+    : value;
+}
+
+function nodeTitle(node: NodeData): string {
+  return clipped(shortClassName(node.class_name) || node.id, 24);
+}
+
+function edgeLabel(edge: Pick<EdgeData, "labels">): string {
+  return clipped(edge.labels.join(" · ") || "关联", 28);
+}
+
+function canvasSize(container: HTMLDivElement) {
+  const bounds = container.getBoundingClientRect();
+  return {
+    width: container.clientWidth || bounds.width || FALLBACK_WIDTH,
+    height: container.clientHeight || bounds.height || FALLBACK_HEIGHT,
+  };
+}
+
+function arrangeGrid(nodes: D3Node[], width: number) {
+  const columnPitch = CARD_WIDTH + GRID_COLUMN_GAP;
+  const rowPitch = CARD_HEIGHT + GRID_ROW_GAP;
+  const columns = Math.max(
+    1,
+    Math.floor((width - GRID_PADDING * 2 + GRID_COLUMN_GAP) / columnPitch),
+  );
+
+  nodes.forEach((node, index) => {
+    node.x =
+      GRID_PADDING + HALF_CARD_WIDTH + (index % columns) * columnPitch;
+    node.y =
+      GRID_PADDING +
+      HALF_CARD_HEIGHT +
+      Math.floor(index / columns) * rowPitch;
+    node.vx = 0;
+    node.vy = 0;
+    node.fx = null;
+    node.fy = null;
+  });
 }
 
 export default function GraphCanvas() {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<d3.Simulation<D3Node, D3Edge> | null>(null);
+  const fitViewRef = useRef<() => void>(() => {});
+  const relayoutRef = useRef<() => void>(() => {});
 
-  const graph = useAnalysisStore((s) => s.graph);
-  const hoveredNodeId = useAnalysisStore((s) => s.hoveredNodeId);
-  const selectedNodeId = useAnalysisStore((s) => s.selectedNodeId);
-  const confidenceThreshold = useAnalysisStore((s) => s.confidenceThreshold);
-  const setHoveredNode = useAnalysisStore((s) => s.setHoveredNode);
-  const setSelectedNode = useAnalysisStore((s) => s.setSelectedNode);
-  const openDetailPanel = useAnalysisStore((s) => s.openDetailPanel);
-
-  /** 悬停时计算连通分量并高亮。 */
-  const handleNodeHover = useCallback(
-    (nodeId: string | null) => {
-      setHoveredNode(nodeId);
-    },
-    [setHoveredNode]
+  const graph = useAnalysisStore((state) => state.graph);
+  const hoveredNodeId = useAnalysisStore((state) => state.hoveredNodeId);
+  const selectedNodeId = useAnalysisStore((state) => state.selectedNodeId);
+  const confidenceThreshold = useAnalysisStore(
+    (state) => state.confidenceThreshold,
   );
-
-  /** 单击节点居中。 */
-  const handleNodeClick = useCallback(
-    (nodeId: string) => {
-      setSelectedNode(nodeId);
-    },
-    [setSelectedNode]
+  const fitViewRequest = useAnalysisStore((state) => state.fitViewRequest);
+  const relayoutRequest = useAnalysisStore(
+    (state) => state.relayoutRequest,
   );
+  const setHoveredNode = useAnalysisStore((state) => state.setHoveredNode);
+  const setSelectedNode = useAnalysisStore((state) => state.setSelectedNode);
+  const openDetailPanel = useAnalysisStore((state) => state.openDetailPanel);
 
-  /** 双击节点打开详情面板。 */
-  const handleNodeDoubleClick = useCallback(
-    (nodeId: string) => {
-      openDetailPanel(nodeId);
-    },
-    [openDetailPanel]
-  );
+  const lastFitViewRequest = useRef(fitViewRequest);
+  const lastRelayoutRequest = useRef(relayoutRequest);
 
   useEffect(() => {
-    if (!graph || !svgRef.current || !containerRef.current) return;
-
-    const nodes: D3Node[] = graph.nodes.map((n) => ({ ...n }));
-    const edges: D3Edge[] = graph.edges.map((e) => ({
-      ...e,
-      source: typeof e.source === "string" ? e.source : e.source,
-      target: typeof e.target === "string" ? e.target : e.target,
-    }));
-
-    const svg = d3.select(svgRef.current);
+    const svgElement = svgRef.current;
     const container = containerRef.current;
-    const width = container.clientWidth;
-    const height = container.clientHeight || 600;
+    if (!graph || !svgElement || !container) return;
 
-    // 清空
+    const hasEdges = graph.edges.length > 0;
+    const nodes: D3Node[] = graph.nodes
+      .map((node) => ({ ...node }))
+      .sort((left, right) =>
+        hasEdges
+          ? 0
+          : left.source_table.localeCompare(right.source_table) ||
+            left.id.localeCompare(right.id),
+      );
+    const edges: D3Edge[] = graph.edges.map((edge) => ({ ...edge }));
+    const tableNames = [...new Set(nodes.map((node) => node.source_table))];
+    const tableColor = new Map(
+      tableNames.map((table, index) => [
+        table,
+        TABLE_COLORS[index % TABLE_COLORS.length],
+      ]),
+    );
+
+    const svg = d3.select(svgElement);
     svg.selectAll("*").remove();
 
-    // SVG 尺寸
-    svg.attr("width", width).attr("height", height);
+    let { width, height } = canvasSize(container);
+    svg
+      .attr("viewBox", `0 0 ${width} ${height}`)
+      .attr("preserveAspectRatio", "xMidYMid meet");
 
-    // 缩放行为
+    const defs = svg.append("defs");
+    const pattern = defs
+      .append("pattern")
+      .attr("id", "graph-canvas-grid")
+      .attr("width", 24)
+      .attr("height", 24)
+      .attr("patternUnits", "userSpaceOnUse");
+    pattern
+      .append("path")
+      .attr("d", "M 24 0 L 0 0 0 24")
+      .attr("fill", "none")
+      .attr("stroke", "#213243")
+      .attr("stroke-width", 0.7)
+      .attr("opacity", 0.42);
+
+    const makeMarker = (id: string, fill: string) => {
+      defs
+        .append("marker")
+        .attr("id", id)
+        .attr("viewBox", "0 -5 10 10")
+        .attr("refX", 10)
+        .attr("refY", 0)
+        .attr("markerWidth", 7)
+        .attr("markerHeight", 7)
+        .attr("orient", "auto")
+        .append("path")
+        .attr("d", "M0,-4L10,0L0,4Z")
+        .attr("fill", fill);
+    };
+    makeMarker("graph-arrow", BASE_EDGE);
+    makeMarker("graph-arrow-accent", ACCENT);
+
+    const background = svg
+      .append("rect")
+      .attr("class", "canvas-grid")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("fill", "url(#graph-canvas-grid)");
+
     const zoomGroup = svg.append("g").attr("class", "zoom-group");
-
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.1, 4])
+    const zoom = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.25, 2.5])
       .on("zoom", (event) => {
         zoomGroup.attr("transform", event.transform.toString());
       });
-
     svg.call(zoom);
 
-    // 表名颜色映射
-    const tableNames = [...new Set(nodes.map((n) => n.source_table))];
-    const colorScale = d3.scaleOrdinal(d3.schemeCategory10).domain(tableNames);
-
-    // 节点半径映射（基于度数）
-    const radiusScale = d3
-      .scaleSqrt()
-      .domain([0, d3.max(nodes, (d) => d.degree) || 1])
-      .range([5, 20]);
-
-    // 箭头标记定义
-    const defs = svg.append("defs");
-    defs
-      .append("marker")
-      .attr("id", "arrowhead")
-      .attr("viewBox", "0 -5 10 10")
-      .attr("refX", 22)
-      .attr("refY", 0)
-      .attr("markerWidth", 8)
-      .attr("markerHeight", 8)
-      .attr("orient", "auto")
-      .append("path")
-      .attr("d", "M0,-5L10,0L0,5")
-      .attr("fill", "#9ca3af");
-
-    // 边
-    const linkGroup = zoomGroup.append("g").attr("class", "links");
-
-    const linkElements = linkGroup
+    const linkElements = zoomGroup
+      .append("g")
+      .attr("class", "links")
       .selectAll<SVGLineElement, D3Edge>("line")
       .data(edges)
       .join("line")
-      .attr("stroke", "#d1d5db")
-      .attr("stroke-width", 1.5)
-      .attr("marker-end", "url(#arrowhead)");
+      .attr("data-edge-id", (edge) => {
+        return `${endpointId(edge.source)}--${endpointId(edge.target)}`;
+      })
+      .attr("stroke", BASE_EDGE)
+      .attr("stroke-width", 1.25)
+      .attr("marker-end", "url(#graph-arrow)");
 
-    // 边标签
-    const linkLabelGroup = zoomGroup.append("g").attr("class", "link-labels");
-
-    const linkLabelElements = linkLabelGroup
-      .selectAll<SVGTextElement, D3Edge>("text")
+    const labelElements = zoomGroup
+      .append("g")
+      .attr("class", "edge-labels")
+      .selectAll<SVGGElement, D3Edge>("g")
       .data(edges)
-      .join("text")
-      .text((d) => d.labels.join(" + "))
-      .attr("font-size", 9)
-      .attr("fill", "#6b7280")
-      .attr("text-anchor", "middle")
-      .attr("dy", -6);
-
-    // 节点组
-    const nodeGroup = zoomGroup.append("g").attr("class", "nodes");
-
-    const nodeElements = nodeGroup
-      .selectAll<SVGGElement, D3Node>("g")
-      .data(nodes)
       .join("g")
-      .attr("cursor", "pointer");
-
-    // 节点圆形
-    nodeElements
-      .append("circle")
-      .attr("r", (d) => radiusScale(d.degree))
-      .attr("fill", (d) => colorScale(d.source_table))
-      .attr("stroke", "#fff")
-      .attr("stroke-width", 1.5);
-
-    // 节点文本 (class_name 简短类名)
-    nodeElements
-      .append("text")
-      .text((d) => shortClassName(d.class_name))
-      .attr("text-anchor", "middle")
-      .attr("dy", "0.35em")
-      .attr("font-size", 8)
-      .attr("fill", "#fff")
+      .attr("class", "edge-label")
+      .attr("data-edge-label-id", (edge) => {
+        return `${endpointId(edge.source)}--${endpointId(edge.target)}`;
+      })
       .attr("pointer-events", "none");
 
-    // 拖拽行为
-    const drag = d3
-      .drag<SVGGElement, D3Node>()
-      .on("start", (event, d) => {
-        if (!event.active) simulationRef.current?.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      })
-      .on("drag", (event, d) => {
-        d.fx = event.x;
-        d.fy = event.y;
-      })
-      .on("end", (event, d) => {
-        if (!event.active) simulationRef.current?.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
-      });
+    labelElements
+      .append("rect")
+      .attr("x", (edge) => -(edgeLabel(edge).length * 5.8 + 14) / 2)
+      .attr("y", -10)
+      .attr("width", (edge) => edgeLabel(edge).length * 5.8 + 14)
+      .attr("height", 20)
+      .attr("rx", 5)
+      .attr("fill", "#0b1723")
+      .attr("stroke", "#314557")
+      .attr("stroke-width", 0.75);
+    labelElements
+      .append("text")
+      .text(edgeLabel)
+      .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "middle")
+      .attr("font-size", 10)
+      .attr("font-weight", 600)
+      .attr("fill", "#aab8c6");
 
-    nodeElements.call(drag);
-
-    // 交互事件
-    nodeElements
-      .on("mouseenter", (_event, d) => {
-        handleNodeHover(d.id);
-      })
-      .on("mouseleave", () => {
-        handleNodeHover(null);
-      })
-      .on("click", (_event, d) => {
-        handleNodeClick(d.id);
-      })
-      .on("dblclick", (_event, d) => {
-        handleNodeDoubleClick(d.id);
-      });
-
-    // 力导向模拟
-    const simulation = d3
-      .forceSimulation<D3Node>(nodes)
-      .force(
-        "link",
-        d3
-          .forceLink<D3Node, D3Edge>(edges)
-          .id((d) => d.id)
-          .distance(80)
+    const nodeElements = zoomGroup
+      .append("g")
+      .attr("class", "nodes")
+      .selectAll<SVGGElement, D3Node>("g")
+      .data(nodes, (node) => node.id)
+      .join("g")
+      .attr("data-node-id", (node) => node.id)
+      .attr("role", "button")
+      .attr("tabindex", 0)
+      .attr(
+        "aria-label",
+        (node) =>
+          `${nodeTitle(node)}，来源 ${node.source_table}，${node.degree} 个关联`,
       )
-      .force("charge", d3.forceManyBody().strength(-200))
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collide", d3.forceCollide().radius((d) => radiusScale((d as D3Node).degree) + 2));
+      .attr("cursor", "pointer");
 
-    simulationRef.current = simulation;
+    nodeElements
+      .append("rect")
+      .attr("class", "node-card")
+      .attr("x", -HALF_CARD_WIDTH)
+      .attr("y", -HALF_CARD_HEIGHT)
+      .attr("width", CARD_WIDTH)
+      .attr("height", CARD_HEIGHT)
+      .attr("rx", 9)
+      .attr("fill", "#142638")
+      .attr("stroke", BASE_CARD_STROKE)
+      .attr("stroke-width", 1.25);
+    nodeElements
+      .append("text")
+      .attr("class", "node-source")
+      .attr("x", -HALF_CARD_WIDTH + 13)
+      .attr("y", -14)
+      .attr("font-size", 9)
+      .attr("font-weight", 700)
+      .attr("letter-spacing", "0.09em")
+      .attr("fill", (node) => tableColor.get(node.source_table) || "#8795a6")
+      .text((node) => clipped(node.source_table, 25));
+    nodeElements
+      .append("text")
+      .attr("class", "node-title")
+      .attr("x", -HALF_CARD_WIDTH + 13)
+      .attr("y", 5)
+      .attr("font-size", 13)
+      .attr("font-weight", 650)
+      .attr("fill", "#eef5fa")
+      .text(nodeTitle);
+    nodeElements
+      .append("text")
+      .attr("class", "node-degree")
+      .attr("x", -HALF_CARD_WIDTH + 13)
+      .attr("y", 22)
+      .attr("font-size", 9.5)
+      .attr("fill", "#8fa0b0")
+      .text((node) => `关联 ${node.degree}`);
 
-    // tick 更新位置
-    simulation.on("tick", () => {
+    const renderPositions = () => {
       linkElements
-        .attr("x1", (d) => (d.source as D3Node).x ?? 0)
-        .attr("y1", (d) => (d.source as D3Node).y ?? 0)
-        .attr("x2", (d) => (d.target as D3Node).x ?? 0)
-        .attr("y2", (d) => (d.target as D3Node).y ?? 0);
-
-      linkLabelElements
-        .attr("x", (d) => {
-          const sx = (d.source as D3Node).x ?? 0;
-          const tx = (d.target as D3Node).x ?? 0;
-          return (sx + tx) / 2;
+        .attr("x1", (edge) => {
+          const source = edge.source as D3Node;
+          const target = edge.target as D3Node;
+          return getRectBoundaryPoint(
+            { x: source.x ?? 0, y: source.y ?? 0 },
+            { x: target.x ?? 0, y: target.y ?? 0 },
+            HALF_CARD_WIDTH,
+            HALF_CARD_HEIGHT,
+          ).x;
         })
-        .attr("y", (d) => {
-          const sy = (d.source as D3Node).y ?? 0;
-          const ty = (d.target as D3Node).y ?? 0;
-          return (sy + ty) / 2;
+        .attr("y1", (edge) => {
+          const source = edge.source as D3Node;
+          const target = edge.target as D3Node;
+          return getRectBoundaryPoint(
+            { x: source.x ?? 0, y: source.y ?? 0 },
+            { x: target.x ?? 0, y: target.y ?? 0 },
+            HALF_CARD_WIDTH,
+            HALF_CARD_HEIGHT,
+          ).y;
+        })
+        .attr("x2", (edge) => {
+          const source = edge.source as D3Node;
+          const target = edge.target as D3Node;
+          return getRectBoundaryPoint(
+            { x: target.x ?? 0, y: target.y ?? 0 },
+            { x: source.x ?? 0, y: source.y ?? 0 },
+            HALF_CARD_WIDTH,
+            HALF_CARD_HEIGHT,
+          ).x;
+        })
+        .attr("y2", (edge) => {
+          const source = edge.source as D3Node;
+          const target = edge.target as D3Node;
+          return getRectBoundaryPoint(
+            { x: target.x ?? 0, y: target.y ?? 0 },
+            { x: source.x ?? 0, y: source.y ?? 0 },
+            HALF_CARD_WIDTH,
+            HALF_CARD_HEIGHT,
+          ).y;
         });
 
-      nodeElements.attr("transform", (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+      labelElements.attr("transform", (edge) => {
+        const source = edge.source as D3Node;
+        const target = edge.target as D3Node;
+        const x = ((source.x ?? 0) + (target.x ?? 0)) / 2;
+        const y = ((source.y ?? 0) + (target.y ?? 0)) / 2;
+        return `translate(${x},${y})`;
+      });
+      nodeElements.attr(
+        "transform",
+        (node) => `translate(${node.x ?? 0},${node.y ?? 0})`,
+      );
+    };
+
+    const fitView = () => {
+      if (nodes.length === 0) return;
+
+      const minX =
+        d3.min(nodes, (node) => (node.x ?? 0) - HALF_CARD_WIDTH) ?? 0;
+      const maxX =
+        d3.max(nodes, (node) => (node.x ?? 0) + HALF_CARD_WIDTH) ?? width;
+      const minY =
+        d3.min(nodes, (node) => (node.y ?? 0) - HALF_CARD_HEIGHT) ?? 0;
+      const maxY =
+        d3.max(nodes, (node) => (node.y ?? 0) + HALF_CARD_HEIGHT) ?? height;
+      const boundsWidth = Math.max(1, maxX - minX);
+      const boundsHeight = Math.max(1, maxY - minY);
+      const scale = Math.min(
+        2,
+        Math.max(
+          0.25,
+          Math.min(
+            (width - GRID_PADDING * 2) / boundsWidth,
+            (height - GRID_PADDING * 2) / boundsHeight,
+          ),
+        ),
+      );
+      const transform = d3.zoomIdentity
+        .translate(width / 2, height / 2)
+        .scale(scale)
+        .translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
+
+      svg.call(zoom.transform, transform);
+    };
+    fitViewRef.current = fitView;
+
+    svg.on("click.canvas", (event: MouseEvent) => {
+      const target = event.target as Element;
+      if (!target.closest?.("[data-node-id]")) setSelectedNode(null);
     });
 
-    // cleanup
+    nodeElements
+      .on("mouseenter.node", (_event, node) => setHoveredNode(node.id))
+      .on("mouseleave.node", () => setHoveredNode(null))
+      .on("click.node", (event, node) => {
+        event.stopPropagation();
+        setSelectedNode(node.id);
+      })
+      .on("dblclick.node", (event, node) => {
+        event.stopPropagation();
+        openDetailPanel(node.id);
+      })
+      .on("keydown.node", (event: KeyboardEvent, node) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          setSelectedNode(node.id);
+        }
+      });
+
+    const drag = d3
+      .drag<SVGGElement, D3Node>()
+      .on("start", (event, node) => {
+        if (!event.active) simulationRef.current?.alphaTarget(0.25).restart();
+        node.fx = node.x;
+        node.fy = node.y;
+      })
+      .on("drag", (event, node) => {
+        node.fx = event.x;
+        node.fy = event.y;
+        node.x = event.x;
+        node.y = event.y;
+        renderPositions();
+      })
+      .on("end", (event) => {
+        if (!event.active) simulationRef.current?.alphaTarget(0);
+      });
+    nodeElements.call(drag);
+
+    let autoFitTimer: number | undefined;
+    let autoFitDone = false;
+    const performInitialFit = () => {
+      if (autoFitDone) return;
+      autoFitDone = true;
+      fitView();
+    };
+
+    if (hasEdges) {
+      const simulation = d3
+        .forceSimulation<D3Node>(nodes)
+        .force(
+          "link",
+          d3
+            .forceLink<D3Node, D3Edge>(edges)
+            .id((node) => node.id)
+            .distance(250)
+            .strength(0.72),
+        )
+        .force("charge", d3.forceManyBody().strength(-780))
+        .force("center", d3.forceCenter(width / 2, height / 2))
+        .force("x", d3.forceX(width / 2).strength(0.035))
+        .force("y", d3.forceY(height / 2).strength(0.035))
+        .force(
+          "collide",
+          d3.forceCollide<D3Node>(HALF_CARD_WIDTH + 22).iterations(2),
+        )
+        .on("tick", renderPositions)
+        .on("end.auto-fit", performInitialFit);
+      simulationRef.current = simulation;
+      renderPositions();
+      autoFitTimer = window.setTimeout(performInitialFit, 6_000);
+    } else {
+      simulationRef.current = null;
+      arrangeGrid(nodes, width);
+      renderPositions();
+      autoFitTimer = window.setTimeout(performInitialFit, 0);
+    }
+
+    relayoutRef.current = () => {
+      if (!hasEdges) {
+        arrangeGrid(nodes, width);
+        renderPositions();
+        return;
+      }
+
+      nodes.forEach((node) => {
+        node.fx = null;
+        node.fy = null;
+      });
+      simulationRef.current?.alpha(1).restart();
+    };
+
+    const resizeObserver = new ResizeObserver(() => {
+      const next = canvasSize(container);
+      if (next.width === width && next.height === height) return;
+
+      width = next.width;
+      height = next.height;
+      svg.attr("viewBox", `0 0 ${width} ${height}`);
+      background.attr("width", width).attr("height", height);
+
+      if (hasEdges) {
+        simulationRef.current
+          ?.force("center", d3.forceCenter(width / 2, height / 2))
+          .force("x", d3.forceX(width / 2).strength(0.035))
+          .force("y", d3.forceY(height / 2).strength(0.035));
+        simulationRef.current?.alpha(0.25).restart();
+      } else {
+        arrangeGrid(nodes, width);
+        renderPositions();
+      }
+    });
+    resizeObserver.observe(container);
+
     return () => {
-      simulation.stop();
+      if (autoFitTimer !== undefined) window.clearTimeout(autoFitTimer);
+      resizeObserver.disconnect();
+      simulationRef.current
+        ?.on("tick", null)
+        .on("end.auto-fit", null)
+        .stop();
+      simulationRef.current = null;
+      nodeElements.on(".node", null).on(".drag", null);
+      svg.on(".zoom", null).on(".canvas", null);
+      svg.selectAll("*").interrupt();
+      fitViewRef.current = () => {};
+      relayoutRef.current = () => {};
     };
   }, [
     graph,
-    handleNodeHover,
-    handleNodeClick,
-    handleNodeDoubleClick,
+    openDetailPanel,
+    setHoveredNode,
+    setSelectedNode,
   ]);
 
-  // ── 悬停高亮效果 ──
   useEffect(() => {
     if (!graph || !svgRef.current) return;
 
+    const neighbors = hoveredNodeId
+      ? getDirectNeighborIds(hoveredNodeId, graph.edges)
+      : null;
     const svg = d3.select(svgRef.current);
 
-    if (hoveredNodeId) {
-      const connectedIds = getConnectedNodeIds(hoveredNodeId, graph.edges);
+    svg
+      .selectAll<SVGGElement, D3Node>("[data-node-id]")
+      .attr("opacity", (node) =>
+        !neighbors || neighbors.has(node.id) ? 1 : 0.18,
+      )
+      .select<SVGRectElement>("rect.node-card")
+      .attr("stroke", (node) => {
+        if (node.id === selectedNodeId) return ACCENT;
+        if (neighbors?.has(node.id)) return ACCENT;
+        return BASE_CARD_STROKE;
+      })
+      .attr("stroke-width", (node) =>
+        node.id === selectedNodeId ? 2.5 : neighbors?.has(node.id) ? 1.5 : 1.25,
+      );
 
-      // 节点高亮/淡出
-      svg
-        .selectAll<SVGGElement, D3Node>(".nodes g")
-        .transition()
-        .duration(200)
-        .attr("opacity", (d) => (connectedIds.has(d.id) ? 1 : 0.15));
+    svg
+      .selectAll<SVGLineElement, D3Edge>("[data-edge-id]")
+      .attr("opacity", (edge) => {
+        if (!hoveredNodeId) return 1;
+        return endpointId(edge.source) === hoveredNodeId ||
+          endpointId(edge.target) === hoveredNodeId
+          ? 1
+          : 0.08;
+      })
+      .attr("stroke", (edge) => {
+        if (!hoveredNodeId) return BASE_EDGE;
+        return endpointId(edge.source) === hoveredNodeId ||
+          endpointId(edge.target) === hoveredNodeId
+          ? ACCENT
+          : BASE_EDGE;
+      })
+      .attr("marker-end", (edge) => {
+        const emphasized =
+          hoveredNodeId &&
+          (endpointId(edge.source) === hoveredNodeId ||
+            endpointId(edge.target) === hoveredNodeId);
+        return emphasized
+          ? "url(#graph-arrow-accent)"
+          : "url(#graph-arrow)";
+      });
 
-      // 边高亮/淡出
-      svg
-        .selectAll<SVGLineElement, D3Edge>(".links line")
-        .transition()
-        .duration(200)
-        .attr("opacity", (d) => {
-          const sourceId =
-            typeof d.source === "string" ? d.source : (d.source as D3Node).id;
-          const targetId =
-            typeof d.target === "string" ? d.target : (d.target as D3Node).id;
-          return connectedIds.has(sourceId) && connectedIds.has(targetId) ? 1 : 0.1;
-        });
+    svg
+      .selectAll<SVGGElement, D3Edge>("[data-edge-label-id]")
+      .attr("opacity", (edge) => {
+        if (!hoveredNodeId) return 1;
+        return endpointId(edge.source) === hoveredNodeId ||
+          endpointId(edge.target) === hoveredNodeId
+          ? 1
+          : 0.08;
+      });
+  }, [graph, hoveredNodeId, selectedNodeId]);
 
-      // 边标签
-      svg
-        .selectAll<SVGTextElement, D3Edge>(".link-labels text")
-        .transition()
-        .duration(200)
-        .attr("opacity", (d) => {
-          const sourceId =
-            typeof d.source === "string" ? d.source : (d.source as D3Node).id;
-          const targetId =
-            typeof d.target === "string" ? d.target : (d.target as D3Node).id;
-          return connectedIds.has(sourceId) && connectedIds.has(targetId) ? 1 : 0;
-        });
-    } else {
-      // 恢复默认
-      svg
-        .selectAll<SVGGElement, D3Node>(".nodes g")
-        .transition()
-        .duration(200)
-        .attr("opacity", 1);
-
-      svg
-        .selectAll<SVGLineElement, D3Edge>(".links line")
-        .transition()
-        .duration(200)
-        .attr("opacity", 1);
-
-      svg
-        .selectAll<SVGTextElement, D3Edge>(".link-labels text")
-        .transition()
-        .duration(200)
-        .attr("opacity", 1);
-    }
-  }, [hoveredNodeId, graph]);
-
-  // ── 置信度筛选 ──
   useEffect(() => {
     if (!svgRef.current) return;
-
     const svg = d3.select(svgRef.current);
 
     svg
-      .selectAll<SVGLineElement, D3Edge>(".links line")
-      .attr("display", (d) =>
-        d.confidence >= confidenceThreshold ? null : "none"
+      .selectAll<SVGLineElement, D3Edge>("[data-edge-id]")
+      .attr("display", (edge) =>
+        edge.confidence >= confidenceThreshold ? null : "none",
       );
-
     svg
-      .selectAll<SVGTextElement, D3Edge>(".link-labels text")
-      .attr("display", (d) =>
-        d.confidence >= confidenceThreshold ? null : "none"
+      .selectAll<SVGGElement, D3Edge>("[data-edge-label-id]")
+      .attr("display", (edge) =>
+        edge.confidence >= confidenceThreshold ? null : "none",
       );
-  }, [confidenceThreshold]);
+  }, [confidenceThreshold, graph]);
 
-  // ── 单击节点居中 ──
   useEffect(() => {
-    if (!selectedNodeId || !svgRef.current || !graph) return;
+    if (fitViewRequest === lastFitViewRequest.current) return;
+    lastFitViewRequest.current = fitViewRequest;
+    fitViewRef.current();
+  }, [fitViewRequest]);
 
-    const node = graph.nodes.find((n) => n.id === selectedNodeId);
-    if (!node || !containerRef.current) return;
-
-    const sim = simulationRef.current;
-    if (!sim) return;
-
-    // 找到 simulation 中的对应节点并固定
-    const simNodes = sim.nodes() as D3Node[];
-    const target = simNodes.find((n) => n.id === selectedNodeId);
-    if (target) {
-      const container = containerRef.current;
-      const w = container.clientWidth;
-      const h = container.clientHeight || 600;
-      target.fx = w / 2;
-      target.fy = h / 2;
-      sim.alpha(0.3).restart();
-
-      // 一段时间后释放
-      setTimeout(() => {
-        target.fx = null;
-        target.fy = null;
-      }, 2000);
-    }
-  }, [selectedNodeId, graph]);
-
-  // ── Resize 响应 ──
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    if (relayoutRequest === lastRelayoutRequest.current) return;
+    lastRelayoutRequest.current = relayoutRequest;
+    relayoutRef.current();
+  }, [relayoutRequest]);
 
-    const observer = new ResizeObserver(() => {
-      if (svgRef.current && container) {
-        const w = container.clientWidth;
-        const h = container.clientHeight || 600;
-        d3.select(svgRef.current).attr("width", w).attr("height", h);
-        simulationRef.current?.force("center", d3.forceCenter(w / 2, h / 2));
-        simulationRef.current?.alpha(0.1).restart();
-      }
-    });
-
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, []);
-
-  // ── 空状态 ──
   if (!graph) {
     return (
-      <div className="flex items-center justify-center h-[600px] bg-gray-50 rounded-xl border border-gray-200 text-gray-400 text-sm">
+      <div className="flex h-full min-h-[420px] items-center justify-center bg-[#0a1622] text-sm text-slate-500">
         暂无图谱数据
       </div>
     );
   }
 
-  const hasEdges = graph.edges.length > 0;
+  const visibleEdgeCount = getVisibleEdgeCount(
+    graph.edges,
+    confidenceThreshold,
+  );
 
   return (
-    <div className="relative w-full" ref={containerRef}>
-      {/* 无关系空状态提示 */}
-      {!hasEdges && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-          <div className="bg-white/80 backdrop-blur-sm rounded-lg px-4 py-2 text-sm text-orange-600 border border-orange-200 shadow-sm">
-            未发现任何关系，建议调整表/字段选择
-          </div>
-        </div>
+    <div
+      ref={containerRef}
+      className="relative h-full min-h-[420px] w-full overflow-hidden bg-[#0a1622]"
+    >
+      {graph.edges.length === 0 && (
+        <p className="sr-only" role="status">
+          未发现任何关系，实体已按来源表排列
+        </p>
       )}
-
-      <svg ref={svgRef} className="w-full bg-gray-50/50 rounded-xl border border-gray-200" />
+      <svg
+        ref={svgRef}
+        className="block h-full w-full bg-[#0a1622]"
+        role="img"
+        aria-label={`${graph.nodes.length} 个实体，${visibleEdgeCount} 条可见关系`}
+      />
     </div>
   );
 }
