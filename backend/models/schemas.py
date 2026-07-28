@@ -15,6 +15,7 @@ class ColumnInfo(BaseModel):
     name: str
     type: str
     is_class_name: bool
+    is_primary_key: bool
 
 
 class TableColumnsResponse(BaseModel):

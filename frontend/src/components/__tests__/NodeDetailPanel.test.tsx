@@ -41,6 +41,7 @@ describe("NodeDetailPanel", () => {
     useAnalysisStore.setState({
       graph: mockGraph,
       selectedNodeId: null,
+      focusNodeRequest: null,
     });
   });
 
@@ -88,6 +89,10 @@ describe("NodeDetailPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /orders\|1/ }));
 
     expect(useAnalysisStore.getState().selectedNodeId).toBe("orders|1");
+    expect(useAnalysisStore.getState().focusNodeRequest).toEqual({
+      nodeId: "orders|1",
+      version: 1,
+    });
   });
 
   it("renders repeated raw relationships without duplicate React keys", () => {

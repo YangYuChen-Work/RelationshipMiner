@@ -48,6 +48,26 @@ class TestListFields:
         assert len(class_name_cols) == 1
         assert class_name_cols[0]["name"] == "class_name"
 
+    def test_marks_primary_key_column(self, client: TestClient):
+        """数据库主键列应在字段响应中明确标记为 true。"""
+        response = client.get("/api/tables/users/fields")
+
+        columns = {
+            column["name"]: column for column in response.json()["columns"]
+        }
+        assert columns["id"]["is_primary_key"] is True
+
+    def test_marks_non_primary_key_columns(self, client: TestClient):
+        """普通列应在字段响应中明确标记为 false。"""
+        response = client.get("/api/tables/users/fields")
+
+        columns = {
+            column["name"]: column for column in response.json()["columns"]
+        }
+        assert columns["name"]["is_primary_key"] is False
+        assert columns["email"]["is_primary_key"] is False
+        assert columns["class_name"]["is_primary_key"] is False
+
     def test_marks_classname_candidate(self, client: TestClient):
         """className 字段（驼峰命名）应被标记为 is_class_name=True。"""
         response = client.get("/api/tables/orders/fields")

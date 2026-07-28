@@ -14,6 +14,11 @@ interface SelectedTable {
   selectedFields: Set<string>;
 }
 
+interface FocusNodeRequest {
+  nodeId: string;
+  version: number;
+}
+
 export function isRequiredColumn(column: ColumnInfo): boolean {
   return column.is_class_name || column.is_primary_key;
 }
@@ -30,6 +35,8 @@ interface AnalysisState {
 
   // ── 用户选择 ──
   selectedTables: Map<string, SelectedTable>;
+  pendingTables: Set<string>;
+  tableRequestTokens: Map<string, number>;
   tableErrors: Map<string, string>;
   maxTables: number;
 
@@ -41,6 +48,8 @@ interface AnalysisState {
   // ── 图谱数据 ──
   graph: GraphData | null;
   taskId: string | null;
+  activeSocket: WebSocket | null;
+  analysisGeneration: number;
 
   // ── 图谱交互状态 ──
   hoveredNodeId: string | null;
@@ -48,6 +57,7 @@ interface AnalysisState {
   confidenceThreshold: number;
   fitViewRequest: number;
   relayoutRequest: number;
+  focusNodeRequest: FocusNodeRequest | null;
 
   // ── 操作：元数据 ──
   loadTables: () => Promise<void>;
@@ -63,6 +73,7 @@ interface AnalysisState {
   // ── 操作：图谱交互 ──
   setHoveredNode: (id: string | null) => void;
   setSelectedNode: (id: string | null) => void;
+  requestNodeFocus: (id: string) => void;
   setConfidenceThreshold: (value: number) => void;
   requestFitView: () => void;
   requestRelayout: () => void;
@@ -82,6 +93,20 @@ function patchSelectedTable(
   return next;
 }
 
+function closeAnalysisSocket(socket: WebSocket | null) {
+  if (!socket) return;
+  socket.onmessage = null;
+  socket.onerror = null;
+  socket.onclose = null;
+  try {
+    socket.close();
+  } catch {
+    // The run is already detached; a close failure must not restore ownership.
+  }
+}
+
+let nextTableRequestToken = 0;
+
 export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   // ── 初始值 ──
   phase: "select",
@@ -90,6 +115,8 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   tablesLoading: false,
   tablesError: null,
   selectedTables: new Map(),
+  pendingTables: new Set(),
+  tableRequestTokens: new Map(),
   tableErrors: new Map(),
   maxTables: 10,
   currentPhase: 0,
@@ -97,11 +124,14 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   progressValue: 0,
   graph: null,
   taskId: null,
+  activeSocket: null,
+  analysisGeneration: 0,
   hoveredNodeId: null,
   selectedNodeId: null,
   confidenceThreshold: 0,
   fitViewRequest: 0,
   relayoutRequest: 0,
+  focusNodeRequest: null,
 
   // ── 元数据操作 ──
 
@@ -123,35 +153,90 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   },
 
   toggleTable: async (tableName: string) => {
-    const { selectedTables } = get();
+    const { pendingTables, phase, selectedTables } = get();
+    if (phase !== "select" || pendingTables.has(tableName)) return;
+
     if (selectedTables.has(tableName)) {
       const next = new Map(selectedTables);
       next.delete(tableName);
       set({ selectedTables: next });
     } else {
       if (selectedTables.size >= get().maxTables) return;
+      const requestToken = ++nextTableRequestToken;
+      const nextPendingTables = new Set(pendingTables);
+      const nextRequestTokens = new Map(get().tableRequestTokens);
+      const nextTableErrors = new Map(get().tableErrors);
+      nextPendingTables.add(tableName);
+      nextRequestTokens.set(tableName, requestToken);
+      nextTableErrors.delete(tableName);
+      set({
+        pendingTables: nextPendingTables,
+        tableRequestTokens: nextRequestTokens,
+        tableErrors: nextTableErrors,
+      });
+
       try {
         const { columns } = await fetchTableColumns(tableName);
         const requiredFields = columns.filter(isRequiredColumn);
         const selectedFields = new Set(requiredFields.map((c) => c.name));
-        const currentSelectedTables = get().selectedTables;
-        if (currentSelectedTables.size >= get().maxTables) return;
+        const current = get();
+        if (
+          current.phase !== "select" ||
+          current.tableRequestTokens.get(tableName) !== requestToken
+        ) {
+          return;
+        }
+
+        const currentSelectedTables = current.selectedTables;
+        const pendingTablesAfterLoad = new Set(current.pendingTables);
+        const requestTokensAfterLoad = new Map(current.tableRequestTokens);
+        pendingTablesAfterLoad.delete(tableName);
+        requestTokensAfterLoad.delete(tableName);
+        if (currentSelectedTables.size >= current.maxTables) {
+          set({
+            pendingTables: pendingTablesAfterLoad,
+            tableRequestTokens: requestTokensAfterLoad,
+          });
+          return;
+        }
         const next = new Map(currentSelectedTables);
-        const tableErrors = new Map(get().tableErrors);
+        const tableErrors = new Map(current.tableErrors);
         tableErrors.delete(tableName);
         next.set(tableName, {
           name: tableName,
           columns,
           selectedFields,
         });
-        set({ selectedTables: next, tableErrors });
+        set({
+          selectedTables: next,
+          pendingTables: pendingTablesAfterLoad,
+          tableRequestTokens: requestTokensAfterLoad,
+          tableErrors,
+          errorMessage: null,
+        });
       } catch (e: any) {
-        const tableErrors = new Map(get().tableErrors);
+        const current = get();
+        if (
+          current.phase !== "select" ||
+          current.tableRequestTokens.get(tableName) !== requestToken
+        ) {
+          return;
+        }
+
+        const pendingTablesAfterLoad = new Set(current.pendingTables);
+        const requestTokensAfterLoad = new Map(current.tableRequestTokens);
+        const tableErrors = new Map(current.tableErrors);
+        pendingTablesAfterLoad.delete(tableName);
+        requestTokensAfterLoad.delete(tableName);
         tableErrors.set(
           tableName,
           e.message || `加载表 ${tableName} 字段失败`
         );
-        set({ tableErrors });
+        set({
+          pendingTables: pendingTablesAfterLoad,
+          tableRequestTokens: requestTokensAfterLoad,
+          tableErrors,
+        });
       }
     }
   },
@@ -199,7 +284,13 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   // ── 分析操作 ──
 
   startAnalysis: async () => {
-    const { selectedTables } = get();
+    const { activeSocket, analysisGeneration, pendingTables, selectedTables } =
+      get();
+    if (pendingTables.size > 0) {
+      set({ errorMessage: "正在加载所选表字段，请稍候再开始分析" });
+      return;
+    }
+
     const tableList = Array.from(selectedTables.values()).map((t) => ({
       name: t.name,
       fields: Array.from(t.selectedFields),
@@ -211,49 +302,79 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       return;
     }
 
+    const runGeneration = analysisGeneration + 1;
+    closeAnalysisSocket(activeSocket);
     set({
       phase: "analyzing",
       errorMessage: null,
       currentPhase: 0,
       progressMessage: "正在提交分析任务...",
       progressValue: 0,
+      pendingTables: new Set(),
+      tableRequestTokens: new Map(),
+      activeSocket: null,
+      analysisGeneration: runGeneration,
     });
 
     try {
       const taskId = await submitAnalysis(tableList);
-      set({ taskId });
+      if (get().analysisGeneration !== runGeneration) return;
 
-      createAnalysisSocket(
+      let socket: WebSocket | null = null;
+      const ownsRun = () => {
+        const state = get();
+        return (
+          state.analysisGeneration === runGeneration &&
+          state.activeSocket === socket
+        );
+      };
+      const finishRun = (
+        terminalState: Pick<
+          AnalysisState,
+          "phase" | "errorMessage" | "graph"
+        >
+      ) => {
+        if (!ownsRun()) return;
+        set({ ...terminalState, activeSocket: null });
+        closeAnalysisSocket(socket);
+      };
+
+      socket = createAnalysisSocket(
         taskId,
         (msg) => {
+          if (!ownsRun()) return;
+
           set({
             currentPhase: msg.phase,
             progressMessage: msg.message,
             progressValue: msg.progress,
           });
 
-          if (msg.phase === 5 && msg.graph) {
-            set({
-              phase: "done",
-              graph: msg.graph,
-            });
-          }
-
           if (msg.error) {
-            set({
+            finishRun({
               phase: "error",
               errorMessage: msg.error || msg.message,
+              graph: null,
+            });
+          } else if (msg.phase === 5 && msg.graph) {
+            finishRun({
+              phase: "done",
+              errorMessage: null,
+              graph: msg.graph,
             });
           }
         },
         (_err) => {
-          set({
+          finishRun({
             phase: "error",
             errorMessage: "WebSocket 连接失败，请检查后端服务是否运行",
+            graph: null,
           });
         },
         () => {
+          if (!ownsRun()) return;
           const state = get();
+          set({ activeSocket: null });
           if (state.phase === "analyzing") {
             set({
               phase: "error",
@@ -262,15 +383,25 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
           }
         }
       );
+      if (get().analysisGeneration !== runGeneration) {
+        closeAnalysisSocket(socket);
+        return;
+      }
+      set({ taskId, activeSocket: socket });
     } catch (e: any) {
+      if (get().analysisGeneration !== runGeneration) return;
+      closeAnalysisSocket(get().activeSocket);
       set({
         phase: "error",
         errorMessage: e.message || "启动分析失败",
+        activeSocket: null,
       });
     }
   },
 
   resetAnalysis: () => {
+    const { activeSocket, analysisGeneration } = get();
+    closeAnalysisSocket(activeSocket);
     set({
       phase: "select",
       errorMessage: null,
@@ -279,11 +410,16 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       progressValue: 0,
       graph: null,
       taskId: null,
+      activeSocket: null,
+      analysisGeneration: analysisGeneration + 1,
       hoveredNodeId: null,
       selectedNodeId: null,
       confidenceThreshold: 0,
       fitViewRequest: 0,
       relayoutRequest: 0,
+      focusNodeRequest: null,
+      pendingTables: new Set(),
+      tableRequestTokens: new Map(),
       tableErrors: new Map(),
     });
   },
@@ -296,6 +432,16 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
   setSelectedNode: (id) => {
     set({ selectedNodeId: id });
+  },
+
+  requestNodeFocus: (id) => {
+    set((state) => ({
+      selectedNodeId: id,
+      focusNodeRequest: {
+        nodeId: id,
+        version: (state.focusNodeRequest?.version ?? 0) + 1,
+      },
+    }));
   },
 
   setConfidenceThreshold: (value) => {

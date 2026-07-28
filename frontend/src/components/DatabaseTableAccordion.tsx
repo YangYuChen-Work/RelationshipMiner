@@ -11,16 +11,17 @@ export default function DatabaseTableAccordion({
   disabled,
 }: DatabaseTableAccordionProps) {
   const selectedTables = useAnalysisStore((s) => s.selectedTables);
+  const pendingTables = useAnalysisStore((s) => s.pendingTables);
   const tableErrors = useAnalysisStore((s) => s.tableErrors);
   const toggleTable = useAnalysisStore((s) => s.toggleTable);
   const toggleField = useAnalysisStore((s) => s.toggleField);
   const selectAllFields = useAnalysisStore((s) => s.selectAllFields);
   const deselectAllFields = useAnalysisStore((s) => s.deselectAllFields);
   const [expanded, setExpanded] = useState(false);
-  const [loading, setLoading] = useState(false);
 
   const entry = selectedTables.get(tableName);
   const isSelected = Boolean(entry);
+  const loading = pendingTables.has(tableName);
   const error = tableErrors.get(tableName);
 
   useEffect(() => {
@@ -29,9 +30,23 @@ export default function DatabaseTableAccordion({
 
   async function handleTableToggle() {
     if (loading) return;
-    if (!isSelected) setLoading(true);
     await toggleTable(tableName);
-    setLoading(false);
+    if (
+      !isSelected &&
+      useAnalysisStore.getState().selectedTables.has(tableName)
+    ) {
+      setExpanded(true);
+    }
+  }
+
+  async function handleExpandToggle() {
+    if (disabled || loading) return;
+    if (isSelected) {
+      setExpanded((current) => !current);
+      return;
+    }
+
+    await toggleTable(tableName);
     if (useAnalysisStore.getState().selectedTables.has(tableName)) {
       setExpanded(true);
     }
@@ -63,6 +78,14 @@ export default function DatabaseTableAccordion({
               {selectedCount}/{totalFields} 字段
             </span>
           )}
+          {loading && (
+            <span
+              role="status"
+              className="truncate text-xs text-blue-700"
+            >
+              正在加载 {tableName} 字段…
+            </span>
+          )}
         </label>
 
         {isSelected && (
@@ -84,8 +107,8 @@ export default function DatabaseTableAccordion({
           type="button"
           aria-label={`${expanded ? "收起" : "展开"} ${tableName} 字段`}
           aria-expanded={expanded}
-          disabled={!isSelected}
-          onClick={() => setExpanded((current) => !current)}
+          disabled={disabled || loading}
+          onClick={handleExpandToggle}
           className="rounded p-1 text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <span aria-hidden="true">⌄</span>

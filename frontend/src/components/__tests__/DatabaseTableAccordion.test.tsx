@@ -32,6 +32,9 @@ describe("DatabaseTableAccordion", () => {
       phase: "select",
       errorMessage: null,
       selectedTables: new Map(),
+      pendingTables: new Set(),
+      tableRequestTokens: new Map(),
+      tableErrors: new Map(),
       maxTables: 10,
     });
   });
@@ -57,6 +60,49 @@ describe("DatabaseTableAccordion", () => {
     await user.click(screen.getByRole("button", { name: "取消全选 users 字段" }));
     expect(screen.getByRole("checkbox", { name: "字段 id" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "字段 class_name" })).toBeChecked();
+  });
+
+  it("selects, loads, and expands an unselected table from its expand button", async () => {
+    // This fails if expand remains disabled until the separate checkbox flow completes.
+    mockFields();
+    const user = userEvent.setup();
+    render(<DatabaseTableAccordion tableName="users" disabled={false} />);
+
+    await user.click(
+      screen.getByRole("button", { name: "展开 users 字段" }),
+    );
+
+    expect(
+      await screen.findByRole("region", { name: "users 字段列表" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("checkbox", { name: "选择表 users" }),
+    ).toBeChecked();
+  });
+
+  it("shows visible per-table status while its fields are loading", async () => {
+    // This fails if pending state is communicated only by disabled controls.
+    let resolveFields!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFields = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    render(<DatabaseTableAccordion tableName="users" disabled={false} />);
+
+    await user.click(screen.getByRole("checkbox", { name: "选择表 users" }));
+
+    expect(screen.getByText("正在加载 users 字段…")).toBeVisible();
+
+    resolveFields({
+      ok: true,
+      json: () => Promise.resolve({ table_name: "users", columns }),
+    } as Response);
+    expect(
+      await screen.findByRole("region", { name: "users 字段列表" }),
+    ).toBeVisible();
   });
 
   it("does not allow primary-key or class-name fields to be unchecked", async () => {

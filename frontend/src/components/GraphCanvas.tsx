@@ -109,6 +109,7 @@ export default function GraphCanvas() {
   const simulationRef = useRef<d3.Simulation<D3Node, D3Edge> | null>(null);
   const fitViewRef = useRef<() => void>(() => {});
   const relayoutRef = useRef<() => void>(() => {});
+  const focusNodeRef = useRef<(nodeId: string) => void>(() => {});
 
   const graph = useAnalysisStore((state) => state.graph);
   const hoveredNodeId = useAnalysisStore((state) => state.hoveredNodeId);
@@ -120,17 +121,26 @@ export default function GraphCanvas() {
   const relayoutRequest = useAnalysisStore(
     (state) => state.relayoutRequest,
   );
+  const focusNodeRequest = useAnalysisStore(
+    (state) => state.focusNodeRequest,
+  );
   const setHoveredNode = useAnalysisStore((state) => state.setHoveredNode);
   const setSelectedNode = useAnalysisStore((state) => state.setSelectedNode);
 
   const lastFitViewRequest = useRef(fitViewRequest);
   const lastRelayoutRequest = useRef(relayoutRequest);
+  const lastFocusNodeRequest = useRef(focusNodeRequest?.version ?? 0);
 
   useEffect(() => {
     const svgElement = svgRef.current;
     const container = containerRef.current;
     if (!graph || !svgElement || !container) return;
 
+    const reducedMotionQuery =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-reduced-motion: reduce)")
+        : null;
+    let reducedMotion = reducedMotionQuery?.matches ?? false;
     const hasEdges = graph.edges.length > 0;
     const nodes: D3Node[] = graph.nodes
       .map((node) => ({ ...node }))
@@ -393,6 +403,17 @@ export default function GraphCanvas() {
       svg.call(zoom.transform, transform);
     };
     fitViewRef.current = fitView;
+    focusNodeRef.current = (nodeId) => {
+      const node = nodes.find((candidate) => candidate.id === nodeId);
+      if (!node || node.x === undefined || node.y === undefined) return;
+
+      const currentTransform = d3.zoomTransform(svgElement);
+      const transform = d3.zoomIdentity
+        .translate(width / 2, height / 2)
+        .scale(currentTransform.k)
+        .translate(-node.x, -node.y);
+      svg.call(zoom.transform, transform);
+    };
 
     svg.on("click.canvas", (event: MouseEvent) => {
       const target = event.target as Element;
@@ -416,7 +437,9 @@ export default function GraphCanvas() {
     const drag = d3
       .drag<SVGGElement, D3Node>()
       .on("start", (event, node) => {
-        if (!event.active) simulationRef.current?.alphaTarget(0.25).restart();
+        if (!event.active && !reducedMotion) {
+          simulationRef.current?.alphaTarget(0.25).restart();
+        }
         node.fx = node.x;
         node.fy = node.y;
       })
@@ -428,12 +451,16 @@ export default function GraphCanvas() {
         renderPositions();
       })
       .on("end", (event) => {
-        if (!event.active) simulationRef.current?.alphaTarget(0);
+        if (!event.active) {
+          simulationRef.current?.alphaTarget(0);
+          if (reducedMotion) simulationRef.current?.stop();
+        }
       });
     nodeElements.call(drag);
 
     let autoFitTimer: number | undefined;
     let autoFitDone = false;
+    let stabilizeSimulation = () => {};
     const performInitialFit = () => {
       if (autoFitDone) return;
       autoFitDone = true;
@@ -462,8 +489,18 @@ export default function GraphCanvas() {
         .on("tick", renderPositions)
         .on("end.auto-fit", performInitialFit);
       simulationRef.current = simulation;
-      renderPositions();
-      autoFitTimer = window.setTimeout(performInitialFit, 6_000);
+      stabilizeSimulation = () => {
+        simulation.stop();
+        simulation.alpha(1).tick(300);
+        renderPositions();
+        performInitialFit();
+      };
+      if (reducedMotion) {
+        stabilizeSimulation();
+      } else {
+        renderPositions();
+        autoFitTimer = window.setTimeout(performInitialFit, 6_000);
+      }
     } else {
       simulationRef.current = null;
       arrangeGrid(nodes, width);
@@ -482,34 +519,67 @@ export default function GraphCanvas() {
         node.fx = null;
         node.fy = null;
       });
-      simulationRef.current?.alpha(1).restart();
+      if (reducedMotion) {
+        stabilizeSimulation();
+      } else {
+        simulationRef.current?.alpha(1).restart();
+      }
     };
 
-    const resizeObserver = new ResizeObserver(() => {
-      const next = canvasSize(container);
-      if (next.width === width && next.height === height) return;
-
-      width = next.width;
-      height = next.height;
-      svg.attr("viewBox", `0 0 ${width} ${height}`);
-      background.attr("width", width).attr("height", height);
-
-      if (hasEdges) {
-        simulationRef.current
-          ?.force("center", d3.forceCenter(width / 2, height / 2))
-          .force("x", d3.forceX(width / 2).strength(0.035))
-          .force("y", d3.forceY(height / 2).strength(0.035));
-        simulationRef.current?.alpha(0.25).restart();
-      } else {
-        arrangeGrid(nodes, width);
-        renderPositions();
+    const handleReducedMotionChange = (event: MediaQueryListEvent) => {
+      reducedMotion = event.matches;
+      if (reducedMotion) {
+        if (autoFitTimer !== undefined) {
+          window.clearTimeout(autoFitTimer);
+          autoFitTimer = undefined;
+        }
+        stabilizeSimulation();
+      } else if (hasEdges) {
+        simulationRef.current?.alpha(0.35).restart();
       }
-    });
-    resizeObserver.observe(container);
+    };
+    reducedMotionQuery?.addEventListener(
+      "change",
+      handleReducedMotionChange,
+    );
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        const next = canvasSize(container);
+        if (next.width === width && next.height === height) return;
+
+        width = next.width;
+        height = next.height;
+        svg.attr("viewBox", `0 0 ${width} ${height}`);
+        background.attr("width", width).attr("height", height);
+
+        if (hasEdges) {
+          simulationRef.current
+            ?.force("center", d3.forceCenter(width / 2, height / 2))
+            .force("x", d3.forceX(width / 2).strength(0.035))
+            .force("y", d3.forceY(height / 2).strength(0.035));
+          if (reducedMotion) {
+            stabilizeSimulation();
+          } else {
+            simulationRef.current?.alpha(0.25).restart();
+          }
+        } else {
+          arrangeGrid(nodes, width);
+          renderPositions();
+          fitView();
+        }
+      });
+      resizeObserver.observe(container);
+    }
 
     return () => {
       if (autoFitTimer !== undefined) window.clearTimeout(autoFitTimer);
-      resizeObserver.disconnect();
+      reducedMotionQuery?.removeEventListener(
+        "change",
+        handleReducedMotionChange,
+      );
+      resizeObserver?.disconnect();
       simulationRef.current
         ?.on("tick", null)
         .on("end.auto-fit", null)
@@ -520,6 +590,7 @@ export default function GraphCanvas() {
       svg.selectAll("*").interrupt();
       fitViewRef.current = () => {};
       relayoutRef.current = () => {};
+      focusNodeRef.current = () => {};
     };
   }, [
     accentArrowId,
@@ -621,10 +692,39 @@ export default function GraphCanvas() {
     relayoutRef.current();
   }, [relayoutRequest]);
 
+  useEffect(() => {
+    if (
+      !focusNodeRequest ||
+      focusNodeRequest.version === lastFocusNodeRequest.current
+    ) {
+      return;
+    }
+    lastFocusNodeRequest.current = focusNodeRequest.version;
+    focusNodeRef.current(focusNodeRequest.nodeId);
+  }, [focusNodeRequest]);
+
   if (!graph) {
     return (
       <div className="flex h-full min-h-[420px] items-center justify-center bg-[#0a1622] text-sm text-slate-500">
         暂无图谱数据
+      </div>
+    );
+  }
+
+  if (graph.nodes.length === 0) {
+    return (
+      <div
+        role="status"
+        className="flex h-full min-h-[420px] items-center justify-center bg-[#0a1622] px-6 text-center"
+      >
+        <div className="max-w-md rounded-xl border border-slate-700 bg-slate-900/75 px-5 py-6">
+          <h2 className="text-sm font-semibold text-slate-100">
+            未生成任何实体
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-400">
+            请点击上方“新分析”，调整数据表或字段后重新尝试。
+          </p>
+        </div>
       </div>
     );
   }
@@ -640,7 +740,11 @@ export default function GraphCanvas() {
       className="relative h-full min-h-[420px] w-full overflow-hidden bg-[#0a1622]"
     >
       {graph.edges.length === 0 && (
-        <p className="sr-only" role="status">
+        <p
+          data-empty-warning
+          className="pointer-events-none absolute left-3 top-3 z-10 max-w-sm rounded-lg border border-slate-700 bg-slate-900/90 px-3 py-2 text-xs text-slate-300 shadow-lg"
+          role="status"
+        >
           未发现任何关系，实体已按来源表排列
         </p>
       )}

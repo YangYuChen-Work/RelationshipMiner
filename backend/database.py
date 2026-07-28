@@ -50,7 +50,7 @@ def get_table_names(engine: Engine) -> list[str]:
 
 def get_table_columns(
     engine: Engine, table_name: str
-) -> list[dict[str, str]]:
+) -> list[dict[str, str | bool]]:
     """获取指定表的所有列信息。
 
     Args:
@@ -58,10 +58,12 @@ def get_table_columns(
         table_name: 表名。
 
     Returns:
-        列信息列表，每项包含 name、type、is_class_name 字段。
+        列信息列表，每项包含 name、type、is_class_name、is_primary_key 字段。
     """
     inspector = inspect(engine)
     columns = inspector.get_columns(table_name)
+    pk_constraint = inspector.get_pk_constraint(table_name)
+    primary_key_columns = set(pk_constraint.get("constrained_columns") or [])
 
     # 约定命名识别 class_name 字段
     CLASS_NAME_CANDIDATES = {"class_name", "classname", "class"}
@@ -71,11 +73,13 @@ def get_table_columns(
         name = col["name"]
         col_type = str(col["type"])
         is_class_name = name.lower() in CLASS_NAME_CANDIDATES
+        is_primary_key = name in primary_key_columns
         result.append(
             {
                 "name": name,
                 "type": col_type,
                 "is_class_name": is_class_name,
+                "is_primary_key": is_primary_key,
             }
         )
     return result

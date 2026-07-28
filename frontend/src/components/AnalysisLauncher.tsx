@@ -9,10 +9,13 @@ import { useAnalysisStore } from "../store/analysis";
 export default function AnalysisLauncher() {
   const phase = useAnalysisStore((s) => s.phase);
   const selectedTables = useAnalysisStore((s) => s.selectedTables);
+  const pendingTables = useAnalysisStore((s) => s.pendingTables);
   const startAnalysis = useAnalysisStore((s) => s.startAnalysis);
 
   const tableCount = selectedTables.size;
-  const canStart = tableCount > 0 && phase === "select";
+  const hasPendingTables = pendingTables.size > 0;
+  const canStart =
+    tableCount > 0 && !hasPendingTables && phase === "select";
   const isAnalyzing = phase === "analyzing";
 
   return (
@@ -40,7 +43,9 @@ export default function AnalysisLauncher() {
 
       {!canStart && !isAnalyzing && phase === "select" && (
         <span className="text-xs text-gray-400">
-          {tableCount === 0
+          {hasPendingTables
+            ? "正在加载所选表字段，请稍候"
+            : tableCount === 0
             ? "请先勾选要分析的数据表"
             : "请选择至少一张表"}
         </span>

@@ -53,6 +53,9 @@ export default function NodeDetailPanel() {
   const graph = useAnalysisStore((state) => state.graph);
   const selectedNodeId = useAnalysisStore((state) => state.selectedNodeId);
   const setSelectedNode = useAnalysisStore((state) => state.setSelectedNode);
+  const requestNodeFocus = useAnalysisStore(
+    (state) => state.requestNodeFocus,
+  );
   const node = graph?.nodes.find((item) => item.id === selectedNodeId);
   const relations = node && graph ? relatedNodes(node.id, graph) : [];
 
@@ -142,7 +145,7 @@ export default function NodeDetailPanel() {
                   >
                     <button
                       type="button"
-                      onClick={() => setSelectedNode(nodeId)}
+                      onClick={() => requestNodeFocus(nodeId)}
                       className="w-full rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-3 text-left transition-colors hover:border-teal-500/70 hover:bg-slate-800"
                     >
                       <span className="block break-all font-mono text-xs text-teal-200">

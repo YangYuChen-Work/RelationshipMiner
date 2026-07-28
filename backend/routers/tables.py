@@ -59,6 +59,7 @@ def list_fields(table_name: str, engine: Engine = Depends(get_engine)):
                 name=c["name"],
                 type=c["type"],
                 is_class_name=c["is_class_name"],
+                is_primary_key=c["is_primary_key"],
             )
             for c in columns_raw
         ]

@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import * as d3 from "d3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphData } from "../../api/analysis";
 import { useAnalysisStore } from "../../store/analysis";
 import GraphCanvas from "../GraphCanvas";
@@ -80,6 +80,7 @@ function setGraph(graph: GraphData) {
     confidenceThreshold: 0,
     fitViewRequest: 0,
     relayoutRequest: 0,
+    focusNodeRequest: null,
   });
 }
 
@@ -90,6 +91,7 @@ describe("GraphCanvas", () => {
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
     useAnalysisStore.setState({ graph: null });
   });
 
@@ -255,7 +257,10 @@ describe("GraphCanvas", () => {
     expect(new Set(cards.map((card) => card.getAttribute("transform"))).size).toBe(
       3,
     );
-    expect(container.querySelector("[data-empty-warning]")).toBeNull();
+    const warning = container.querySelector("[data-empty-warning]");
+    expect(warning).not.toBeNull();
+    expect(warning).not.toHaveClass("sr-only");
+    expect(warning).toHaveTextContent("未发现任何关系");
   });
 
   it("consumes fit-view and relayout requests", () => {
@@ -296,5 +301,133 @@ describe("GraphCanvas", () => {
     expect(
       container.querySelector<SVGGElement>(".zoom-group"),
     ).toHaveAttribute("transform", d3.zoomIdentity.toString());
+  });
+
+  it("centers a requested node without changing the current zoom scale", () => {
+    // This fails if focus only selects a node or recomputes a new zoom level.
+    setGraph(disconnectedGraph);
+    const { container } = render(<GraphCanvas />);
+    const svg = container.querySelector<SVGSVGElement>("svg")!;
+    const zoomGroup = container.querySelector<SVGGElement>(".zoom-group")!;
+    const target = container.querySelector<SVGGElement>(
+      '[data-node-id="a-2"]',
+    )!;
+    const targetDatum = d3.select(target).datum() as { x: number; y: number };
+    const priorTransform = d3.zoomIdentity.translate(120, 80).scale(1.75);
+
+    (svg as SVGSVGElement & { __zoom: d3.ZoomTransform }).__zoom =
+      priorTransform;
+    zoomGroup.setAttribute("transform", priorTransform.toString());
+
+    act(() => {
+      useAnalysisStore.setState({
+        focusNodeRequest: { nodeId: "a-2", version: 1 },
+      });
+    });
+
+    const focusedTransform = d3.zoomTransform(svg);
+    const focusedPoint = focusedTransform.apply([
+      targetDatum.x,
+      targetDatum.y,
+    ]);
+    expect(focusedTransform.k).toBe(1.75);
+    expect(focusedPoint[0]).toBeCloseTo(480);
+    expect(focusedPoint[1]).toBeCloseTo(300);
+  });
+
+  it("renders its initial graph when ResizeObserver is unavailable", () => {
+    // This fails if the observer constructor is used without feature detection.
+    vi.stubGlobal("ResizeObserver", undefined);
+
+    expect(() => render(<GraphCanvas />)).not.toThrow();
+    expect(screen.getAllByRole("button")).toHaveLength(3);
+  });
+
+  it("stabilizes reduced-motion force layouts and removes its media listener", async () => {
+    // This fails if CSS-only reduced motion leaves the D3 simulation visibly ticking.
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const matchMedia = vi.fn(() => ({
+      matches: true,
+      media: "(prefers-reduced-motion: reduce)",
+      onchange: null,
+      addEventListener,
+      removeEventListener,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    vi.stubGlobal("matchMedia", matchMedia);
+
+    const { container, unmount } = render(<GraphCanvas />);
+    const positions = () =>
+      [...container.querySelectorAll<SVGGElement>("[data-node-id]")].map(
+        (node) => node.getAttribute("transform"),
+      );
+    const settledPositions = positions();
+
+    await new Promise((resolve) => window.setTimeout(resolve, 80));
+
+    expect(matchMedia).toHaveBeenCalledWith(
+      "(prefers-reduced-motion: reduce)",
+    );
+    expect(addEventListener).toHaveBeenCalledWith(
+      "change",
+      expect.any(Function),
+    );
+    expect(positions()).toEqual(settledPositions);
+
+    const listener = addEventListener.mock.calls[0][1];
+    unmount();
+    expect(removeEventListener).toHaveBeenCalledWith("change", listener);
+  });
+
+  it("refits a zero-edge grid after its container width changes", () => {
+    // This fails if grid world coordinates move while an incompatible prior camera remains.
+    let resizeCallback!: ResizeObserverCallback;
+    class ControlledResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", ControlledResizeObserver);
+    setGraph(disconnectedGraph);
+
+    const { container } = render(<GraphCanvas />);
+    const svg = container.querySelector<SVGSVGElement>("svg")!;
+    const canvas = svg.parentElement as HTMLDivElement;
+    const zoomGroup = container.querySelector<SVGGElement>(".zoom-group")!;
+    const priorTransform = d3.zoomIdentity.translate(-1_000, -800).scale(2);
+    Object.defineProperty(canvas, "clientWidth", {
+      configurable: true,
+      value: 390,
+    });
+    Object.defineProperty(canvas, "clientHeight", {
+      configurable: true,
+      value: 600,
+    });
+    (svg as SVGSVGElement & { __zoom: d3.ZoomTransform }).__zoom =
+      priorTransform;
+    zoomGroup.setAttribute("transform", priorTransform.toString());
+
+    act(() => {
+      resizeCallback([], {} as ResizeObserver);
+    });
+
+    const resizedTransform = d3.zoomTransform(svg);
+    expect(resizedTransform).not.toEqual(priorTransform);
+    [
+      ...container.querySelectorAll<SVGGElement>("[data-node-id]"),
+    ].forEach((nodeElement) => {
+      const node = d3.select(nodeElement).datum() as { x: number; y: number };
+      const [x, y] = resizedTransform.apply([node.x, node.y]);
+      expect(x).toBeGreaterThan(0);
+      expect(x).toBeLessThan(390);
+      expect(y).toBeGreaterThan(0);
+      expect(y).toBeLessThan(600);
+    });
   });
 });

@@ -40,32 +40,36 @@ export default function GraphToolbar() {
         )}
       </div>
 
-      <div className="ml-auto flex min-w-0 items-center gap-2">
-        <div className="hidden xl:block">
+      <div
+        role="toolbar"
+        aria-label="图谱操作"
+        className="ml-auto flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overscroll-x-contain py-1 lg:flex-none"
+      >
+        <div className="shrink-0">
           <StrengthFilter />
         </div>
         <button
           type="button"
           onClick={requestFitView}
-          className="rounded-md border border-slate-600 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:border-teal-300 hover:text-teal-100"
+          className="shrink-0 rounded-md border border-slate-600 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:border-teal-300 hover:text-teal-100"
         >
           适应画布
         </button>
         <button
           type="button"
           onClick={requestRelayout}
-          className="hidden rounded-md border border-slate-600 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:border-teal-300 hover:text-teal-100 sm:inline-flex"
+          className="shrink-0 rounded-md border border-slate-600 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:border-teal-300 hover:text-teal-100"
         >
           重新布局
         </button>
-        <div className="hidden sm:block">
+        <div className="shrink-0">
           <ExportButton />
         </div>
         <button
           type="button"
           onClick={resetAnalysis}
           aria-label="新分析"
-          className="rounded-md bg-teal-400 px-2.5 py-1.5 text-xs font-semibold text-slate-950 transition-colors hover:bg-teal-300"
+          className="shrink-0 rounded-md bg-teal-400 px-2.5 py-1.5 text-xs font-semibold text-slate-950 transition-colors hover:bg-teal-300"
         >
           新分析
           <span className="sr-only">开始新分析</span>

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import GraphToolbar from "../GraphToolbar";
 import { useAnalysisStore } from "../../store/analysis";
 
@@ -66,6 +66,25 @@ describe("GraphToolbar", () => {
     expect(useAnalysisStore.getState().relayoutRequest).toBe(1);
     expect(screen.getByRole("button", { name: "导出 JSON" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新分析" })).toBeInTheDocument();
+  });
+
+  it("keeps every graph action in the narrow-screen scrollable toolbar", () => {
+    // This fails if responsive hiding removes any action from the reachable toolbar.
+    render(<GraphToolbar />);
+
+    const toolbar = screen.getByRole("toolbar", { name: "图谱操作" });
+    const actions = [
+      within(toolbar).getByLabelText("置信度阈值"),
+      within(toolbar).getByRole("button", { name: "适应画布" }),
+      within(toolbar).getByRole("button", { name: "重新布局" }),
+      within(toolbar).getByRole("button", { name: "导出 JSON" }),
+      within(toolbar).getByRole("button", { name: "新分析" }),
+    ];
+
+    expect(toolbar).toHaveClass("overflow-x-auto");
+    actions.forEach((action) => {
+      expect(action.closest('[class~="hidden"]')).toBeNull();
+    });
   });
 
   it("returns to table selection when starting a new analysis", () => {
