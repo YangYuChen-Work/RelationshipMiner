@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import TableSelector from "../TableSelector";
 import { useAnalysisStore } from "../../store/analysis";
 import type { ColumnInfo } from "../../api/tables";
@@ -137,5 +138,85 @@ describe("TableSelector", () => {
     await waitFor(() => {
       expect(screen.getByText("10 / 10")).toBeInTheDocument();
     });
+  });
+
+  it("filters table names in real time ignoring case and surrounding spaces", async () => {
+    mockFetchTables([
+      { name: "UserAccounts" },
+      { name: "audit_users" },
+      { name: "orders" },
+    ]);
+    const user = userEvent.setup();
+
+    render(<TableSelector />);
+
+    const searchInput = await screen.findByRole("searchbox", {
+      name: "搜索表名",
+    });
+    await user.type(searchInput, "  USER  ");
+
+    await waitFor(() => {
+      expect(screen.getByText("UserAccounts")).toBeInTheDocument();
+      expect(screen.getByText("audit_users")).toBeInTheDocument();
+      expect(screen.queryByText("orders")).not.toBeInTheDocument();
+    });
+  });
+
+  it("restores the complete table list when the search is cleared", async () => {
+    mockFetchTables([{ name: "users" }, { name: "orders" }]);
+    const user = userEvent.setup();
+
+    render(<TableSelector />);
+
+    const searchInput = await screen.findByRole("searchbox", {
+      name: "搜索表名",
+    });
+    await user.type(searchInput, "users");
+    await waitFor(() => {
+      expect(screen.queryByText("orders")).not.toBeInTheDocument();
+    });
+
+    await user.clear(searchInput);
+
+    await waitFor(() => {
+      expect(screen.getByText("users")).toBeInTheDocument();
+      expect(screen.getByText("orders")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps a selected table selected while search hides it", async () => {
+    mockFetchTables([{ name: "users" }, { name: "orders" }]);
+    useAnalysisStore.setState({
+      selectedTables: new Map([
+        [
+          "users",
+          {
+            name: "users",
+            columns: MOCK_COLUMNS,
+            selectedFields: new Set(["class_name"]),
+          },
+        ],
+      ]),
+    });
+    const user = userEvent.setup();
+
+    render(<TableSelector />);
+
+    const searchInput = await screen.findByRole("searchbox", {
+      name: "搜索表名",
+    });
+    await user.type(searchInput, "orders");
+
+    await waitFor(() => {
+      expect(screen.queryByText("users")).not.toBeInTheDocument();
+      expect(screen.getByText("1 / 10")).toBeInTheDocument();
+    });
+
+    await user.clear(searchInput);
+
+    const usersCheckbox = await screen.findByRole("checkbox", {
+      name: "users",
+    });
+    expect(usersCheckbox).toBeChecked();
   });
 });

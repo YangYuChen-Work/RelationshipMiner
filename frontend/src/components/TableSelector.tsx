@@ -3,7 +3,7 @@
 展示数据库中所有表，支持多选勾选，显示已选数量与上限（10）。
 */
 
-import { useEffect } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useAnalysisStore } from "../store/analysis";
 
 export default function TableSelector() {
@@ -14,6 +14,18 @@ export default function TableSelector() {
   const loadTables = useAnalysisStore((s) => s.loadTables);
   const toggleTable = useAnalysisStore((s) => s.toggleTable);
   const errorMessage = useAnalysisStore((s) => s.errorMessage);
+  const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const normalizedSearchQuery = deferredSearchQuery.trim().toLocaleLowerCase();
+  const filteredTables = useMemo(
+    () =>
+      normalizedSearchQuery
+        ? tables.filter((table) =>
+            table.name.toLocaleLowerCase().includes(normalizedSearchQuery)
+          )
+        : tables,
+    [normalizedSearchQuery, tables]
+  );
 
   useEffect(() => {
     loadTables();
@@ -60,12 +72,23 @@ export default function TableSelector() {
         </span>
       </div>
 
+      <div className="relative">
+        <input
+          type="search"
+          aria-label="搜索表名"
+          placeholder="搜索表名"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        />
+      </div>
+
       {tables.length === 0 && (
         <p className="text-gray-400 text-sm">未发现任何表，请检查数据库连接</p>
       )}
 
       <div className="grid gap-1">
-        {tables.map((t) => {
+        {filteredTables.map((t) => {
           const isSelected = selectedTables.has(t.name);
           const isDisabled = !isSelected && selectedCount >= maxTables;
 
