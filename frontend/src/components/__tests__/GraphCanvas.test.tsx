@@ -77,7 +77,6 @@ function setGraph(graph: GraphData) {
     graph,
     hoveredNodeId: null,
     selectedNodeId: null,
-    detailPanelNodeId: null,
     confidenceThreshold: 0,
     fitViewRequest: 0,
     relayoutRequest: 0,

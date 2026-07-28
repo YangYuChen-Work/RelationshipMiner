@@ -13,18 +13,8 @@ export default function GraphWorkbench() {
             <GraphCanvas />
           </div>
         </section>
-
-        <aside className="hidden min-h-0 border-l border-slate-700/70 bg-[#101c2a] lg:block">
-          <div className="border-b border-slate-700/70 px-5 py-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-300">
-              节点详情
-            </p>
-            <p className="mt-1 text-sm text-slate-400">选择图谱中的节点以查看关联数据。</p>
-          </div>
-        </aside>
+        <NodeDetailPanel />
       </main>
-
-      <NodeDetailPanel />
     </section>
   );
 }

@@ -118,7 +118,6 @@ export default function GraphCanvas() {
   );
   const setHoveredNode = useAnalysisStore((state) => state.setHoveredNode);
   const setSelectedNode = useAnalysisStore((state) => state.setSelectedNode);
-  const openDetailPanel = useAnalysisStore((state) => state.openDetailPanel);
 
   const lastFitViewRequest = useRef(fitViewRequest);
   const lastRelayoutRequest = useRef(relayoutRequest);
@@ -403,10 +402,6 @@ export default function GraphCanvas() {
         event.stopPropagation();
         setSelectedNode(node.id);
       })
-      .on("dblclick.node", (event, node) => {
-        event.stopPropagation();
-        openDetailPanel(node.id);
-      })
       .on("keydown.node", (event: KeyboardEvent, node) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -524,7 +519,6 @@ export default function GraphCanvas() {
     };
   }, [
     graph,
-    openDetailPanel,
     setHoveredNode,
     setSelectedNode,
   ]);

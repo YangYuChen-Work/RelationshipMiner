@@ -45,7 +45,6 @@ interface AnalysisState {
   // ── 图谱交互状态 ──
   hoveredNodeId: string | null;
   selectedNodeId: string | null;
-  detailPanelNodeId: string | null;
   confidenceThreshold: number;
   fitViewRequest: number;
   relayoutRequest: number;
@@ -64,8 +63,6 @@ interface AnalysisState {
   // ── 操作：图谱交互 ──
   setHoveredNode: (id: string | null) => void;
   setSelectedNode: (id: string | null) => void;
-  openDetailPanel: (id: string) => void;
-  closeDetailPanel: () => void;
   setConfidenceThreshold: (value: number) => void;
   requestFitView: () => void;
   requestRelayout: () => void;
@@ -102,7 +99,6 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   taskId: null,
   hoveredNodeId: null,
   selectedNodeId: null,
-  detailPanelNodeId: null,
   confidenceThreshold: 0,
   fitViewRequest: 0,
   relayoutRequest: 0,
@@ -285,7 +281,6 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       taskId: null,
       hoveredNodeId: null,
       selectedNodeId: null,
-      detailPanelNodeId: null,
       confidenceThreshold: 0,
       fitViewRequest: 0,
       relayoutRequest: 0,
@@ -301,14 +296,6 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
   setSelectedNode: (id) => {
     set({ selectedNodeId: id });
-  },
-
-  openDetailPanel: (id) => {
-    set({ detailPanelNodeId: id });
-  },
-
-  closeDetailPanel: () => {
-    set({ detailPanelNodeId: null });
   },
 
   setConfidenceThreshold: (value) => {

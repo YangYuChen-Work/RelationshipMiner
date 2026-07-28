@@ -1,160 +1,184 @@
-/** NodeDetailPanel — 右侧详情抽屉组件。
-
-双击节点后滑出，展示该数据记录的所有字段原始值及关联节点列表。
-*/
-
 import { useAnalysisStore } from "../store/analysis";
-import type { NodeData } from "../api/analysis";
+import type { EdgeData, GraphData, NodeData } from "../api/analysis";
 
-/** 查找与指定节点关联的节点 ID 列表。 */
-function getRelatedNodeIds(
-  nodeId: string,
-  graph: { nodes: NodeData[]; edges: { source: string; target: string }[] }
-): string[] {
-  const related = new Set<string>();
-  for (const edge of graph.edges) {
-    if (edge.source === nodeId) related.add(edge.target);
-    if (edge.target === nodeId) related.add(edge.source);
-  }
-  return Array.from(related);
+type RelatedNode = {
+  edge: EdgeData;
+  node: NodeData | undefined;
+  nodeId: string;
+};
+
+function relatedNodes(nodeId: string, graph: GraphData): RelatedNode[] {
+  return graph.edges.flatMap((edge) => {
+    const relatedId =
+      edge.source === nodeId
+        ? edge.target
+        : edge.target === nodeId
+          ? edge.source
+          : null;
+
+    if (!relatedId) return [];
+
+    return [
+      {
+        edge,
+        node: graph.nodes.find((node) => node.id === relatedId),
+        nodeId: relatedId,
+      },
+    ];
+  });
+}
+
+function fieldValue(value: unknown): string {
+  if (value === null) return "NULL";
+  if (typeof value === "object") return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+function confidenceLabel(confidence: number): string {
+  return `${Math.round(confidence * 100)}%`;
+}
+
+function InspectorHeading() {
+  return (
+    <header className="border-b border-slate-700/70 px-5 py-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-300">
+        节点详情
+      </p>
+      <p className="mt-1 text-sm text-slate-400">选择图谱中的节点以查看关联数据。</p>
+    </header>
+  );
 }
 
 export default function NodeDetailPanel() {
-  const detailPanelNodeId = useAnalysisStore((s) => s.detailPanelNodeId);
-  const closeDetailPanel = useAnalysisStore((s) => s.closeDetailPanel);
-  const graph = useAnalysisStore((s) => s.graph);
-  const openDetailPanel = useAnalysisStore((s) => s.openDetailPanel);
+  const graph = useAnalysisStore((state) => state.graph);
+  const selectedNodeId = useAnalysisStore((state) => state.selectedNodeId);
+  const setSelectedNode = useAnalysisStore((state) => state.setSelectedNode);
+  const node = graph?.nodes.find((item) => item.id === selectedNodeId);
+  const relations = node && graph ? relatedNodes(node.id, graph) : [];
 
-  if (!detailPanelNodeId || !graph) return null;
-
-  const node = graph.nodes.find((n) => n.id === detailPanelNodeId);
-  if (!node) return null;
-
-  const relatedIds = getRelatedNodeIds(node.id, graph);
-  const fieldEntries = Object.entries(node.field_values);
+  const mobilePosition = node
+    ? "fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:w-auto lg:max-w-none lg:shadow-none"
+    : "hidden lg:block";
 
   return (
-    <>
-      {/* 遮罩层 */}
-      <div
-        className="fixed inset-0 z-30 bg-black/20 backdrop-blur-sm"
-        onClick={closeDetailPanel}
-      />
+    <aside
+      className={`${mobilePosition} min-h-0 overflow-y-auto border-l border-slate-700/70 bg-[#101c2a]`}
+      aria-label="节点详情检查器"
+    >
+      <InspectorHeading />
 
-      {/* 抽屉面板 */}
-      <div className="fixed top-0 right-0 z-40 h-full w-96 bg-white shadow-2xl border-l border-gray-200 overflow-y-auto transition-transform duration-300 ease-out">
-        {/* 头部 */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-5 py-4 flex items-center justify-between">
-          <div>
-            <h3 className="text-base font-semibold text-gray-900">节点详情</h3>
-            <p className="text-xs text-gray-400 font-mono mt-0.5 truncate max-w-[280px]">
-              {node.id}
-            </p>
-          </div>
-          <button
-            onClick={closeDetailPanel}
-            className="text-gray-400 hover:text-gray-600 text-xl leading-none p-1"
-            aria-label="关闭面板"
-          >
-            ×
-          </button>
-        </div>
-
-        <div className="px-5 py-4 space-y-5">
-          {/* 基本信息 */}
+      {node && graph ? (
+        <div className="space-y-6 px-5 py-5">
           <section>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              基本信息
-            </h4>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-gray-500">来源表</dt>
-                <dd className="text-gray-900 font-medium">{node.source_table}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-gray-500">类名</dt>
-                <dd className="text-gray-900 font-mono text-xs truncate max-w-[200px]">
-                  {node.class_name || "—"}
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="text-sm font-semibold text-slate-100">节点概览</h2>
+              <button
+                type="button"
+                onClick={() => setSelectedNode(null)}
+                className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100 lg:hidden"
+                aria-label="关闭节点详情"
+              >
+                ×
+              </button>
+            </div>
+
+            <dl className="mt-3 space-y-3 text-sm">
+              <div>
+                <dt className="text-xs text-slate-400">完整 ID</dt>
+                <dd className="mt-1 break-all font-mono text-xs text-slate-100">
+                  {node.id}
                 </dd>
               </div>
-              <div className="flex justify-between">
-                <dt className="text-gray-500">关联度数</dt>
-                <dd className="text-gray-900 font-medium">{node.degree}</dd>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <dt className="text-xs text-slate-400">来源表</dt>
+                  <dd className="mt-1 text-slate-100">{node.source_table}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate-400">关联度</dt>
+                  <dd className="mt-1 text-slate-100">{node.degree}</dd>
+                </div>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">类名</dt>
+                <dd className="mt-1 break-all font-mono text-xs text-slate-200">
+                  {node.class_name ?? "—"}
+                </dd>
               </div>
             </dl>
           </section>
 
-          {/* 字段原始值 */}
           <section>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              字段值
-            </h4>
-            {fieldEntries.length === 0 ? (
-              <p className="text-sm text-gray-400">无字段数据</p>
+            <h2 className="text-sm font-semibold text-slate-100">字段值</h2>
+            {Object.keys(node.field_values).length === 0 ? (
+              <p className="mt-3 text-sm text-slate-400">没有可显示的字段值。</p>
             ) : (
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <tbody className="divide-y divide-gray-100">
-                    {fieldEntries.map(([key, value]) => (
-                      <tr key={key} className="hover:bg-gray-50">
-                        <td className="px-3 py-2 text-gray-500 font-mono text-xs w-1/2">
-                          {key}
-                        </td>
-                        <td className="px-3 py-2 text-gray-900 font-mono text-xs truncate max-w-[180px]">
-                          {value === null ? (
-                            <span className="text-gray-300 italic">NULL</span>
-                          ) : typeof value === "object" ? (
-                            JSON.stringify(value)
-                          ) : (
-                            String(value)
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <dl className="mt-3 divide-y divide-slate-700/70 overflow-hidden rounded-lg border border-slate-700/70">
+                {Object.entries(node.field_values).map(([key, value]) => (
+                  <div key={key} className="px-3 py-2.5">
+                    <dt className="font-mono text-xs text-teal-200">{key}</dt>
+                    <dd
+                      className={`mt-1 whitespace-pre-wrap break-words font-mono text-xs ${
+                        value === null ? "italic text-slate-500" : "text-slate-200"
+                      }`}
+                    >
+                      {fieldValue(value)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             )}
           </section>
 
-          {/* 关联节点 */}
           <section>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              关联节点
-              {relatedIds.length > 0 && (
-                <span className="ml-1 text-gray-400">({relatedIds.length})</span>
-              )}
-            </h4>
-            {relatedIds.length === 0 ? (
-              <p className="text-sm text-gray-400">无关联节点</p>
+            <h2 className="text-sm font-semibold text-slate-100">直接关系</h2>
+            {relations.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-400">没有直接关系。</p>
             ) : (
-              <ul className="space-y-1">
-                {relatedIds.map((id) => {
-                  const relatedNode = graph.nodes.find((n) => n.id === id);
-                  return (
-                    <li key={id}>
-                      <button
-                        onClick={() => openDetailPanel(id)}
-                        className="w-full text-left px-3 py-2 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors"
-                      >
-                        <span className="text-xs font-mono text-gray-700 truncate block">
-                          {id}
+              <ul className="mt-3 space-y-2">
+                {relations.map(({ edge, node: relatedNode, nodeId }) => (
+                  <li key={`${edge.source}-${edge.target}-${edge.labels.join("-")}`}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedNode(nodeId)}
+                      className="w-full rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-3 text-left transition-colors hover:border-teal-500/70 hover:bg-slate-800"
+                    >
+                      <span className="block break-all font-mono text-xs text-teal-200">
+                        {nodeId}
+                      </span>
+                      {relatedNode && (
+                        <span className="mt-1 block text-xs text-slate-400">
+                          {relatedNode.source_table}
                         </span>
-                        {relatedNode && (
-                          <span className="text-xs text-gray-400">
-                            {relatedNode.source_table}
-                            {relatedNode.class_name && ` · ${relatedNode.class_name.split(".").pop()}`}
-                          </span>
-                        )}
-                      </button>
-                    </li>
-                  );
-                })}
+                      )}
+                      <span className="mt-2 block text-xs text-slate-200">
+                        {edge.labels.join(" · ") || "关联"}
+                      </span>
+                      <span className="mt-1 block text-xs text-slate-400">
+                        {`置信度 ${confidenceLabel(edge.confidence)}`}
+                      </span>
+                    </button>
+                  </li>
+                ))}
               </ul>
             )}
           </section>
         </div>
-      </div>
-    </>
+      ) : (
+        <div className="px-5 py-5">
+          <h2 className="text-sm font-semibold text-slate-100">图谱概览</h2>
+          {graph ? (
+            <p className="mt-2 text-sm text-slate-400">
+              {`${graph.nodes.length} 个节点 · ${graph.edges.length} 条关系`}
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-slate-400">图谱生成后将在此处显示概览。</p>
+          )}
+          <p className="mt-4 rounded-lg border border-dashed border-slate-700 px-3 py-4 text-sm text-slate-400">
+            选择一个节点查看详情
+          </p>
+        </div>
+      )}
+    </aside>
   );
 }

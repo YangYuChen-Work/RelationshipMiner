@@ -146,7 +146,6 @@ describe("Integration: full user flow", () => {
       taskId: null,
       hoveredNodeId: null,
       selectedNodeId: null,
-      detailPanelNodeId: null,
       confidenceThreshold: 0,
     });
 
@@ -305,8 +304,8 @@ describe("Integration: full user flow", () => {
     // Should show node count
     await waitFor(() => {
       expect(
-        screen.getByText(/2 个节点.*1 条关系/)
-      ).toBeInTheDocument();
+        screen.getAllByText(/2 个节点.*1 条关系/).length
+      ).toBeGreaterThan(0);
     });
 
     // Should show StrengthFilter and ExportButton
@@ -542,8 +541,8 @@ describe("Integration: full user flow", () => {
 
     // Should show node count (2 nodes, 0 edges)
     expect(
-      screen.getByText(/0 条关系/)
-    ).toBeInTheDocument();
+      screen.getAllByText(/0 条关系/).length
+    ).toBeGreaterThan(0);
 
     vi.unstubAllGlobals();
   });
