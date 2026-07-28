@@ -87,6 +87,12 @@ export default function TableSelector() {
         <p className="text-gray-400 text-sm">未发现任何表，请检查数据库连接</p>
       )}
 
+      {tables.length > 0 &&
+        normalizedSearchQuery &&
+        filteredTables.length === 0 && (
+          <p className="text-gray-400 text-sm">未找到匹配的数据表</p>
+        )}
+
       <div className="grid gap-1">
         {filteredTables.map((t) => {
           const isSelected = selectedTables.has(t.name);

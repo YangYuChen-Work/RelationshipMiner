@@ -219,4 +219,23 @@ describe("TableSelector", () => {
     });
     expect(usersCheckbox).toBeChecked();
   });
+
+  it("shows a search-specific empty state when no table name matches", async () => {
+    mockFetchTables([{ name: "users" }, { name: "orders" }]);
+    const user = userEvent.setup();
+
+    render(<TableSelector />);
+
+    const searchInput = await screen.findByRole("searchbox", {
+      name: "搜索表名",
+    });
+    await user.type(searchInput, "products");
+
+    expect(
+      await screen.findByText("未找到匹配的数据表")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("未发现任何表，请检查数据库连接")
+    ).not.toBeInTheDocument();
+  });
 });
