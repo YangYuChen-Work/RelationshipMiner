@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import AnalysisLauncher from "./AnalysisLauncher";
 import DatabaseTableAccordion from "./DatabaseTableAccordion";
 import { useAnalysisStore } from "../store/analysis";
@@ -10,6 +10,18 @@ export default function SelectionWorkspace() {
   const selectedTables = useAnalysisStore((s) => s.selectedTables);
   const maxTables = useAnalysisStore((s) => s.maxTables);
   const loadTables = useAnalysisStore((s) => s.loadTables);
+  const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const normalizedSearchQuery = deferredSearchQuery.trim().toLocaleLowerCase();
+  const filteredTables = useMemo(
+    () =>
+      normalizedSearchQuery
+        ? tables.filter((table) =>
+            table.name.toLocaleLowerCase().includes(normalizedSearchQuery)
+          )
+        : tables,
+    [normalizedSearchQuery, tables]
+  );
 
   useEffect(() => {
     loadTables();
@@ -38,6 +50,17 @@ export default function SelectionWorkspace() {
         </p>
       )}
 
+      {!tablesLoading && !tablesError && tables.length > 0 && (
+        <input
+          type="search"
+          aria-label="搜索表名"
+          placeholder="搜索表名"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        />
+      )}
+
       {tablesError && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
           <p className="font-medium">加载失败</p>
@@ -62,9 +85,19 @@ export default function SelectionWorkspace() {
         </p>
       )}
 
+      {!tablesLoading &&
+        !tablesError &&
+        tables.length > 0 &&
+        normalizedSearchQuery &&
+        filteredTables.length === 0 && (
+          <p className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
+            未找到匹配的数据表
+          </p>
+        )}
+
       {!tablesLoading && tables.length > 0 && (
         <div className="space-y-2">
-          {tables.map((table) => (
+          {filteredTables.map((table) => (
             <DatabaseTableAccordion
               key={table.name}
               tableName={table.name}
