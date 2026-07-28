@@ -388,6 +388,9 @@ describe("Integration: full user flow", () => {
     expect(
       screen.getByRole("checkbox", { name: "选择表 overflow" })
     ).toBeDisabled();
+    expect(
+      screen.getByText("已达到十表上限，取消选择后可继续添加。")
+    ).toBeVisible();
   });
 
   it("resets to select phase when '开始新分析' is clicked", async () => {

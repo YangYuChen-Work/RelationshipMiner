@@ -29,6 +29,15 @@ export default function SelectionWorkspace() {
         </span>
       </div>
 
+      {selectedCount >= maxTables && (
+        <p
+          role="status"
+          className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+        >
+          已达到十表上限，取消选择后可继续添加。
+        </p>
+      )}
+
       {tablesError && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
           <p className="font-medium">加载失败</p>
