@@ -101,3 +101,25 @@ describe("analysis selection store", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("analysis graph workbench commands", () => {
+  it("increments the fit-view request marker for every request", () => {
+    // This fails if a fit command is dropped because the marker does not change.
+    const before = useAnalysisStore.getState().fitViewRequest;
+
+    useAnalysisStore.getState().requestFitView();
+
+    expect(useAnalysisStore.getState().fitViewRequest).toBe(before + 1);
+  });
+
+  it("returns graph commands to their stable initial markers when analysis resets", () => {
+    // This fails if a prior workbench command leaks into a subsequent analysis.
+    useAnalysisStore.getState().requestFitView();
+    useAnalysisStore.getState().requestRelayout();
+
+    useAnalysisStore.getState().resetAnalysis();
+
+    expect(useAnalysisStore.getState().fitViewRequest).toBe(0);
+    expect(useAnalysisStore.getState().relayoutRequest).toBe(0);
+  });
+});

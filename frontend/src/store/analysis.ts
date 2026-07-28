@@ -47,6 +47,8 @@ interface AnalysisState {
   selectedNodeId: string | null;
   detailPanelNodeId: string | null;
   confidenceThreshold: number;
+  fitViewRequest: number;
+  relayoutRequest: number;
 
   // ── 操作：元数据 ──
   loadTables: () => Promise<void>;
@@ -65,6 +67,8 @@ interface AnalysisState {
   openDetailPanel: (id: string) => void;
   closeDetailPanel: () => void;
   setConfidenceThreshold: (value: number) => void;
+  requestFitView: () => void;
+  requestRelayout: () => void;
 }
 
 /** 不可变更新 selectedTables Map：clone → 修改指定表 → set。 */
@@ -100,6 +104,8 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   selectedNodeId: null,
   detailPanelNodeId: null,
   confidenceThreshold: 0,
+  fitViewRequest: 0,
+  relayoutRequest: 0,
 
   // ── 元数据操作 ──
 
@@ -281,6 +287,8 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       selectedNodeId: null,
       detailPanelNodeId: null,
       confidenceThreshold: 0,
+      fitViewRequest: 0,
+      relayoutRequest: 0,
       tableErrors: new Map(),
     });
   },
@@ -305,5 +313,13 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
   setConfidenceThreshold: (value) => {
     set({ confidenceThreshold: value });
+  },
+
+  requestFitView: () => {
+    set((state) => ({ fitViewRequest: state.fitViewRequest + 1 }));
+  },
+
+  requestRelayout: () => {
+    set((state) => ({ relayoutRequest: state.relayoutRequest + 1 }));
   },
 }));

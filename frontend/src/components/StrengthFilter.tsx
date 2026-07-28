@@ -11,9 +11,12 @@ export default function StrengthFilter() {
   const setConfidenceThreshold = useAnalysisStore((s) => s.setConfidenceThreshold);
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 bg-white/90 backdrop-blur rounded-lg border border-gray-200 shadow-sm">
+    <div className="flex items-center gap-2 rounded-md border border-slate-600/80 bg-slate-900/90 px-3 py-2 text-slate-200 backdrop-blur">
+      <label htmlFor="strength-slider" className="text-xs font-medium text-slate-300">
+        置信度阈值
+      </label>
       {/* 弱关系标签 */}
-      <span className="text-xs text-gray-400 font-medium shrink-0">弱关系</span>
+      <span className="hidden text-xs font-medium text-slate-400 sm:inline">弱关系</span>
 
       {/* 滑块 */}
       <div className="relative flex-1 flex items-center">
@@ -26,40 +29,28 @@ export default function StrengthFilter() {
           onChange={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
           className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer
             [&::-webkit-slider-thumb]:appearance-none
-            [&::-webkit-slider-thumb]:w-4
-            [&::-webkit-slider-thumb]:h-4
+            [&::-webkit-slider-thumb]:w-3
+            [&::-webkit-slider-thumb]:h-3
             [&::-webkit-slider-thumb]:rounded-full
-            [&::-webkit-slider-thumb]:bg-blue-600
-            [&::-webkit-slider-thumb]:shadow-sm
+            [&::-webkit-slider-thumb]:bg-teal-400
             [&::-webkit-slider-thumb]:cursor-pointer
-            [&::-moz-range-thumb]:w-4
-            [&::-moz-range-thumb]:h-4
+            [&::-moz-range-thumb]:w-3
+            [&::-moz-range-thumb]:h-3
             [&::-moz-range-thumb]:rounded-full
-            [&::-moz-range-thumb]:bg-blue-600
+            [&::-moz-range-thumb]:bg-teal-400
             [&::-moz-range-thumb]:border-none
-            [&::-moz-range-thumb]:shadow-sm
             [&::-moz-range-thumb]:cursor-pointer"
           id="strength-slider"
           aria-label="置信度阈值"
         />
-
-        {/* 渐变色带（视觉提示） */}
-        <div
-          className="absolute top-1/2 left-0 -translate-y-1/2 h-1.5 rounded-full pointer-events-none"
-          style={{
-            width: `${confidenceThreshold * 100}%`,
-            background: "linear-gradient(to right, #d1d5db, #3b82f6)",
-            opacity: 0.3,
-          }}
-        />
       </div>
 
       {/* 强关系标签 */}
-      <span className="text-xs text-gray-400 font-medium shrink-0">强关系</span>
+      <span className="hidden text-xs font-medium text-slate-400 sm:inline">强关系</span>
 
       {/* 数值显示 */}
       <output
-        className="text-xs font-mono font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded shrink-0 min-w-[3.5em] text-center"
+        className="min-w-[3.5em] shrink-0 rounded bg-teal-400/10 px-2 py-0.5 text-center font-mono text-xs font-semibold text-teal-200"
         htmlFor="strength-slider"
       >
         {confidenceThreshold.toFixed(2)}
