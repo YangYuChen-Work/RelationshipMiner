@@ -5,10 +5,10 @@ import { useAnalysisStore } from "../../store/analysis";
 import type { ColumnInfo } from "../../api/tables";
 
 const makeColumns = (): ColumnInfo[] => [
-  { name: "id", type: "int", is_class_name: false },
-  { name: "class_name", type: "varchar", is_class_name: true },
-  { name: "name", type: "varchar", is_class_name: false },
-  { name: "email", type: "varchar", is_class_name: false },
+  { name: "id", type: "int", is_class_name: false, is_primary_key: false },
+  { name: "class_name", type: "varchar", is_class_name: true, is_primary_key: false },
+  { name: "name", type: "varchar", is_class_name: false, is_primary_key: false },
+  { name: "email", type: "varchar", is_class_name: false, is_primary_key: false },
 ];
 
 describe("FieldSelector", () => {

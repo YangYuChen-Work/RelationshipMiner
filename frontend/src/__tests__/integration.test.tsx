@@ -15,20 +15,20 @@ const MOCK_TABLES = [
 const MOCK_COLUMNS = {
   table_name: "users",
   columns: [
-    { name: "id", type: "int", is_class_name: false },
-    { name: "class_name", type: "varchar", is_class_name: true },
-    { name: "name", type: "varchar", is_class_name: false },
-    { name: "email", type: "varchar", is_class_name: false },
+    { name: "id", type: "int", is_class_name: false, is_primary_key: false },
+    { name: "class_name", type: "varchar", is_class_name: true, is_primary_key: false },
+    { name: "name", type: "varchar", is_class_name: false, is_primary_key: false },
+    { name: "email", type: "varchar", is_class_name: false, is_primary_key: false },
   ],
 };
 
 const MOCK_COLUMNS_ORDERS = {
   table_name: "orders",
   columns: [
-    { name: "id", type: "int", is_class_name: false },
-    { name: "class_name", type: "varchar", is_class_name: true },
-    { name: "user_id", type: "int", is_class_name: false },
-    { name: "total", type: "decimal", is_class_name: false },
+    { name: "id", type: "int", is_class_name: false, is_primary_key: false },
+    { name: "class_name", type: "varchar", is_class_name: true, is_primary_key: false },
+    { name: "user_id", type: "int", is_class_name: false, is_primary_key: false },
+    { name: "total", type: "decimal", is_class_name: false, is_primary_key: false },
   ],
 };
 
@@ -163,7 +163,14 @@ describe("Integration: full user flow", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("AI 关系图谱分析")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "AI 关系图谱分析" })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "选择数据库表与字段，AI 自动发现数据间的隐藏关联"
+        )
+      ).toBeInTheDocument();
     });
   });
 

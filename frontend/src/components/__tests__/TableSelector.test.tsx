@@ -5,8 +5,8 @@ import { useAnalysisStore } from "../../store/analysis";
 import type { ColumnInfo } from "../../api/tables";
 
 const MOCK_COLUMNS: ColumnInfo[] = [
-  { name: "id", type: "int", is_class_name: false },
-  { name: "class_name", type: "varchar", is_class_name: true },
+  { name: "id", type: "int", is_class_name: false, is_primary_key: false },
+  { name: "class_name", type: "varchar", is_class_name: true, is_primary_key: false },
 ];
 
 /** Mock fetch to return empty tables (component calls loadTables on mount). */

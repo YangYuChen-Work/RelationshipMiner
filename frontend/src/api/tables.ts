@@ -8,6 +8,7 @@ export interface ColumnInfo {
   name: string;
   type: string;
   is_class_name: boolean;
+  is_primary_key: boolean;
 }
 
 export interface TableColumnsResponse {
