@@ -528,7 +528,7 @@ async def test_planner_uses_remaining_deadline_and_returns_failed_warning(engine
 
 
 @pytest.mark.asyncio
-async def test_deadline_before_graph_assembly_does_not_start_graph_builder(
+async def test_deadline_before_graph_assembly_finalizes_strong_edges(
     engine, monkeypatch
 ):
     from engine.semantic import analyzer
@@ -547,12 +547,15 @@ async def test_deadline_before_graph_assembly_does_not_start_graph_builder(
         clock.expired = True
         return edges
 
-    def graph_must_not_start(*args, **kwargs):
-        raise AssertionError("graph assembly must not start after deadline")
+    real_build_graph = analyzer.build_graph
+
+    def final_graph_without_deadline(*args, **kwargs):
+        assert kwargs.get("check_deadline") is None
+        return real_build_graph(*args, **kwargs)
 
     monkeypatch.setattr(analyzer, "time", SimpleNamespace(monotonic=clock.monotonic))
     monkeypatch.setattr(analyzer, "build_fk_edges", expire_after_strong_edges)
-    monkeypatch.setattr(analyzer, "build_graph", graph_must_not_start)
+    monkeypatch.setattr(analyzer, "build_graph", final_graph_without_deadline)
     result = await analyzer.RelationshipAnalyzer(
         planner=_StaticPlanner([]),
         embedding_adapter=_ConstantEmbeddings(),
@@ -569,4 +572,133 @@ async def test_deadline_before_graph_assembly_does_not_start_graph_builder(
     )
 
     assert result.status == AnalysisStatus.PARTIAL
+    assert len(result.entity_nodes) == 4
+    assert len(result.entity_edges) == 2
     assert result.warnings == ["Analysis timed out."]
+
+
+@pytest.mark.asyncio
+async def test_empty_plan_keeps_relation_table_edge_without_selecting_class_name(
+    engine,
+):
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    _install_user_order_relation_table(engine)
+    result = await RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="orders", dimensions=["amount"]),
+            ]
+        ),
+    )
+
+    assert result.status == AnalysisStatus.COMPLETE
+    assert len(result.entity_nodes) == 4
+    evidence_methods = [
+        relation.evidence[0].method
+        for edge in result.entity_edges
+        for relation in edge.relations
+    ]
+    assert evidence_methods.count("relation_table") == 2
+
+
+@pytest.mark.asyncio
+async def test_deadline_after_structural_discovery_finalizes_loaded_graph(
+    engine,
+    monkeypatch,
+):
+    from engine.semantic import analyzer
+
+    class Clock:
+        expired = False
+
+        def monotonic(self) -> float:
+            return 2.0 if self.expired else 0.0
+
+    clock = Clock()
+    _install_user_order_relation_table(engine)
+    real_relation_edges = analyzer.build_relation_table_edges
+
+    def discover_then_expire(*args, **kwargs):
+        edges = real_relation_edges(*args, **kwargs)
+        clock.expired = True
+        return edges
+
+    monkeypatch.setattr(analyzer, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(
+        analyzer,
+        "build_relation_table_edges",
+        discover_then_expire,
+    )
+    result = await analyzer.RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="orders", dimensions=["amount"]),
+            ],
+            time_budget_seconds=1,
+        ),
+    )
+
+    assert result.status == AnalysisStatus.PARTIAL
+    assert len(result.entity_nodes) == 4
+    assert len(result.entity_edges) == 2
+    assert result.warnings == ["Analysis timed out."]
+
+
+@pytest.mark.asyncio
+async def test_structural_discovery_redacts_internal_error(engine, monkeypatch):
+    from engine.semantic import analyzer
+
+    def leaking_discovery(*args, **kwargs):
+        raise RuntimeError("relation database password=secret-value")
+
+    monkeypatch.setattr(
+        analyzer,
+        "build_relation_table_edges",
+        leaking_discovery,
+    )
+    result = await analyzer.RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="orders", dimensions=["amount"]),
+            ]
+        ),
+    )
+
+    assert result.status == AnalysisStatus.PARTIAL
+    assert result.warnings == [
+        "Structural relation discovery failed (internal_error)."
+    ]
+    assert "secret" not in str(result.model_dump())
+
+
+def _install_user_order_relation_table(engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE relation_id ("
+            "left_id TEXT, right_id TEXT, left_class TEXT, right_class TEXT)"
+        ))
+        connection.execute(text(
+            "INSERT INTO relation_id "
+            "(left_id, right_id, left_class, right_class) VALUES "
+            "('1', '1', 'com.example.User', 'com.example.Order'), "
+            "('2', '2', 'com.example.Admin', 'com.example.Order')"
+        ))
