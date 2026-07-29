@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SemanticGraphData } from "../api/analysis";
 import type { GraphLayout } from "./layout";
+import { hitTest } from "./hitTest";
 import { buildScene } from "./scene";
 
 const graph: SemanticGraphData = {
@@ -156,5 +157,75 @@ describe("buildScene", () => {
     const scene = buildScene({ ...input(1.2), graph: invalidConfidence, confidenceThreshold: 0 });
     expect(scene.tableEdges).toHaveLength(0);
     expect(scene.entityEdges).toHaveLength(0);
+  });
+
+  it("skips nodes whose extreme zoom produces unusable screen radii", () => {
+    const extremeGraph: SemanticGraphData = {
+      table_nodes: [{ id: "origin", display_name: "Origin", entity_count: 0 }],
+      entity_nodes: [],
+      table_edges: [],
+      entity_edges: [],
+    };
+    const extremeLayout: GraphLayout = {
+      tableRegions: [],
+      tableNodes: [{ id: "origin", x: 0, y: 0 }],
+      entityNodes: [],
+      tableEdges: [],
+      entityEdges: [],
+    };
+
+    const scene = buildScene({
+      graph: extremeGraph,
+      layout: extremeLayout,
+      transform: { k: Number.MAX_VALUE, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+
+    expect(scene.tableNodes).toHaveLength(0);
+    expect(hitTest(scene, { x: 0, y: 0 })).toBeNull();
+  });
+
+  it("emits only finite, positive table regions after transformation", () => {
+    const regionGraph: SemanticGraphData = {
+      table_nodes: [
+        { id: "valid", display_name: "Valid", entity_count: 0 },
+        { id: "zero", display_name: "Zero", entity_count: 0 },
+        { id: "negative", display_name: "Negative", entity_count: 0 },
+      ],
+      entity_nodes: [],
+      table_edges: [],
+      entity_edges: [],
+    };
+    const regionLayout: GraphLayout = {
+      tableRegions: [
+        { id: "valid", x: 1, y: 5, width: 20, height: 10, header: { x: 1, y: 5 } },
+        { id: "zero", x: 0, y: 0, width: 0, height: 10, header: { x: 0, y: 0 } },
+        { id: "negative", x: 0, y: 0, width: 10, height: -1, header: { x: 0, y: 0 } },
+      ],
+      tableNodes: [],
+      entityNodes: [],
+      tableEdges: [],
+      entityEdges: [],
+    };
+
+    expect(buildScene({
+      graph: regionGraph,
+      layout: regionLayout,
+      transform: { k: 2, x: 5, y: 7 },
+      confidenceThreshold: 0,
+    }).tableRegions.map((region) => region.id)).toEqual(["valid"]);
+
+    const overflowingLayout: GraphLayout = {
+      ...regionLayout,
+      tableRegions: [
+        { id: "valid", x: 0, y: 0, width: 2, height: 2, header: { x: 0, y: 0 } },
+      ],
+    };
+    expect(buildScene({
+      graph: regionGraph,
+      layout: overflowingLayout,
+      transform: { k: Number.MAX_VALUE, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    }).tableRegions).toHaveLength(0);
   });
 });

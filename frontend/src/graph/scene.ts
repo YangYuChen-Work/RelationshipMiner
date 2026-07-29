@@ -14,6 +14,7 @@ const TABLE_WORLD_RADIUS = 14;
 const ENTITY_WORLD_RADIUS = 4;
 const MIN_NODE_HIT_RADIUS = 6;
 const NODE_HIT_PADDING = 4;
+const MAX_NODE_SCREEN_RADIUS = 4_000;
 
 export interface WorldPoint {
   x: number;
@@ -121,13 +122,22 @@ function nodeCommand(
   const screen = toScreen(world, transform);
   if (!validPoint(screen)) return null;
   const screenRadius = worldRadius * transform.k;
+  if (
+    !Number.isFinite(screenRadius) ||
+    screenRadius <= 0 ||
+    screenRadius > MAX_NODE_SCREEN_RADIUS
+  ) {
+    return null;
+  }
+  const hitRadius = Math.max(MIN_NODE_HIT_RADIUS, screenRadius) + NODE_HIT_PADDING;
+  if (!Number.isFinite(hitRadius) || hitRadius <= 0) return null;
   return {
     id: node.id,
     label,
     world,
     screen,
     screenRadius,
-    hitRadius: Math.max(MIN_NODE_HIT_RADIUS, screenRadius) + NODE_HIT_PADDING,
+    hitRadius,
   };
 }
 
@@ -161,16 +171,26 @@ function byId<T extends { id: string }>(items: readonly T[]): Map<string, T> {
 
 function tableRegionCommand(region: TableRegion, transform: GraphTransform): SceneTableRegion | null {
   const world = { x: region.x, y: region.y, width: region.width, height: region.height };
-  if (!Object.values(world).every(Number.isFinite)) return null;
+  if (
+    !Object.values(world).every(Number.isFinite) ||
+    world.width <= 0 ||
+    world.height <= 0
+  ) {
+    return null;
+  }
+  const screen = {
+    x: world.x * transform.k + transform.x,
+    y: world.y * transform.k + transform.y,
+    width: world.width * transform.k,
+    height: world.height * transform.k,
+  };
+  if (!Object.values(screen).every((value) => Number.isFinite(value) && value > 0)) {
+    return null;
+  }
   return {
     id: region.id,
     world,
-    screen: {
-      x: world.x * transform.k + transform.x,
-      y: world.y * transform.k + transform.y,
-      width: world.width * transform.k,
-      height: world.height * transform.k,
-    },
+    screen,
   };
 }
 
