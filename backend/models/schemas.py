@@ -1,6 +1,6 @@
 """Pydantic 数据模型。"""
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class TableInfo(BaseModel):
@@ -39,7 +39,15 @@ class TableSelection(BaseModel):
     """单张表的分析选择。"""
 
     name: str
-    fields: list[str]
+    dimensions: list[str] = Field(
+        validation_alias=AliasChoices("dimensions", "fields"),
+        serialization_alias="dimensions",
+    )
+
+    @property
+    def fields(self) -> list[str]:
+        """Legacy read-only alias used by older callers."""
+        return self.dimensions
 
 
 class AnalyzeRequest(BaseModel):

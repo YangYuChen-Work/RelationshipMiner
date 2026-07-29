@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -154,90 +155,58 @@ def test_pipeline_does_not_send_system_fields_to_ai(
     engine,
     monkeypatch,
 ):
+    """Primary key and class metadata never enter semantic documents."""
     captured: dict[str, object] = {}
+    from engine.semantic.corpus import build_entity_documents as real_build
 
-    def capture_ai_input(table_schemas, sample_values):
-        captured["table_schemas"] = table_schemas
-        captured["sample_values"] = sample_values
-        return []
+    def capture_documents(*args, **kwargs):
+        documents = real_build(*args, **kwargs)
+        captured["documents"] = documents
+        return documents
 
     monkeypatch.setattr(
-        "engine.pipeline.decide_matches",
-        capture_ai_input,
+        "engine.semantic.analyzer.build_entity_documents", capture_documents
     )
-
-    asyncio.run(
-        run_analysis_pipeline(
-            engine,
-            [
-                {
-                    "name": "users",
-                    "fields": ["id", "name", "class_name"],
-                }
-            ],
-        )
-    )
-
-    columns = captured["table_schemas"][0]["columns"]
-    assert [column["name"] for column in columns] == ["name"]
-    assert set(captured["sample_values"]["users"][0]) == {"name"}
+    asyncio.run(run_analysis_pipeline(engine, [{
+        "name": "users", "fields": ["id", "name", "class_name"],
+    }]))
+    assert captured["documents"][0].dimensions == {"name": "Alice"}
 
 
 def test_schema_failure_is_attributed_to_schema_progress_phase(
     engine,
     monkeypatch,
 ):
-    progress_events: list[tuple[int, str]] = []
+    progress_events: list[dict[str, object]] = []
 
     def fail_schema_analysis(engine, selected_names):
         raise RuntimeError("schema unavailable")
 
-    monkeypatch.setattr(
-        "engine.pipeline.analyze_schema",
-        fail_schema_analysis,
-    )
-
-    with pytest.raises(RuntimeError, match="schema unavailable"):
-        asyncio.run(
-            run_analysis_pipeline(
-                engine,
-                [{"name": "users", "fields": ["name"]}],
-                on_progress=lambda phase, message, progress: (
-                    progress_events.append((phase, message))
-                ),
-            )
-        )
-
-    assert progress_events[-1][0] == 1
-    assert "Schema" in progress_events[-1][1]
+    monkeypatch.setattr("engine.semantic.analyzer.analyze_schema", fail_schema_analysis)
+    result = asyncio.run(run_analysis_pipeline(
+        engine, [{"name": "users", "fields": ["name"]}],
+        on_progress=progress_events.append,
+    ))
+    assert result.status == "failed"
+    assert "Schema analysis failed" in result.warnings[0]
+    assert progress_events[-1]["phase"] == "schema"
 
 
 def test_schema_timeout_is_reported_before_schema_completion(
     engine,
     monkeypatch,
 ):
-    progress_events: list[tuple[int, str]] = []
+    progress_events: list[dict[str, object]] = []
     clock_values = iter([0.0, 181.0])
 
-    class FakeEventLoop:
-        def time(self):
-            return next(clock_values)
-
-    async def run_with_fake_clock():
-        monkeypatch.setattr(
-            "engine.pipeline.asyncio.get_event_loop",
-            lambda: FakeEventLoop(),
-        )
-        await run_analysis_pipeline(
-            engine,
-            [{"name": "users", "fields": ["name"]}],
-            timeout_seconds=180.0,
-            on_progress=lambda phase, message, progress: (
-                progress_events.append((phase, message))
-            ),
-        )
-
-    with pytest.raises(AnalysisTimeoutError):
-        asyncio.run(run_with_fake_clock())
-
-    assert progress_events == [(1, "正在分析 Schema...")]
+    monkeypatch.setattr(
+        "engine.semantic.analyzer.time",
+        SimpleNamespace(monotonic=lambda: next(clock_values)),
+    )
+    result = asyncio.run(run_analysis_pipeline(
+        engine, [{"name": "users", "fields": ["name"]}],
+        timeout_seconds=180.0, on_progress=progress_events.append,
+    ))
+    assert result.status == "partial"
+    assert "time budget reached" in result.warnings[0]
+    assert progress_events[0]["phase"] == "schema"

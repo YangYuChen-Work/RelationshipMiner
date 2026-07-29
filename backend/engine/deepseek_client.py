@@ -47,6 +47,8 @@ class DeepSeekJsonAdapter:
         max_tokens: int,
         response_model: type[BaseModel] | None = None,
     ) -> dict[str, object]:
+        if not self.api_key:
+            raise LlmBatchError("DeepSeek API key is not configured")
         if self._client is None:
             self._client = AsyncOpenAI(
                 api_key=self.api_key,
