@@ -10,6 +10,7 @@ from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.models import EntityDocument, RelationshipPlan
 from engine.semantic.retrieval import (
     RetrievalDiagnostics,
+    iter_candidate_groups,
     retrieve_candidate_groups,
 )
 
@@ -449,6 +450,25 @@ def test_keyword_only_retrieval_does_not_load_embeddings():
         candidate.entity_id
         for candidate in groups[0].candidates
     ] == ["part:1"]
+
+
+def test_keyword_postings_bound_comparisons_and_stream_groups():
+    diagnostics = RetrievalDiagnostics()
+    documents = [_document("process:1", "process", "shared")]
+    documents.extend(
+        _document(f"part:{index}", "part", "shared")
+        for index in range(1000)
+    )
+
+    groups = iter_candidate_groups(
+        documents, [_plan(retrieval_modes=["keyword"], candidate_limit=3)],
+        RejectingEmbeddings(), diagnostics=diagnostics,
+    )
+    first = next(groups)
+
+    assert len(first.candidates) == 3
+    assert diagnostics.keyword_postings_examined <= 3
+    assert diagnostics.peak_groups_buffered == 1
 
 
 def test_deadline_after_target_encoding_stops_before_query_encoding():

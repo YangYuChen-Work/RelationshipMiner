@@ -32,7 +32,7 @@ from .models import (
     RelationEvidence,
 )
 from .planner import RelationshipPlanner
-from .retrieval import retrieve_candidate_groups
+from .retrieval import iter_candidate_groups
 
 ProgressCallback = Callable[[dict[str, object]], object]
 
@@ -139,8 +139,8 @@ class RelationshipAnalyzer:
             if str(error) not in warnings:
                 warnings.append(str(error))
             return self._empty_partial(diagnostics, warnings)
-        except Exception as error:
-            warnings.append(f"Schema analysis failed: {error}")
+        except Exception:
+            warnings.append("Schema analysis failed (internal_error).")
             return self._empty_failed(diagnostics, warnings)
 
         class_name_fields = {
@@ -241,9 +241,9 @@ class RelationshipAnalyzer:
                     planner_timed_out = True
                     if str(error) not in warnings:
                         warnings.append(str(error))
-                except Exception as error:
+                except Exception:
                     planner_failed = True
-                    warnings.append(f"Relationship planning failed: {error}")
+                    warnings.append("Relationship planning failed (internal_error).")
             else:
                 planner_failed = True
                 planner_timed_out = True
@@ -271,7 +271,7 @@ class RelationshipAnalyzer:
                 pending_groups += 1
                 continue
             try:
-                candidate_groups = retrieve_candidate_groups(
+                retrieved_groups = iter_candidate_groups(
                     representative_documents,
                     [plan],
                     self._embedding_adapter,
@@ -286,49 +286,49 @@ class RelationshipAnalyzer:
                 warnings.append(f"Candidate retrieval failed: {error}")
                 failed_groups += 1
                 continue
-            candidate_groups = [
-                group for group in candidate_groups if group.candidates
-            ]
-            candidate_count = sum(
-                len(group.candidates) for group in candidate_groups
-            )
-            diagnostics.candidates_retrieved += candidate_count
-            await emit("candidates", "Candidate retrieval finished.", 0.55)
-            if not candidate_groups:
-                continue
+            candidate_count = 0
+            def non_empty_groups():
+                nonlocal candidate_count
+                for group in retrieved_groups:
+                    if group.candidates:
+                        candidate_count += len(group.candidates)
+                        yield group
+            candidate_groups = non_empty_groups()
             if not before("启动候选判断前"):
-                pending_groups += len(candidate_groups)
-                diagnostics.candidates_pending += candidate_count
+                # The stream has not been consumed, so there is no bounded
+                # candidate total to claim.  Preserve partial status without
+                # materializing every remaining group merely for diagnostics.
+                pending_groups += 1
                 continue
             try:
                 judgement = await self._judge.judge_groups(
                     candidate_groups, deadline
                 )
-            except Exception as error:
-                failed_groups += len(candidate_groups)
-                diagnostics.candidates_pending += candidate_count
-                warnings.append(f"Semantic judgement failed: {error}")
+            except Exception:
+                failed_groups += 1
+                warnings.append("Semantic judgement failed (internal_error).")
                 continue
+            diagnostics.candidates_retrieved += candidate_count
+            await emit("candidates", "Candidate retrieval finished.", 0.55)
             completed_groups += judgement.completed_groups
             failed_groups += judgement.failed_groups
             pending_groups += judgement.pending_groups
             completed_candidate_count = sum(
-                len(group.candidates)
-                for group in candidate_groups[: judgement.completed_groups]
+                outcome.candidate_count for outcome in judgement.outcomes
+                if outcome.status == "completed"
             )
             diagnostics.candidates_completed += completed_candidate_count
-            unfinished_group_count = (
-                judgement.failed_groups + judgement.pending_groups
-            )
+            unfinished = [
+                outcome for outcome in judgement.outcomes
+                if outcome.status != "completed"
+            ]
+            unfinished_group_count = len(unfinished)
             if unfinished_group_count:
                 warnings.append(
                     f"{unfinished_group_count} candidate groups did not complete judgement."
                 )
                 diagnostics.candidates_pending += sum(
-                    len(group.candidates)
-                    for group in candidate_groups[
-                        max(0, len(candidate_groups) - unfinished_group_count) :
-                    ]
+                    outcome.candidate_count for outcome in unfinished
                 )
             relation_decisions.extend(
                 _expand_signature_decisions(

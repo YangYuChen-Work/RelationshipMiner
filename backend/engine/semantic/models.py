@@ -128,6 +128,14 @@ class JudgementBatchResult(BaseModel):
     completed_groups: int = 0
     failed_groups: int = 0
     pending_groups: int = 0
+    outcomes: list["JudgementGroupOutcome"] = Field(default_factory=list)
+    peak_live_tasks: int = 0
+
+
+class JudgementGroupOutcome(BaseModel):
+    source_id: str
+    candidate_count: int
+    status: Literal["completed", "failed", "pending"]
 
 
 class AnalysisResult(BaseModel):

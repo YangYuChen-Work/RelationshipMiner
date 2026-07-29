@@ -538,6 +538,7 @@ class TestAnalyzeWebSocket:
             "RelationshipAnalyzer",
             semantic_analyzer_factory,
         )
+        pipeline._shared_analyzer = None
 
         task_id = client.post(
             "/api/analyze",
@@ -665,7 +666,7 @@ class TestAnalyzeWebSocket:
     def test_unexpected_pipeline_error_is_terminal_failed_result(self, client: TestClient, monkeypatch):
         import routers.analyze as analyze_router
 
-        monkeypatch.setattr(analyze_router, "run_analysis_pipeline", AsyncMock(side_effect=RuntimeError("broken")))
+        monkeypatch.setattr(analyze_router, "run_analysis_pipeline", AsyncMock(side_effect=RuntimeError("db_password=super-secret")))
         task_id = client.post(
             "/api/analyze",
             json={"tables": [{"name": "users", "fields": ["name"]}]},
@@ -675,6 +676,9 @@ class TestAnalyzeWebSocket:
         assert final["status"] == "failed"
         assert final["graph"]["entity_edges"] == []
         assert final["warnings"]
+        assert "super-secret" not in str(final)
+        exported = client.get(f"/api/export/{task_id}").json()
+        assert "super-secret" not in str(exported)
 
     @pytest.mark.asyncio
     async def test_final_send_failure_keeps_completed_registry_result_once(
@@ -751,6 +755,30 @@ class TestAnalyzeWebSocket:
 
 
 class TestExportEndpoint:
+    def test_final_payload_encodes_binary_dimensions_for_websocket_and_export(self):
+        from engine.semantic.models import (
+            AnalysisDiagnostics,
+            AnalysisResult,
+            AnalysisStatus,
+            EntityNode,
+        )
+        from routers.analyze import _final_payload
+
+        result = AnalysisResult(
+            status=AnalysisStatus.COMPLETE,
+            table_nodes=[],
+            entity_nodes=[EntityNode(
+                id="table:1", table_id="table", display_name="binary",
+                dimensions={"payload": b"\xff\x00"},
+            )],
+            table_edges=[], entity_edges=[], diagnostics=AnalysisDiagnostics(), warnings=[],
+        )
+
+        payload = _final_payload(result)
+        assert payload["graph"]["entity_nodes"][0]["dimensions"]["payload"] == {
+            "$type": "bytes", "encoding": "base64", "value": "/wA="
+        }
+
     def test_returns_full_snapshot_for_completed_task(self, client: TestClient):
         task_id = client.post(
             "/api/analyze",

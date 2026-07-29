@@ -13,6 +13,7 @@ from .models import (
     TableEdge,
     TableNode,
 )
+from .public_json import public_json_value
 
 
 def build_graph(
@@ -214,7 +215,7 @@ def _edge_id(kind: str, source: str, target: str) -> str:
 
 def _relation_sort_key(relation: EntityRelation) -> str:
     return json.dumps(
-        relation.model_dump(mode="json"),
+        public_json_value(relation.model_dump(mode="python")),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import numpy as np
@@ -20,8 +20,7 @@ _SourceKey = tuple[str, tuple[str, ...]]
 
 @dataclass
 class _KeywordIndex:
-    tokens_by_entity_id: dict[str, set[str]]
-    order: dict[str, int]
+    postings_by_token: dict[str, list[str]]
 
     def search(
         self,
@@ -32,11 +31,18 @@ class _KeywordIndex:
         query_tokens = _keyword_tokens(query)
         matches: list[str] = []
         if query_tokens:
-            for entity_id in self.order:
-                if query_tokens & self.tokens_by_entity_id[entity_id]:
-                    matches.append(entity_id)
+            # Ordered postings are built in target-table order.  We visit at
+            # most Top-K entries per token and never scan the target corpus.
+            for token in sorted(query_tokens):
+                for entity_id in self.postings_by_token.get(token, ())[:count]:
+                    if diagnostics is not None:
+                        diagnostics.keyword_postings_examined += 1
+                    if entity_id not in matches:
+                        matches.append(entity_id)
                     if len(matches) >= count:
                         break
+                if len(matches) >= count:
+                    break
         _observe_pair_buffer(diagnostics, len(matches), count)
         return matches
 
@@ -86,6 +92,8 @@ class RetrievalDiagnostics:
 
     explicit_pair_count: int = 0
     peak_materialized_pair_buffer: int = 0
+    keyword_postings_examined: int = 0
+    peak_groups_buffered: int = 0
 
 
 def retrieve_candidate_groups(
@@ -96,6 +104,20 @@ def retrieve_candidate_groups(
     check_deadline: Callable[[str], None] | None = None,
     diagnostics: RetrievalDiagnostics | None = None,
 ) -> list[CandidateGroup]:
+    return list(iter_candidate_groups(
+        documents, plans, embedding_adapter,
+        check_deadline=check_deadline, diagnostics=diagnostics,
+    ))
+
+
+def iter_candidate_groups(
+    documents: list[EntityDocument],
+    plans: list[RelationshipPlan],
+    embedding_adapter: EmbeddingAdapter,
+    *,
+    check_deadline: Callable[[str], None] | None = None,
+    diagnostics: RetrievalDiagnostics | None = None,
+) -> Iterator[CandidateGroup]:
     _check_deadline(check_deadline, "构建候选索引前")
     documents_by_table = _documents_by_table(documents)
     documents_by_id = {
@@ -119,8 +141,6 @@ def retrieve_candidate_groups(
         embedding_adapter,
         check_deadline,
     )
-    groups: list[CandidateGroup] = []
-
     for plan in plans:
         _check_deadline(check_deadline, "检索候选计划前")
         corpus_key = _corpus_key(plan)
@@ -170,18 +190,18 @@ def retrieve_candidate_groups(
                         plan.candidate_limit_per_source,
                     )
 
-            groups.append(
-                CandidateGroup(
-                    plan=plan,
-                    source=source,
-                    candidates=[
-                        documents_by_id[entity_id]
-                        for entity_id in candidate_ids
-                    ],
+            if diagnostics is not None:
+                diagnostics.peak_groups_buffered = max(
+                    diagnostics.peak_groups_buffered, 1
                 )
+            yield CandidateGroup(
+                plan=plan,
+                source=source,
+                candidates=[
+                    documents_by_id[entity_id]
+                    for entity_id in candidate_ids
+                ],
             )
-
-    return groups
 
 
 def _documents_by_table(
@@ -206,17 +226,14 @@ def _build_keyword_indexes(
             continue
 
         targets = documents_by_table.get(plan.target_table, [])
-        tokens_by_entity_id: dict[str, set[str]] = {}
+        postings_by_token: dict[str, list[str]] = {}
         for target in targets:
             _check_deadline(check_deadline, "构建关键词目标索引时")
             text = _dimension_text(target, plan.target_dimensions)
-            tokens_by_entity_id[target.entity_id] = _keyword_tokens(text)
+            for token in _keyword_tokens(text):
+                postings_by_token.setdefault(token, []).append(target.entity_id)
         indexes[key] = _KeywordIndex(
-            tokens_by_entity_id=tokens_by_entity_id,
-            order={
-                target.entity_id: index
-                for index, target in enumerate(targets)
-            },
+            postings_by_token=postings_by_token,
         )
     return indexes
 

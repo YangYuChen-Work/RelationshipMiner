@@ -65,6 +65,7 @@ def _business_client(
 
     app.dependency_overrides[get_engine] = lambda: engine
     monkeypatch.setattr(pipeline, "RelationshipAnalyzer", lambda: analyzer)
+    pipeline._shared_analyzer = None
     _task_registry.clear()
     try:
         with TestClient(app) as client:

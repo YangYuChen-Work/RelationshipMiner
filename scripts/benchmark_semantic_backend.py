@@ -143,15 +143,15 @@ def main() -> None:
 
     started = perf_counter()
     diagnostics = retrieval.RetrievalDiagnostics()
-    groups = retrieval.retrieve_candidate_groups(
-        documents,
-        plans,
-        embeddings,
-        diagnostics=diagnostics,
+    groups = retrieval.iter_candidate_groups(
+        documents, plans, embeddings, diagnostics=diagnostics,
     )
+    candidates = 0
+    group_count = 0
+    for group in groups:
+        candidates += len(group.candidates)
+        group_count += 1
     end_to_end_retrieval_seconds = perf_counter() - started
-
-    candidates = sum(len(group.candidates) for group in groups)
     plans_per_source = Counter(plan.source_table for plan in plans)
     max_plans_per_source = max(plans_per_source.values())
     explicit_pair_count = diagnostics.explicit_pair_count
@@ -161,6 +161,9 @@ def main() -> None:
     assert candidates <= ENTITY_COUNT * max_plans_per_source * TOP_K
     assert diagnostics.peak_materialized_pair_buffer <= TOP_K
     assert explicit_pair_count == 0
+    assert end_to_end_retrieval_seconds <= 180
+    assert diagnostics.peak_groups_buffered <= 1
+    assert diagnostics.keyword_postings_examined <= candidates * 2
 
     print(
         json.dumps(
@@ -168,7 +171,7 @@ def main() -> None:
                 "entities": len(documents),
                 "tables": len(scope.tables),
                 "plans": len(plans),
-                "groups": len(groups),
+                "groups": group_count,
                 "candidates": candidates,
                 "max_plans_per_source": max_plans_per_source,
                 "top_k": TOP_K,

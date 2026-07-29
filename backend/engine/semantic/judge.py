@@ -6,6 +6,7 @@ import json
 import math
 import time
 from dataclasses import dataclass
+from collections.abc import Iterable
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
@@ -20,6 +21,7 @@ from .models import (
     CandidateGroup,
     EntityDocument,
     JudgementBatchResult,
+    JudgementGroupOutcome,
     RelationDecision,
     RelationEvidence,
 )
@@ -80,46 +82,67 @@ class SemanticJudge:
         if limit < 1:
             raise ValueError("LLM concurrency must be at least 1")
         self._llm = llm
+        self._concurrency = limit
         self._semaphore = asyncio.Semaphore(limit)
 
     async def judge_groups(
         self,
-        groups: list[CandidateGroup],
+        groups: Iterable[CandidateGroup],
         deadline: float,
     ) -> JudgementBatchResult:
-        if time.monotonic() >= deadline:
-            return JudgementBatchResult(
-                decisions=[],
-                pending_groups=len(groups),
-            )
+        iterator = iter(groups)
+        outcomes: list[tuple[CandidateGroup, _GroupOutcome]] = []
 
-        tasks = [
-            asyncio.create_task(self._judge_group(group, deadline))
-            for group in groups
-        ]
+        async def worker() -> None:
+            while True:
+                try:
+                    group = next(iterator)
+                except StopIteration:
+                    return
+                if time.monotonic() >= deadline:
+                    outcomes.append((group, _GroupOutcome("pending", [])))
+                    outcomes.extend((left, _GroupOutcome("pending", [])) for left in iterator)
+                    return
+                outcome = await self._judge_group(group, deadline)
+                outcomes.append((group, outcome))
+                if time.monotonic() >= deadline:
+                    outcomes.extend((left, _GroupOutcome("pending", [])) for left in iterator)
+                    return
+
+        # Exactly this many tasks are created, independent of group count.
+        workers = [asyncio.create_task(worker()) for _ in range(self._concurrency)]
         try:
-            outcomes = await asyncio.gather(*tasks)
+            await asyncio.gather(*workers)
         except asyncio.CancelledError:
-            for task in tasks:
+            for task in workers:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*workers, return_exceptions=True)
             raise
 
         return JudgementBatchResult(
             decisions=[
                 decision
-                for outcome in outcomes
+                for _, outcome in outcomes
                 for decision in outcome.decisions
             ],
             completed_groups=sum(
-                outcome.status == "completed" for outcome in outcomes
+                outcome.status == "completed" for _, outcome in outcomes
             ),
             failed_groups=sum(
-                outcome.status == "failed" for outcome in outcomes
+                outcome.status == "failed" for _, outcome in outcomes
             ),
             pending_groups=sum(
-                outcome.status == "pending" for outcome in outcomes
+                outcome.status == "pending" for _, outcome in outcomes
             ),
+            outcomes=[
+                JudgementGroupOutcome(
+                    source_id=group.source.entity_id,
+                    candidate_count=len(group.candidates),
+                    status=outcome.status,
+                )
+                for group, outcome in outcomes
+            ],
+            peak_live_tasks=len(workers),
         )
 
     async def _judge_group(

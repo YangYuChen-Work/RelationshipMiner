@@ -10,6 +10,7 @@ from sqlalchemy import text
 from engine.semantic.models import (
     AnalysisScope,
     AnalysisStatus,
+    JudgementGroupOutcome,
     JudgementBatchResult,
     RelationDecision,
     RelationEvidence,
@@ -38,6 +39,7 @@ class _ConstantEmbeddings:
 
 class _ApprovingJudge:
     async def judge_groups(self, groups: list[object], deadline: float) -> JudgementBatchResult:
+        groups = list(groups)
         decisions = []
         for group in groups:
             if not group.candidates:
@@ -71,14 +73,25 @@ class _ApprovingJudge:
         return JudgementBatchResult(
             decisions=decisions,
             completed_groups=len(groups),
+            outcomes=[JudgementGroupOutcome(
+                source_id=group.source.entity_id,
+                candidate_count=len(group.candidates),
+                status="completed",
+            ) for group in groups],
         )
 
 
 class _FailedJudge:
     async def judge_groups(self, groups: list[object], deadline: float) -> JudgementBatchResult:
+        groups = list(groups)
         return JudgementBatchResult(
             decisions=[],
             failed_groups=len(groups),
+            outcomes=[JudgementGroupOutcome(
+                source_id=group.source.entity_id,
+                candidate_count=len(group.candidates),
+                status="failed",
+            ) for group in groups],
         )
 
 
@@ -219,7 +232,7 @@ async def test_planner_exception_keeps_fk_edges_as_partial_result(engine):
         for edge in result.entity_edges
         for relation in edge.relations
     )
-    assert result.warnings == ["Relationship planning failed: planner unavailable"]
+    assert result.warnings == ["Relationship planning failed (internal_error)."]
 
 
 @pytest.mark.asyncio

@@ -642,3 +642,17 @@ async def test_cancelling_batch_cleans_up_started_and_waiting_groups():
 
     assert llm.cancelled.is_set()
     assert llm.active == 0
+
+
+@pytest.mark.asyncio
+async def test_judge_uses_fixed_workers_and_returns_group_identity():
+    llm = _RecordingLlm(lambda _messages: {"decisions": []})
+    result = await SemanticJudge(llm, concurrency=2).judge_groups(
+        (_candidate_group(f"process:{index}") for index in range(50)),
+        deadline=time.monotonic() + 30,
+    )
+
+    assert result.peak_live_tasks == 2
+    assert [outcome.source_id for outcome in result.outcomes] == [
+        f"process:{index}" for index in range(50)
+    ]

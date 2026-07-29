@@ -10,6 +10,7 @@ from sqlalchemy.engine import Engine
 from database import get_engine, get_table_columns, get_table_names
 from engine.pipeline import run_analysis_pipeline
 from engine.semantic.models import AnalysisDiagnostics, AnalysisResult, AnalysisStatus
+from engine.semantic.public_json import public_model_json
 from models.schemas import AnalyzeRequest, AnalyzeResponse
 
 router = APIRouter(prefix="/api", tags=["analyze"])
@@ -17,7 +18,7 @@ _task_registry: dict[str, dict[str, object]] = {}
 
 
 def _final_payload(result: AnalysisResult) -> dict[str, object]:
-    payload = result.model_dump(mode="json")
+    payload = public_model_json(result)
     return {
         "phase": "complete",
         "progress": 1.0,
@@ -111,7 +112,7 @@ async def analyze_progress(
             tables=task["request"]["tables"],
             on_progress=send_progress,
         )
-    except Exception as error:
+    except Exception:
         result = AnalysisResult(
             status=AnalysisStatus.FAILED,
             table_nodes=[],
@@ -119,17 +120,19 @@ async def analyze_progress(
             table_edges=[],
             entity_edges=[],
             diagnostics=AnalysisDiagnostics(),
-            warnings=[f"Analysis failed: {error}"],
+            warnings=["Analysis failed (internal_error)."],
         )
     # Store the complete domain result before publishing the terminal state.
     # There is no await between these assignments, so export cannot observe
     # ``done`` without the result it projects.
+    # Validate the exact public projection before publishing a terminal state.
+    task["public_result"] = _final_payload(result)
     task["result"] = result
     task["status"] = "done"
     try:
         await ws.send_json(_final_payload(result))
-    except Exception as error:
-        task["final_send_error"] = str(error)
+    except Exception:
+        task["final_send_error"] = "final_send_failed"
     finally:
         try:
             await ws.close()
@@ -158,18 +161,13 @@ def export_analysis_snapshot(task_id: str) -> dict[str, object]:
         )
     result = task["result"]
     assert isinstance(result, AnalysisResult)
-    result_payload = result.model_dump(mode="json")
+    public_result = task.get("public_result")
+    if isinstance(public_result, dict):
+        return {
+            key: public_result[key]
+            for key in ("status", "graph", "diagnostics", "warnings")
+        }
     return {
-        "status": result_payload["status"],
-        "graph": {
-            key: result_payload[key]
-            for key in (
-                "table_nodes",
-                "entity_nodes",
-                "table_edges",
-                "entity_edges",
-            )
-        },
-        "diagnostics": result_payload["diagnostics"],
-        "warnings": result_payload["warnings"],
+        key: _final_payload(result)[key]
+        for key in ("status", "graph", "diagnostics", "warnings")
     }

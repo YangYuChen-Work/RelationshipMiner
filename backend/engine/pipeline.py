@@ -10,6 +10,16 @@ from sqlalchemy.engine import Engine
 from engine.semantic.analyzer import RelationshipAnalyzer
 from engine.semantic.models import AnalysisResult, AnalysisScope, TableScope
 
+_shared_analyzer: RelationshipAnalyzer | None = None
+
+
+def _application_analyzer() -> RelationshipAnalyzer:
+    """Keep the lazily loaded embedding adapter alive across requests."""
+    global _shared_analyzer
+    if _shared_analyzer is None:
+        _shared_analyzer = RelationshipAnalyzer()
+    return _shared_analyzer
+
 async def run_analysis_pipeline(
     engine: Engine,
     tables: list[dict[str, object]],
@@ -43,4 +53,4 @@ async def run_analysis_pipeline(
         if inspect.isawaitable(response):
             await response
 
-    return await RelationshipAnalyzer().analyze(engine, scope, relay)
+    return await _application_analyzer().analyze(engine, scope, relay)

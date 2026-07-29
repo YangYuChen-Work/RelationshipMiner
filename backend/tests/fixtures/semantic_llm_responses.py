@@ -7,6 +7,7 @@ from engine.semantic.models import (
     EntityDocument,
     EntityRelation,
     JudgementBatchResult,
+    JudgementGroupOutcome,
     RelationEvidence,
     RelationshipPlan,
 )
@@ -90,6 +91,7 @@ class FixtureSemanticJudge:
         groups: list[CandidateGroup],
         deadline: float,
     ) -> JudgementBatchResult:
+        groups = list(groups)
         decisions: list[EntityRelation] = []
         for group in groups:
             for candidate in group.candidates:
@@ -103,6 +105,11 @@ class FixtureSemanticJudge:
         return JudgementBatchResult(
             decisions=decisions,
             completed_groups=len(groups),
+            outcomes=[JudgementGroupOutcome(
+                source_id=group.source.entity_id,
+                candidate_count=len(group.candidates),
+                status="completed",
+            ) for group in groups],
         )
 
     @staticmethod
