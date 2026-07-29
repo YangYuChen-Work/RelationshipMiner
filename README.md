@@ -124,3 +124,19 @@ verify `DEEPSEEK_API_KEY` plus `DEEPSEEK_MODEL` if `llm` is `missing`. For
 service rate limits or deadline exhaustion, keep `LLM_CONCURRENCY=4` initially,
 reduce selected dimensions or tables, and retry; do not treat a partial graph
 as a complete zero-relation result.
+
+## 性能验收
+
+以下命令使用 7 张表、7,000 个合成实体、10 个关系计划和确定性假向量，
+不会调用外部 API，也不会输出实体字段值。后端结果应保持 Top-K 候选有界，
+前端结果应保持表区域不超过 10 个、概览场景无实体标签，并仅使用一个
+Canvas 而不是为每个实体创建 DOM 节点。
+
+```powershell
+.\.venv\Scripts\python.exe scripts\benchmark_semantic_backend.py
+Set-Location frontend
+npm test -- --run src/graph/scaling.test.ts
+```
+
+真实 DeepSeek 延迟需单独测量，因为它受账号配额、网络和服务状态影响，
+不属于上述可重复的本地性能基准。

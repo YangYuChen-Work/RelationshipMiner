@@ -1,0 +1,153 @@
+import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { createElement } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SemanticGraphData } from "../api/analysis";
+import GraphCanvas from "../components/GraphCanvas";
+import { useAnalysisStore } from "../store/analysis";
+import { computeGroupedLayout } from "./layout";
+import { buildScene } from "./scene";
+
+const ENTITY_COUNT = 7_000;
+const TABLE_COUNT = 7;
+const VIEWPORT = { width: 960, height: 600 };
+
+const graph: SemanticGraphData = {
+  table_nodes: Array.from({ length: TABLE_COUNT }, (_, tableIndex) => ({
+    id: `table-${tableIndex}`,
+    display_name: `Table ${tableIndex}`,
+    entity_count: ENTITY_COUNT / TABLE_COUNT,
+  })),
+  entity_nodes: Array.from({ length: ENTITY_COUNT }, (_, entityIndex) => ({
+    id: `entity-${entityIndex}`,
+    table_id: `table-${entityIndex % TABLE_COUNT}`,
+    display_name: `Entity ${entityIndex}`,
+    class_name: null,
+    dimensions: { name: `Entity ${entityIndex}` },
+  })),
+  table_edges: [],
+  entity_edges: [],
+};
+
+class ScalingLayoutWorker {
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: ErrorEvent) => void) | null = null;
+  onmessageerror: ((event: MessageEvent) => void) | null = null;
+
+  postMessage(message: {
+    requestId: number;
+    graph: SemanticGraphData;
+    viewport: { width: number; height: number };
+  }) {
+    this.onmessage?.({
+      data: {
+        requestId: message.requestId,
+        layout: computeGroupedLayout(message.graph, message.viewport),
+      },
+    } as MessageEvent);
+  }
+
+  terminate() {}
+}
+
+function canvasContext(): CanvasRenderingContext2D {
+  return {
+    arc: vi.fn(),
+    beginPath: vi.fn(),
+    clearRect: vi.fn(),
+    fill: vi.fn(),
+    fillRect: vi.fn(),
+    fillText: vi.fn(),
+    lineTo: vi.fn(),
+    moveTo: vi.fn(),
+    restore: vi.fn(),
+    save: vi.fn(),
+    setTransform: vi.fn(),
+    stroke: vi.fn(),
+    strokeRect: vi.fn(),
+    fillStyle: "",
+    font: "",
+    lineWidth: 1,
+    strokeStyle: "",
+    textBaseline: "alphabetic",
+  } as unknown as CanvasRenderingContext2D;
+}
+
+describe("7000-entity graph scaling", () => {
+  beforeEach(() => {
+    vi.stubGlobal("Worker", ScalingLayoutWorker);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+      canvasContext(),
+    );
+    vi.spyOn(
+      HTMLCanvasElement.prototype,
+      "getBoundingClientRect",
+    ).mockReturnValue({
+      x: 0,
+      y: 0,
+      width: VIEWPORT.width,
+      height: VIEWPORT.height,
+      top: 0,
+      left: 0,
+      bottom: VIEWPORT.height,
+      right: VIEWPORT.width,
+      toJSON: () => ({}),
+    });
+    act(() => {
+      useAnalysisStore.setState({
+        graph,
+        phase: "done",
+        analysisStatus: "complete",
+        warnings: [],
+        errorMessage: null,
+        hoveredNodeId: null,
+        selectedNodeId: null,
+        confidenceThreshold: 0,
+        fitViewRequest: 0,
+        relayoutRequest: 0,
+        focusNodeRequest: null,
+        selectedEntityEdgeId: null,
+        selectedTableEdgeId: null,
+      });
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    act(() => useAnalysisStore.setState({ graph: null }));
+  });
+
+  it("keeps the grouped overview bounded and omits entity labels", () => {
+    const layout = computeGroupedLayout(graph, VIEWPORT);
+    const scene = buildScene({
+      graph,
+      layout,
+      transform: { k: 0.5, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+
+    expect(layout.entityNodes).toHaveLength(ENTITY_COUNT);
+    expect(layout.tableRegions.length).toBeLessThanOrEqual(10);
+    expect(scene.entityLabels).toHaveLength(0);
+  });
+
+  it("renders through one canvas without per-entity DOM nodes", async () => {
+    const { container } = render(createElement(GraphCanvas));
+
+    await waitFor(() => {
+      expect(container.querySelector("canvas")).toHaveAttribute(
+        "data-scene-ready",
+        "true",
+      );
+    });
+
+    expect(container.querySelectorAll("canvas")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-node-id]")).toHaveLength(0);
+  });
+});
