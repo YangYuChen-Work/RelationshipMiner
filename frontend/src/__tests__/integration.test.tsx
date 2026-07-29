@@ -1,8 +1,22 @@
 /** 前端集成测试 — mock 后端 API 和 WebSocket，验证完整用户流程。 */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
+import * as d3 from "d3";
 import App from "../App";
+import type {
+  AnalysisDiagnostics,
+  AnalysisStatus,
+  SemanticGraphData,
+} from "../api/analysis";
+import { computeGroupedLayout } from "../graph/layout";
 import { useAnalysisStore } from "../store/analysis";
 
 // ── Mock 数据 ──
@@ -15,7 +29,7 @@ const MOCK_TABLES = [
 const MOCK_COLUMNS = {
   table_name: "users",
   columns: [
-    { name: "id", type: "int", is_class_name: false, is_primary_key: false },
+    { name: "id", type: "int", is_class_name: false, is_primary_key: true },
     { name: "class_name", type: "varchar", is_class_name: true, is_primary_key: false },
     { name: "name", type: "varchar", is_class_name: false, is_primary_key: false },
     { name: "email", type: "varchar", is_class_name: false, is_primary_key: false },
@@ -25,39 +39,111 @@ const MOCK_COLUMNS = {
 const MOCK_COLUMNS_ORDERS = {
   table_name: "orders",
   columns: [
-    { name: "id", type: "int", is_class_name: false, is_primary_key: false },
+    { name: "id", type: "int", is_class_name: false, is_primary_key: true },
     { name: "class_name", type: "varchar", is_class_name: true, is_primary_key: false },
     { name: "user_id", type: "int", is_class_name: false, is_primary_key: false },
     { name: "total", type: "decimal", is_class_name: false, is_primary_key: false },
   ],
 };
 
-const MOCK_GRAPH = {
-  nodes: [
+const MOCK_GRAPH: SemanticGraphData = {
+  table_nodes: [
+    { id: "users", display_name: "Users", entity_count: 1 },
+    { id: "orders", display_name: "Orders", entity_count: 1 },
+  ],
+  entity_nodes: [
     {
       id: "users|1",
-      source_table: "users",
+      table_id: "users",
+      display_name: "Alice",
       class_name: "com.example.User",
-      field_values: { id: 1, name: "Alice" },
-      degree: 1,
+      dimensions: { name: "Alice", email: "alice@example.com" },
     },
     {
       id: "orders|1",
-      source_table: "orders",
+      table_id: "orders",
+      display_name: "Order #1",
       class_name: "com.example.Order",
-      field_values: { id: 1, user_id: 1 },
-      degree: 1,
+      dimensions: { user_id: 1, total: "42.50" },
     },
   ],
-  edges: [
+  table_edges: [
     {
+      id: "users--orders",
+      source_table: "users",
+      target_table: "orders",
+      relation_types: ["placed_order"],
+      strong_count: 1,
+      weak_count: 0,
+      entity_edge_count: 1,
+      average_confidence: 0.98,
+      supporting_entity_edges: ["users|1--orders|1"],
+    },
+  ],
+  entity_edges: [
+    {
+      id: "users|1--orders|1",
       source: "users|1",
       target: "orders|1",
-      labels: ["外键关联"],
-      confidence: 1,
+      relations: [
+        {
+          source: "users|1",
+          target: "orders|1",
+          relation_type: "placed_order",
+          direction: "source_to_target",
+          strength: "strong",
+          confidence: 0.98,
+          explanation: "订单通过 user_id 指向用户主键。",
+          evidence: [
+            {
+              source_field: "id",
+              source_value: 1,
+              target_field: "user_id",
+              target_value: 1,
+              method: "foreign_key",
+              reason: "orders.user_id 外键引用 users.id",
+            },
+          ],
+          model_id: "semantic-model-v1",
+          task_id: "test-task-1",
+        },
+      ],
     },
   ],
 };
+
+const EMPTY_GRAPH: SemanticGraphData = {
+  table_nodes: [],
+  entity_nodes: [],
+  table_edges: [],
+  entity_edges: [],
+};
+
+const MOCK_DIAGNOSTICS: AnalysisDiagnostics = {
+  entities_read: 2,
+  plans_created: 1,
+  candidates_retrieved: 1,
+  candidates_completed: 1,
+  candidates_pending: 0,
+  strong_edges_created: 1,
+  weak_edges_created: 0,
+};
+
+function terminalMessage(
+  status: AnalysisStatus,
+  graph: SemanticGraphData = MOCK_GRAPH,
+  warnings: string[] = [],
+  diagnostics: AnalysisDiagnostics = MOCK_DIAGNOSTICS,
+) {
+  return {
+    phase: "complete" as const,
+    progress: 1,
+    status,
+    graph,
+    diagnostics,
+    warnings,
+  };
+}
 
 // ── Fake WebSocket ──
 
@@ -73,15 +159,58 @@ class FakeWebSocket {
     FakeWebSocket.instances.push(this);
   }
 
-  // Helper: simulate server sending messages
-  sendMessage(data: object) {
-    if (this.onmessage) {
-      this.onmessage({ data: JSON.stringify(data) });
-    }
+  async sendMessage(data: object) {
+    await act(async () => {
+      this.onmessage?.({ data: JSON.stringify(data) });
+      await Promise.resolve();
+    });
   }
 
   close() {
     if (this.onclose) this.onclose();
+  }
+}
+
+function canvasContext() {
+  return {
+    arc: vi.fn(),
+    beginPath: vi.fn(),
+    clearRect: vi.fn(),
+    fill: vi.fn(),
+    fillRect: vi.fn(),
+    fillText: vi.fn(),
+    lineTo: vi.fn(),
+    moveTo: vi.fn(),
+    restore: vi.fn(),
+    save: vi.fn(),
+    setTransform: vi.fn(),
+    stroke: vi.fn(),
+    strokeRect: vi.fn(),
+    fillStyle: "",
+    font: "",
+    lineWidth: 1,
+    strokeStyle: "",
+    textBaseline: "alphabetic" as CanvasTextBaseline,
+  } as unknown as CanvasRenderingContext2D;
+}
+
+class FakeLayoutWorker {
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: ErrorEvent) => void) | null = null;
+  onmessageerror: ((event: MessageEvent) => void) | null = null;
+  terminate = vi.fn();
+
+  postMessage(message: {
+    requestId: number;
+    graph: SemanticGraphData;
+    viewport: { width: number; height: number };
+  }) {
+    this.onmessage?.({
+      data: {
+        requestId: message.requestId,
+        layout: computeGroupedLayout(message.graph, message.viewport),
+      },
+    } as MessageEvent);
   }
 }
 
@@ -129,6 +258,9 @@ function setupFetchMock() {
 
 describe("Integration: full user flow", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+
     // Reset store
     useAnalysisStore.setState({
       phase: "select",
@@ -141,25 +273,56 @@ describe("Integration: full user flow", () => {
       tableRequestTokens: new Map(),
       tableErrors: new Map(),
       maxTables: 10,
-      currentPhase: 0,
+      currentPhase: "",
       progressMessage: "",
       progressValue: 0,
       graph: null,
+      analysisStatus: null,
+      warnings: [],
+      diagnostics: null,
       taskId: null,
       activeSocket: null,
       analysisGeneration: 0,
       hoveredNodeId: null,
       selectedNodeId: null,
       confidenceThreshold: 0,
+      fitViewRequest: 0,
+      relayoutRequest: 0,
+      focusNodeRequest: null,
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
     });
 
-    // Reset WebSocket instances
     FakeWebSocket.instances = [];
-    vi.restoreAllMocks();
+    vi.stubGlobal("Worker", FakeLayoutWorker);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+      canvasContext(),
+    );
+    vi.spyOn(
+      HTMLCanvasElement.prototype,
+      "getBoundingClientRect",
+    ).mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 960,
+      height: 600,
+      top: 0,
+      left: 0,
+      bottom: 600,
+      right: 960,
+      toJSON: () => ({}),
+    });
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("renders the app with title", async () => {
@@ -225,103 +388,181 @@ describe("Integration: full user flow", () => {
   });
 
   it("completes full analysis flow with progress", async () => {
-    setupFetchMock();
-    // Mock WebSocket
+    const fetchMock = setupFetchMock();
     vi.stubGlobal("WebSocket", FakeWebSocket);
 
     render(<App />);
 
-    // Wait for tables to load and select "users"
     await waitFor(() => {
       expect(screen.getByText("users")).toBeInTheDocument();
     });
 
-    // Select users table
     fireEvent.click(screen.getByText("users").closest("label")!);
 
-    // Wait for fields to load
     await waitFor(() => {
       expect(screen.getByText("email")).toBeInTheDocument();
     });
 
-    // "开始分析" should now be enabled
+    const primaryKey = screen.getByRole("checkbox", { name: "字段 id" });
+    const classMetadata = screen.getByRole("checkbox", {
+      name: "字段 class_name",
+    });
+    expect(primaryKey).toBeDisabled();
+    expect(primaryKey).not.toBeChecked();
+    expect(classMetadata).toBeDisabled();
+    expect(classMetadata).not.toBeChecked();
+    expect(screen.getByText("自动用于实体 ID")).toBeInTheDocument();
+    expect(screen.getByText("用于节点展示")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "字段 name" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "字段 email" }));
+
+    fireEvent.click(screen.getByText("orders").closest("label")!);
+    await waitFor(() => {
+      expect(screen.getByText("user_id")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "字段 user_id" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "字段 total" }));
+
     const startBtn = screen.getByText("开始分析");
     expect(startBtn).not.toBeDisabled();
-
-    // Click start analysis
     fireEvent.click(startBtn);
 
-    // Should show analyzing state
     await waitFor(() => {
-      expect(screen.getByText(/阶段/)).toBeInTheDocument();
+      expect(FakeWebSocket.instances).toHaveLength(1);
     });
 
-    // Simulate WebSocket progress
+    const analyzeCall = fetchMock.mock.calls.find(([input]) => {
+      const url = typeof input === "string" ? input : input.toString();
+      return url === "/api/analyze";
+    });
+    expect(analyzeCall).toBeDefined();
+    expect(JSON.parse(String(analyzeCall?.[1]?.body))).toEqual({
+      tables: [
+        { name: "users", fields: ["name", "email"] },
+        { name: "orders", fields: ["user_id", "total"] },
+      ],
+    });
+
     const ws = FakeWebSocket.instances[0];
-    expect(ws).toBeDefined();
+    expect(ws.url).toMatch(/\/api\/ws\/analyze\/test-task-1$/);
 
-    ws.sendMessage({
-      phase: 1,
-      message: "正在读取数据...",
-      progress: 0.2,
+    await ws.sendMessage({
+      phase: "schema",
+      message: "正在读取表结构...",
+      progress: 0.1,
     });
 
     await waitFor(() => {
-      expect(screen.getByText("阶段 1/5：数据读取")).toBeInTheDocument();
+      expect(screen.getByText("读取表结构")).toBeInTheDocument();
+      expect(screen.getByText("10%")).toBeInTheDocument();
     });
 
-    ws.sendMessage({
-      phase: 2,
-      message: "正在分析 Schema...",
+    await ws.sendMessage({
+      phase: "entities",
+      message: "正在读取实体...",
+      progress: 0.25,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("读取实体")).toBeInTheDocument();
+    });
+
+    await ws.sendMessage({
+      phase: "planning",
+      message: "正在规划关系...",
       progress: 0.4,
     });
 
-    await waitFor(() => {
-      expect(screen.getByText("阶段 2/5：Schema 分析")).toBeInTheDocument();
-    });
-
-    ws.sendMessage({
-      phase: 3,
-      message: "AI 决策中...",
+    await ws.sendMessage({
+      phase: "candidates",
+      message: "正在检索候选关系...",
       progress: 0.6,
     });
 
-    ws.sendMessage({
-      phase: 4,
-      message: "正在计算关系...",
+    await ws.sendMessage({
+      phase: "semantic_judging",
+      message: "正在判断语义关系...",
       progress: 0.8,
     });
 
-    // Send completion message
-    ws.sendMessage({
-      phase: 5,
-      message: "图谱生成完成",
-      progress: 1.0,
-      graph: MOCK_GRAPH,
+    await waitFor(() => {
+      expect(screen.getByText("语义判断")).toBeInTheDocument();
+      expect(screen.getByText("80%")).toBeInTheDocument();
     });
 
-    // Should show completion
+    await ws.sendMessage(terminalMessage("complete"));
+
     await waitFor(() => {
       expect(screen.getByText("分析完成")).toBeInTheDocument();
     });
 
-    // Should show node count
+    const canvas = await screen.findByRole("img", { name: /语义关系图/ });
     await waitFor(() => {
-      expect(
-        screen.getAllByText(/2 个节点.*1 条关系/).length
-      ).toBeGreaterThan(0);
+      expect(canvas).toHaveAttribute("data-scene-ready", "true");
     });
 
-    // Should show StrengthFilter and ExportButton
+    expect(screen.getByText("2 个实体")).toBeInTheDocument();
+    expect(screen.getByText("1 条表关系")).toBeInTheDocument();
+    expect(screen.getByText("1 条实体关系")).toBeInTheDocument();
     expect(screen.getByText("弱关系")).toBeInTheDocument();
     expect(screen.getByText("强关系")).toBeInTheDocument();
     expect(screen.getByText("导出 JSON")).toBeInTheDocument();
     expect(screen.getByText("开始新分析")).toBeInTheDocument();
 
-    // TODO: GraphCanvas SVG rendering is hard to test in jsdom
-    // (D3 requires SVG namespace which jsdom partially supports)
+    const layout = computeGroupedLayout(MOCK_GRAPH, {
+      width: 960,
+      height: 600,
+    });
+    const tableEdge = layout.tableEdges.find(
+      (edge) => edge.id === "users--orders",
+    )!;
+    const transformBeforeTableFocus = d3.zoomTransform(canvas);
+    const tableEdgeFrom = transformBeforeTableFocus.apply([
+      tableEdge.from.x,
+      tableEdge.from.y,
+    ]);
+    const tableEdgeTo = transformBeforeTableFocus.apply([
+      tableEdge.to.x,
+      tableEdge.to.y,
+    ]);
+    fireEvent.click(canvas, {
+      clientX: (tableEdgeFrom[0] + tableEdgeTo[0]) / 2,
+      clientY: (tableEdgeFrom[1] + tableEdgeTo[1]) / 2,
+    });
 
-    vi.unstubAllGlobals();
+    await waitFor(() => {
+      expect(screen.getByText("表关系汇总")).toBeInTheDocument();
+      expect(useAnalysisStore.getState().selectedTableEdgeId).toBe(
+        "users--orders",
+      );
+    });
+    expect(d3.zoomTransform(canvas)).not.toEqual(transformBeforeTableFocus);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "users|1--orders|1" }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText("实体关系详情")).toBeInTheDocument();
+      expect(useAnalysisStore.getState().selectedEntityEdgeId).toBe(
+        "users|1--orders|1",
+      );
+      expect(useAnalysisStore.getState().focusNodeRequest?.nodeId).toBe(
+        "users|1",
+      );
+    });
+    expect(screen.getByText("placed_order")).toBeInTheDocument();
+    expect(screen.getByText("源 → 目标")).toBeInTheDocument();
+    expect(screen.getByText("strong")).toBeInTheDocument();
+    expect(screen.getByText("98%")).toBeInTheDocument();
+    expect(
+      screen.getByText("订单通过 user_id 指向用户主键。"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("id = 1")).toBeInTheDocument();
+    expect(screen.getByText("user_id = 1")).toBeInTheDocument();
+    expect(screen.getByText(/foreign_key：orders\.user_id/)).toBeInTheDocument();
+    expect(screen.getByText("semantic-model-v1")).toBeInTheDocument();
+    expect(screen.getByText("test-task-1")).toBeInTheDocument();
+
   });
 
   it("handles analysis error from WebSocket", async () => {
@@ -347,23 +588,31 @@ describe("Integration: full user flow", () => {
       expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
     });
 
-    // Send error via WebSocket
     const ws = FakeWebSocket.instances[0];
-    ws.sendMessage({
-      phase: 0,
-      message: "分析超时",
-      progress: 0,
-      error: "分析超时，建议减少表数量或行数后重试",
-    });
+    await ws.sendMessage(
+      terminalMessage(
+        "failed",
+        EMPTY_GRAPH,
+        ["分析失败：模型服务不可用，请稍后重试。"],
+        {
+          ...MOCK_DIAGNOSTICS,
+          candidates_completed: 0,
+          candidates_pending: 0,
+          strong_edges_created: 0,
+        },
+      ),
+    );
 
     await waitFor(() => {
-      expect(screen.getByText("分析失败")).toBeInTheDocument();
+      expect(
+        screen.getByText("分析失败，正在显示可用结果。"),
+      ).toBeInTheDocument();
     });
     expect(
-      screen.getByRole("checkbox", { name: "选择表 users" })
+      screen.getByText("分析失败：模型服务不可用，请稍后重试。"),
     ).toBeInTheDocument();
-
-    vi.unstubAllGlobals();
+    expect(useAnalysisStore.getState().analysisStatus).toBe("failed");
+    expect(useAnalysisStore.getState().phase).toBe("error");
   });
 
   it("disables unselected tables when the workspace has reached its limit", () => {
@@ -419,26 +668,17 @@ describe("Integration: full user flow", () => {
     });
 
     const ws = FakeWebSocket.instances[0];
-    ws.sendMessage({
-      phase: 5,
-      message: "完成",
-      progress: 1.0,
-      graph: MOCK_GRAPH,
-    });
+    await ws.sendMessage(terminalMessage("complete"));
 
     await waitFor(() => {
       expect(screen.getByText("分析完成")).toBeInTheDocument();
     });
 
-    // Click "开始新分析"
-    fireEvent.click(screen.getByText("开始新分析"));
+    fireEvent.click(screen.getByRole("button", { name: /新分析/ }));
 
-    // Should go back to select phase
     await waitFor(() => {
       expect(screen.getByText("选择数据表与字段")).toBeInTheDocument();
     });
-
-    vi.unstubAllGlobals();
   });
 
   it("displays DB connection error when tables fetch fails", async () => {
@@ -485,24 +725,28 @@ describe("Integration: full user flow", () => {
     setupFetchMock();
     vi.stubGlobal("WebSocket", FakeWebSocket);
 
-    const graphWithNoEdges = {
-      nodes: [
+    const graphWithNoEdges: SemanticGraphData = {
+      table_nodes: [
+        { id: "users", display_name: "Users", entity_count: 2 },
+      ],
+      entity_nodes: [
         {
           id: "users|1",
-          source_table: "users",
+          table_id: "users",
+          display_name: "Alice",
           class_name: "com.example.User",
-          field_values: { id: 1, name: "Alice" },
-          degree: 0,
+          dimensions: { name: "Alice" },
         },
         {
           id: "users|2",
-          source_table: "users",
+          table_id: "users",
+          display_name: "Bob",
           class_name: "com.example.Admin",
-          field_values: { id: 2, name: "Bob" },
-          degree: 0,
+          dimensions: { name: "Bob" },
         },
       ],
-      edges: [],
+      table_edges: [],
+      entity_edges: [],
     };
 
     render(<App />);
@@ -524,31 +768,30 @@ describe("Integration: full user flow", () => {
     });
 
     const ws = FakeWebSocket.instances[0];
-    ws.sendMessage({
-      phase: 5,
-      message: "分析完成",
-      progress: 1.0,
-      graph: graphWithNoEdges,
-    });
+    await ws.sendMessage(
+      terminalMessage("complete", graphWithNoEdges, [], {
+        ...MOCK_DIAGNOSTICS,
+        entities_read: 2,
+        plans_created: 0,
+        candidates_retrieved: 0,
+        candidates_completed: 0,
+        strong_edges_created: 0,
+      }),
+    );
 
-    // Should still reach done phase
     await waitFor(() => {
       expect(screen.getByText("分析完成")).toBeInTheDocument();
     });
 
-    // Should show empty state prompt
     await waitFor(() => {
       expect(
-        screen.getByText(/未发现任何关系/)
+        screen.getByText(/完整分析未发现关系/)
       ).toBeInTheDocument();
     });
 
-    // Should show node count (2 nodes, 0 edges)
-    expect(
-      screen.getAllByText(/0 条关系/).length
-    ).toBeGreaterThan(0);
-
-    vi.unstubAllGlobals();
+    expect(screen.getByText("2 个实体")).toBeInTheDocument();
+    expect(screen.getByText("0 条表关系")).toBeInTheDocument();
+    expect(screen.getByText("0 条实体关系")).toBeInTheDocument();
   });
 
   it("displays timeout error when analysis times out via WebSocket", async () => {
@@ -574,25 +817,81 @@ describe("Integration: full user flow", () => {
     });
 
     const ws = FakeWebSocket.instances[0];
-    ws.sendMessage({
-      phase: -1,
-      message: "分析超时（180 秒），建议减少表数量或行数后重试",
-      progress: 0,
-      error: "分析超时（180 秒），建议减少表数量或行数后重试",
-    });
+    await ws.sendMessage(
+      terminalMessage(
+        "partial",
+        MOCK_GRAPH,
+        ["分析超时（180 秒），仍有候选关系待处理。"],
+        {
+          ...MOCK_DIAGNOSTICS,
+          candidates_retrieved: 4,
+          candidates_completed: 1,
+          candidates_pending: 3,
+        },
+      ),
+    );
 
-    // Should show error banner
     await waitFor(() => {
-      expect(screen.getByText("分析失败")).toBeInTheDocument();
+      expect(
+        screen.getByText("分析未完成，正在显示可用关系。"),
+      ).toBeInTheDocument();
     });
 
-    // Should show timeout message (may appear in both App banner and TableSelector error state)
-    const timeoutMatches = screen.getAllByText(/分析超时/);
-    expect(timeoutMatches.length).toBeGreaterThanOrEqual(1);
-    const suggestionMatches = screen.getAllByText(/建议减少表数量或行数后重试/);
-    expect(suggestionMatches.length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getByText("候选关系：已完成 1 · 待处理 3 · 失败 0"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/分析超时（180 秒）/)).toBeInTheDocument();
+    expect(useAnalysisStore.getState().analysisStatus).toBe("partial");
+    expect(useAnalysisStore.getState().phase).toBe("done");
+  });
 
-    vi.unstubAllGlobals();
+  it("keeps the 7000-entity workbench DOM structurally bounded", async () => {
+    const entityNodes = Array.from({ length: 7_000 }, (_, index) => ({
+      id: `bulk|${index}`,
+      table_id: "bulk",
+      display_name: `Entity ${index}`,
+      class_name: null,
+      dimensions: { ordinal: index },
+    }));
+    const graph: SemanticGraphData = {
+      table_nodes: [
+        {
+          id: "bulk",
+          display_name: "Bulk",
+          entity_count: entityNodes.length,
+        },
+      ],
+      entity_nodes: entityNodes,
+      table_edges: [],
+      entity_edges: [],
+    };
+
+    act(() => {
+      useAnalysisStore.setState({
+        phase: "done",
+        graph,
+        analysisStatus: "complete",
+        warnings: [],
+        diagnostics: {
+          ...MOCK_DIAGNOSTICS,
+          entities_read: entityNodes.length,
+          plans_created: 0,
+          candidates_retrieved: 0,
+          candidates_completed: 0,
+          strong_edges_created: 0,
+        },
+      });
+    });
+
+    const { container } = render(<App />);
+    await waitFor(() => {
+      expect(
+        screen.getByRole("img", { name: /7000 个实体/ }),
+      ).toHaveAttribute("data-scene-ready", "true");
+    });
+
+    expect(container.querySelectorAll("canvas")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-node-id]")).toHaveLength(0);
   });
 
   it("handles WebSocket onError connection failure", async () => {
@@ -638,7 +937,5 @@ describe("Integration: full user flow", () => {
     expect(
       screen.getAllByText(/WebSocket 连接失败/).length
     ).toBeGreaterThanOrEqual(1);
-
-    vi.unstubAllGlobals();
   });
 });

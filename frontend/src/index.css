@@ -21,6 +21,32 @@ input {
   font: inherit;
 }
 
+canvas[aria-label^="语义关系图"] {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  max-inline-size: 100%;
+}
+
+form[role="search"] {
+  max-inline-size: calc(100% - 1.5rem);
+}
+
+form[role="search"] input {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+section[role="status"],
+section[role="alert"],
+aside[aria-label="关系详情检查器"] {
+  overflow-wrap: anywhere;
+}
+
+aside[aria-label="关系详情检查器"] {
+  overscroll-behavior: contain;
+}
+
 :focus-visible {
   outline: 2px solid #5eead4;
   outline-offset: 2px;

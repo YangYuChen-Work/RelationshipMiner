@@ -79,7 +79,7 @@ export default function GraphWorkbench() {
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
         <section className="relative min-h-0 overflow-hidden border-r border-slate-700/70 bg-[#0d1926]">
-          <div className="h-full min-h-0 p-3 [&>div]:h-full [&_svg]:h-full">
+          <div className="h-full min-h-0 p-3 [&>div]:h-full [&_canvas]:h-full">
             <CanvasErrorBoundary>
               <GraphCanvas suppressStatusOverlay />
             </CanvasErrorBoundary>
