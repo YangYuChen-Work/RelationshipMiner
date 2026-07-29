@@ -14,7 +14,7 @@ const TABLE_WORLD_RADIUS = 14;
 const ENTITY_WORLD_RADIUS = 4;
 const MIN_NODE_HIT_RADIUS = 6;
 const NODE_HIT_PADDING = 4;
-const MAX_NODE_SCREEN_RADIUS = 4_000;
+const MAX_NODE_SCREEN_RADIUS = 2_800;
 
 export interface WorldPoint {
   x: number;
@@ -184,7 +184,14 @@ function tableRegionCommand(region: TableRegion, transform: GraphTransform): Sce
     width: world.width * transform.k,
     height: world.height * transform.k,
   };
-  if (!Object.values(screen).every((value) => Number.isFinite(value) && value > 0)) {
+  if (
+    !Number.isFinite(screen.x) ||
+    !Number.isFinite(screen.y) ||
+    !Number.isFinite(screen.width) ||
+    !Number.isFinite(screen.height) ||
+    screen.width <= 0 ||
+    screen.height <= 0
+  ) {
     return null;
   }
   return {

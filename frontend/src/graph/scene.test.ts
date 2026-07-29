@@ -185,7 +185,7 @@ describe("buildScene", () => {
     expect(hitTest(scene, { x: 0, y: 0 })).toBeNull();
   });
 
-  it("emits only finite, positive table regions after transformation", () => {
+  it("emits only finite table regions with positive dimensions after transformation", () => {
     const regionGraph: SemanticGraphData = {
       table_nodes: [
         { id: "valid", display_name: "Valid", entity_count: 0 },
@@ -227,5 +227,41 @@ describe("buildScene", () => {
       transform: { k: Number.MAX_VALUE, x: 0, y: 0 },
       confidenceThreshold: 0,
     }).tableRegions).toHaveLength(0);
+  });
+
+  it("keeps finite table regions when normal camera panning makes x and y negative", () => {
+    const pannedGraph: SemanticGraphData = {
+      table_nodes: [{ id: "panned", display_name: "Panned", entity_count: 0 }],
+      entity_nodes: [],
+      table_edges: [],
+      entity_edges: [],
+    };
+    const pannedLayout: GraphLayout = {
+      tableRegions: [{
+        id: "panned",
+        x: 10,
+        y: 20,
+        width: 100,
+        height: 50,
+        header: { x: 20, y: 30 },
+      }],
+      tableNodes: [],
+      entityNodes: [],
+      tableEdges: [],
+      entityEdges: [],
+    };
+
+    const scene = buildScene({
+      graph: pannedGraph,
+      layout: pannedLayout,
+      transform: { k: 2, x: -50, y: -70 },
+      confidenceThreshold: 0,
+    });
+
+    expect(scene.tableRegions).toEqual([{
+      id: "panned",
+      world: { x: 10, y: 20, width: 100, height: 50 },
+      screen: { x: -30, y: -30, width: 200, height: 100 },
+    }]);
   });
 });

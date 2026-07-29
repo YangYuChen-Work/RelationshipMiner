@@ -159,6 +159,32 @@ describe("hitTest", () => {
     expect(hitTest(rendered, { x: 0, y: 0 })).toBeNull();
   });
 
+  it("declines a finite near-step-limit edge before retaining a huge partial index", () => {
+    const graph = graphFixture();
+    graph.table_edges = [];
+    graph.entity_edges = [{ ...graph.entity_edges[0], id: "near-limit" }];
+    const layout = layoutFixture();
+    layout.tableNodes = [];
+    layout.tableEdges = [];
+    layout.entityEdges = [{
+      id: "near-limit",
+      source: "order-1",
+      target: "user-1",
+      from: { x: 0, y: 1_000 },
+      to: { x: 99_000 * 64, y: 1_000 },
+    }];
+
+    const rendered = buildScene({
+      graph,
+      layout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+
+    expect(rendered.hitIndex.entityEdges.size).toBe(0);
+    expect(hitTest(rendered, { x: 49_500 * 64, y: 1_000 })).toBeNull();
+  });
+
   it("defensively ignores malformed nodes passed directly to the index", () => {
     const malformedNode = {
       id: "malformed",

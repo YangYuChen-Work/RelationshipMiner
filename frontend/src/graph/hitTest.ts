@@ -2,8 +2,8 @@ import type { ScreenPoint, RenderScene, SceneEdge, SceneNode } from "./scene";
 
 const GRID_CELL_SIZE = 64;
 const EDGE_HIT_TOLERANCE = 6;
-const MAX_NODE_INDEX_RADIUS = 4_004;
-const MAX_INDEX_CELLS_PER_ITEM = 16_384;
+const MAX_NODE_INDEX_RADIUS = 2_804;
+const MAX_INDEX_CELLS_PER_ITEM = 8_192;
 const MAX_EDGE_TRAVERSAL_STEPS = 100_000;
 
 type Grid<T extends { id: string }> = Map<string, T[]>;
@@ -104,6 +104,7 @@ function addExpandedEdgeCell(
         return false;
       }
       keys.add(cellKey(expandedColumn, expandedRow));
+      if (keys.size > MAX_INDEX_CELLS_PER_ITEM) return false;
     }
   }
   return true;
