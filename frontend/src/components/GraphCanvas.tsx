@@ -32,6 +32,36 @@ interface GraphCanvasProps {
   suppressStatusOverlay?: boolean;
 }
 
+function sameTransform(left: GraphTransform, right: GraphTransform): boolean {
+  return left.k === right.k && left.x === right.x && left.y === right.y;
+}
+
+function fitTransform(
+  layout: Awaited<ReturnType<LayoutClient["layoutGraph"]>>,
+  viewport: { width: number; height: number },
+): d3.ZoomTransform {
+  const regions = layout.tableRegions;
+  if (!regions.length) return d3.zoomIdentity;
+  const minX = Math.min(...regions.map((region) => region.x));
+  const minY = Math.min(...regions.map((region) => region.y));
+  const maxX = Math.max(...regions.map((region) => region.x + region.width));
+  const maxY = Math.max(...regions.map((region) => region.y + region.height));
+  const k = Math.max(
+    0.25,
+    Math.min(
+      2,
+      Math.min(
+        (viewport.width - 96) / Math.max(1, maxX - minX),
+        (viewport.height - 96) / Math.max(1, maxY - minY),
+      ),
+    ),
+  );
+  return d3.zoomIdentity
+    .translate(viewport.width / 2, viewport.height / 2)
+    .scale(k)
+    .translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
+}
+
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -158,7 +188,9 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<RenderScene | null>(null);
-  const drawnSceneRef = useRef<RenderScene | null>(null);
+  const sceneGenerationRef = useRef(0);
+  const drawnGenerationRef = useRef<number | null>(null);
+  const scheduledGenerationRef = useRef<number | null>(null);
   const sceneSourceRef = useRef<{
     graph: NonNullable<ReturnType<typeof useAnalysisStore.getState>["graph"]>;
     layout: Awaited<ReturnType<LayoutClient["layoutGraph"]>>;
@@ -166,10 +198,15 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const sceneInputsRef = useRef<{
     graph: NonNullable<ReturnType<typeof useAnalysisStore.getState>["graph"]>;
     confidenceThreshold: number;
+    fitViewRequest: number;
+    relayoutRequest: number;
+    transform: GraphTransform;
+    generation: number;
   } | null>(null);
   const transformRef = useRef<GraphTransform>({ k: 1, x: 0, y: 0 });
   const animationFrameRef = useRef<number | null>(null);
   const lastHitRef = useRef<HitTarget | null>(null);
+  const lastHitGenerationRef = useRef<number | null>(null);
   const selectedNodeRef = useRef<string | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
   const keyboardTargetRef = useRef<KeyboardTarget | null>(null);
@@ -181,7 +218,8 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [readyScene, setReadyScene] = useState<RenderScene | null>(null);
+  const [sceneGeneration, setSceneGeneration] = useState(0);
+  const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
 
   const graph = useAnalysisStore((state) => state.graph);
   const analysisStatus = useAnalysisStore((state) => state.analysisStatus);
@@ -207,20 +245,38 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     [graph],
   );
 
-  const invalidate = useCallback(() => {
-    if (animationFrameRef.current !== null) return;
+  const invalidate = useCallback((generation = sceneGenerationRef.current) => {
+    if (
+      animationFrameRef.current !== null &&
+      scheduledGenerationRef.current === generation
+    ) {
+      return;
+    }
+    if (animationFrameRef.current !== null && animationFrameRef.current !== -1) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    animationFrameRef.current = null;
+    scheduledGenerationRef.current = generation;
     // A sentinel keeps synchronous test RAFs from leaving a completed frame queued.
     animationFrameRef.current = -1;
     const frame = requestAnimationFrame(() => {
-      animationFrameRef.current = null;
+      if (scheduledGenerationRef.current === generation) {
+        animationFrameRef.current = null;
+        scheduledGenerationRef.current = null;
+      }
+      if (generation !== sceneGenerationRef.current) return;
       const canvas = canvasRef.current;
       const scene = sceneRef.current;
-      if (!canvas || !scene) return;
+      const inputs = sceneInputsRef.current;
+      if (!canvas || !scene || inputs?.generation !== generation) return;
       const context = canvas.getContext("2d");
       if (!context) return;
       drawScene(context, scene, viewportRef.current.width, viewportRef.current.height, selectedNodeRef.current, hoveredNodeRef.current);
-      drawnSceneRef.current = scene;
-      setReadyScene(scene);
+      drawnGenerationRef.current = generation;
+      if (keyboardTargetRef.current) {
+        lastHitGenerationRef.current = generation;
+      }
+      setReadyGeneration(generation);
     });
     if (animationFrameRef.current === -1) animationFrameRef.current = frame;
   }, []);
@@ -235,6 +291,8 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     sourceGraph: NonNullable<typeof graph>,
     sourceLayout: Awaited<ReturnType<LayoutClient["layoutGraph"]>>,
   ) => {
+    const generation = sceneGenerationRef.current + 1;
+    sceneGenerationRef.current = generation;
     const nextScene = buildScene({
       graph: sourceGraph,
       layout: sourceLayout,
@@ -242,14 +300,38 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       confidenceThreshold: confidenceThresholdRef.current,
     });
     sceneRef.current = nextScene;
-    drawnSceneRef.current = null;
+    drawnGenerationRef.current = null;
+    const currentAnalysis = useAnalysisStore.getState();
     sceneInputsRef.current = {
       graph: sourceGraph,
       confidenceThreshold: confidenceThresholdRef.current,
+      fitViewRequest: currentAnalysis.fitViewRequest,
+      relayoutRequest: currentAnalysis.relayoutRequest,
+      transform: { ...transformRef.current },
+      generation,
     };
-    setReadyScene(null);
-    invalidate();
+    setSceneGeneration(generation);
+    setReadyGeneration(null);
+    invalidate(generation);
   }, [invalidate]);
+
+  const retireScene = useCallback(() => {
+    const generation = sceneGenerationRef.current + 1;
+    sceneGenerationRef.current = generation;
+    if (animationFrameRef.current !== null && animationFrameRef.current !== -1) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    animationFrameRef.current = null;
+    scheduledGenerationRef.current = null;
+    sceneRef.current = null;
+    drawnGenerationRef.current = null;
+    sceneInputsRef.current = null;
+    lastHitRef.current = null;
+    lastHitGenerationRef.current = null;
+    keyboardTargetRef.current = null;
+    setSceneGeneration(generation);
+    setReadyGeneration(null);
+  }, []);
 
   const rebuildCurrentScene = useCallback(() => {
     const source = sceneSourceRef.current;
@@ -293,20 +375,14 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   useEffect(() => {
     if (!graph) {
       sceneSourceRef.current = null;
-      sceneRef.current = null;
-      drawnSceneRef.current = null;
-      sceneInputsRef.current = null;
-      setReadyScene(null);
+      retireScene();
       setLayout(null);
       setLayoutError(null);
       return;
     }
     let active = true;
     sceneSourceRef.current = null;
-    sceneRef.current = null;
-    drawnSceneRef.current = null;
-    sceneInputsRef.current = null;
-    setReadyScene(null);
+    retireScene();
     setLayout(null);
     setLayoutError(null);
     if (relayoutRequest > 0 && zoomRef.current && canvasRef.current) {
@@ -318,6 +394,14 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     void client.layoutGraph(graph, viewport).then(
       (next) => {
         if (active) {
+          const initialTransform = fitTransform(next, viewport);
+          transformRef.current = initialTransform;
+          if (zoomRef.current && canvasRef.current) {
+            d3.select(canvasRef.current).call(
+              zoomRef.current.transform,
+              initialTransform,
+            );
+          }
           sceneSourceRef.current = { graph, layout: next };
           commitScene(graph, next);
           setLayout(next);
@@ -332,7 +416,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       active = false;
       client.reset();
     };
-  }, [commitScene, graph, relayoutRequest, viewport]);
+  }, [commitScene, graph, relayoutRequest, retireScene, viewport]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -353,17 +437,16 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
 
   const fitView = useCallback(() => {
     if (!layout || !graph || !zoomRef.current || !canvasRef.current) return;
-    const regions = layout.tableRegions;
-    if (!regions.length) return;
-    const minX = Math.min(...regions.map((region) => region.x));
-    const minY = Math.min(...regions.map((region) => region.y));
-    const maxX = Math.max(...regions.map((region) => region.x + region.width));
-    const maxY = Math.max(...regions.map((region) => region.y + region.height));
-    const k = Math.max(0.25, Math.min(2, Math.min((viewport.width - 96) / Math.max(1, maxX - minX), (viewport.height - 96) / Math.max(1, maxY - minY))));
-    d3.select(canvasRef.current).call(zoomRef.current.transform, d3.zoomIdentity.translate(viewport.width / 2, viewport.height / 2).scale(k).translate(-(minX + maxX) / 2, -(minY + maxY) / 2));
+    d3.select(canvasRef.current).call(
+      zoomRef.current.transform,
+      fitTransform(layout, viewport),
+    );
   }, [graph, layout, viewport]);
 
+  const handledFitViewRequestRef = useRef(fitViewRequest);
   useEffect(() => {
+    if (handledFitViewRequestRef.current === fitViewRequest) return;
+    handledFitViewRequestRef.current = fitViewRequest;
     fitView();
   }, [fitView, fitViewRequest]);
 
@@ -376,13 +459,19 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   }, [focusNodeRequest, layout, viewport]);
 
   useEffect(() => () => {
-    if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
+    sceneGenerationRef.current += 1;
+    if (animationFrameRef.current !== null && animationFrameRef.current !== -1) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    animationFrameRef.current = null;
+    scheduledGenerationRef.current = null;
     layoutClientRef.current?.dispose();
     layoutClientRef.current = null;
   }, []);
 
   const applyHit = useCallback((target: HitTarget | null) => {
     lastHitRef.current = target;
+    lastHitGenerationRef.current = target ? drawnGenerationRef.current : null;
     setHoveredNode(target?.kind === "entity-node" ? target.id : null);
   }, [setHoveredNode]);
 
@@ -437,6 +526,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const setKeyboardTarget = useCallback((target: KeyboardTarget | null) => {
     keyboardTargetRef.current = target;
     lastHitRef.current = target?.hit ?? null;
+    lastHitGenerationRef.current = target ? drawnGenerationRef.current : null;
     setKeyboardAnnouncement(target ? `当前目标：${target.label}` : "");
     if (target) revealKeyboardEntity(target);
   }, [revealKeyboardEntity]);
@@ -570,20 +660,28 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const tableCount = graph?.table_nodes.length ?? 0;
   const edgeCount = graph ? graph.entity_edges.length + graph.table_edges.length : 0;
   const notice = layoutError ?? (analysisStatus === "failed" ? errorMessage || "分析失败，以下图谱为可用的部分结果。" : null);
+  const currentInputs = sceneInputsRef.current;
   const sceneIsReady =
-    readyScene !== null &&
-    readyScene === sceneRef.current &&
-    drawnSceneRef.current === readyScene &&
-    sceneInputsRef.current?.graph === graph &&
-    sceneInputsRef.current?.confidenceThreshold === confidenceThreshold;
+    readyGeneration === sceneGeneration &&
+    drawnGenerationRef.current === sceneGeneration &&
+    currentInputs?.generation === sceneGeneration &&
+    currentInputs.graph === graph &&
+    currentInputs.confidenceThreshold === confidenceThreshold &&
+    currentInputs.fitViewRequest === fitViewRequest &&
+    currentInputs.relayoutRequest === relayoutRequest &&
+    sameTransform(currentInputs.transform, transformRef.current);
   const interactiveScene = () => {
     const scene = sceneRef.current;
     const inputs = sceneInputsRef.current;
     const currentAnalysis = useAnalysisStore.getState();
     return scene &&
-      drawnSceneRef.current === scene &&
+      inputs?.generation === sceneGenerationRef.current &&
+      drawnGenerationRef.current === inputs.generation &&
       inputs?.graph === currentAnalysis.graph &&
-      inputs.confidenceThreshold === currentAnalysis.confidenceThreshold
+      inputs.confidenceThreshold === currentAnalysis.confidenceThreshold &&
+      inputs.fitViewRequest === currentAnalysis.fitViewRequest &&
+      inputs.relayoutRequest === currentAnalysis.relayoutRequest &&
+      sameTransform(inputs.transform, transformRef.current)
       ? scene
       : null;
   };
@@ -595,11 +693,13 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         role="img"
         data-layout-ready={sceneIsReady ? "true" : "false"}
         data-scene-ready={sceneIsReady ? "true" : "false"}
+        data-scene-generation={sceneGeneration}
+        data-ready-generation={sceneIsReady ? readyGeneration : ""}
         tabIndex={0}
         aria-label={graphSummary(entityCount, tableCount, edgeCount)}
         className="block h-full w-full touch-none outline-none focus:ring-2 focus:ring-teal-300"
         onFocus={() => {
-          if (!keyboardTargetRef.current) {
+          if (interactiveScene() && !keyboardTargetRef.current) {
             setKeyboardTarget(keyboardTargets()[0] ?? null);
           }
         }}
@@ -613,12 +713,17 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
           selectHit(scene ? hitTest(scene, pointFromEvent(event.currentTarget, event.nativeEvent)) : null);
         }}
         onKeyDown={(event) => {
+          if (!interactiveScene()) return;
           if (event.key.startsWith("Arrow")) {
             event.preventDefault();
             moveKeyboardTarget(event.key);
             return;
           }
-          if ((event.key === "Enter" || event.key === " ") && lastHitRef.current) {
+          if (
+            (event.key === "Enter" || event.key === " ") &&
+            lastHitRef.current &&
+            lastHitGenerationRef.current === drawnGenerationRef.current
+          ) {
             event.preventDefault();
             selectHit(lastHitRef.current);
           }

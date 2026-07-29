@@ -122,6 +122,75 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
   });
 
+  it("builds the first drawable scene with the final auto-fit transform", async () => {
+    LayoutWorker.autoReply = false;
+    const context = canvasContext();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context);
+    const observedDrawTransforms: d3.ZoomTransform[] = [];
+    let canvas: HTMLCanvasElement;
+    vi.mocked(context.arc).mockImplementation(() => {
+      observedDrawTransforms.push(d3.zoomTransform(canvas));
+    });
+    render(<GraphCanvas />);
+    canvas = screen.getByRole("img", { name: /语义关系图/ });
+    await waitFor(() => expect(LayoutWorker.instances[0]?.messages).toHaveLength(1));
+
+    await act(async () => {
+      LayoutWorker.instances[0].reply();
+      await Promise.resolve();
+    });
+    await ready();
+
+    const fitted = d3.zoomTransform(canvas);
+    expect(fitted).not.toEqual(d3.zoomIdentity);
+    expect(observedDrawTransforms[0]).toEqual(fitted);
+    await act(async () => Promise.resolve());
+    expect(d3.zoomTransform(canvas)).toEqual(fitted);
+  });
+
+  it("lets only the latest fit or zoom generation become ready", async () => {
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = screen.getByRole("img", { name: /语义关系图/ });
+    fireEvent.focus(canvas);
+    fireEvent.keyDown(canvas, { key: "ArrowDown" });
+    expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
+    const callbacks = new Map<number, FrameRequestCallback>();
+    const cancelled = new Set<number>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = ++nextFrame;
+      callbacks.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => cancelled.add(id));
+
+    act(() => useAnalysisStore.getState().requestFitView());
+    const firstGeneration = canvas.getAttribute("data-scene-generation");
+    const firstFrame = callbacks.get(1)!;
+    fireEvent.wheel(canvas, {
+      clientX: 480,
+      clientY: 300,
+      deltaY: -500,
+    });
+    const latestGeneration = canvas.getAttribute("data-scene-generation");
+
+    expect(Number(latestGeneration)).toBeGreaterThan(Number(firstGeneration));
+    expect(cancelled).toContain(1);
+    expect(callbacks.size).toBe(2);
+    expect(canvas).toHaveAttribute("data-scene-ready", "false");
+
+    act(() => firstFrame(16));
+    expect(canvas).toHaveAttribute("data-scene-ready", "false");
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
+    act(() => callbacks.get(2)!(32));
+    expect(canvas).toHaveAttribute("data-scene-ready", "true");
+    expect(canvas).toHaveAttribute("data-ready-generation", latestGeneration);
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
+  });
+
   it("uses one canvas and no per-entity DOM for a 7000 entity graph", async () => {
     const entities = Array.from({ length: 7_000 }, (_, index) => ({ id: `entity-${index}`, table_id: "bulk", display_name: `Entity ${index}`, class_name: null, dimensions: {} }));
     act(() => setGraph({ table_nodes: [{ id: "bulk", display_name: "Bulk", entity_count: entities.length }], entity_nodes: entities, table_edges: [], entity_edges: [] }));
@@ -394,7 +463,7 @@ describe("GraphCanvas", () => {
       useAnalysisStore.getState().setConfidenceThreshold(0.2);
     });
     expect(callbacks.size).toBe(1);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(2);
 
     const [firstId, firstCallback] = [...callbacks.entries()][0];
     callbacks.delete(firstId);
@@ -402,7 +471,7 @@ describe("GraphCanvas", () => {
     expect(callbacks.size).toBe(0);
 
     act(() => useAnalysisStore.getState().setHoveredNode("b"));
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(3);
     expect(callbacks.size).toBe(1);
     const secondId = [...callbacks.keys()][0];
     unmount();
