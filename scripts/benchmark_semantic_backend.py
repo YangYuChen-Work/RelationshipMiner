@@ -159,6 +159,7 @@ def main() -> None:
     assert len(documents) == ENTITY_COUNT
     assert len(plans) == PLANS_COUNT
     assert candidates <= ENTITY_COUNT * max_plans_per_source * TOP_K
+    assert diagnostics.peak_materialized_pair_buffer <= TOP_K
     assert explicit_pair_count == 0
 
     print(
@@ -172,6 +173,9 @@ def main() -> None:
                 "max_plans_per_source": max_plans_per_source,
                 "top_k": TOP_K,
                 "explicit_pair_count": explicit_pair_count,
+                "peak_materialized_pair_buffer": (
+                    diagnostics.peak_materialized_pair_buffer
+                ),
                 "keyword_indexes": len(keyword_indexes),
                 "vector_indexes": len(vector_indexes),
                 "corpus_build_seconds": round(corpus_build_seconds, 6),

@@ -20,14 +20,25 @@ _SourceKey = tuple[str, tuple[str, ...]]
 
 @dataclass
 class _KeywordIndex:
-    postings: dict[str, list[str]]
+    tokens_by_entity_id: dict[str, set[str]]
     order: dict[str, int]
 
-    def search(self, query: str, count: int) -> list[str]:
-        matches: set[str] = set()
-        for token in _keyword_tokens(query):
-            matches.update(self.postings.get(token, ()))
-        return sorted(matches, key=self.order.__getitem__)[:count]
+    def search(
+        self,
+        query: str,
+        count: int,
+        diagnostics: RetrievalDiagnostics | None = None,
+    ) -> list[str]:
+        query_tokens = _keyword_tokens(query)
+        matches: list[str] = []
+        if query_tokens:
+            for entity_id in self.order:
+                if query_tokens & self.tokens_by_entity_id[entity_id]:
+                    matches.append(entity_id)
+                    if len(matches) >= count:
+                        break
+        _observe_pair_buffer(diagnostics, len(matches), count)
+        return matches
 
 
 @dataclass
@@ -36,7 +47,12 @@ class _VectorIndex:
     entity_ids_by_key: dict[int, str]
     ndim: int
 
-    def search(self, query: np.ndarray, count: int) -> list[str]:
+    def search(
+        self,
+        query: np.ndarray,
+        count: int,
+        diagnostics: RetrievalDiagnostics | None = None,
+    ) -> list[str]:
         vector = _usable_vector(query, expected_ndim=self.ndim)
         if vector is None:
             return []
@@ -44,10 +60,14 @@ class _VectorIndex:
             vector,
             count=count,
         )
-        return [
+        # USearch owns ANN traversal and returns a bounded key array. This
+        # conversion is the only Python source-target pair buffer.
+        entity_ids = [
             self.entity_ids_by_key[int(key)]
             for key in matches.keys
         ]
+        _observe_pair_buffer(diagnostics, len(entity_ids), count)
+        return entity_ids
 
 
 @dataclass
@@ -57,9 +77,15 @@ class _SourceVectorCache:
 
 @dataclass
 class RetrievalDiagnostics:
-    """Observed candidate batches before the final per-source Top-K cap."""
+    """Python-side source-target pair materialization at real index seams.
+
+    ``explicit_pair_count`` counts associations retained beyond an index
+    search's requested Top-K bound. A zero value means no Python candidate
+    buffer materialized source-target pairs outside that bound.
+    """
 
     explicit_pair_count: int = 0
+    peak_materialized_pair_buffer: int = 0
 
 
 def retrieve_candidate_groups(
@@ -111,11 +137,7 @@ def retrieve_candidate_groups(
                 keyword_candidates = keyword_indexes[corpus_key].search(
                     source_text,
                     plan.candidate_limit_per_source,
-                )
-                _record_candidate_batch(
                     diagnostics,
-                    keyword_candidates,
-                    plan.candidate_limit_per_source,
                 )
                 _extend_unique(
                     candidate_ids,
@@ -139,11 +161,7 @@ def retrieve_candidate_groups(
                     semantic_candidates = vector_index.search(
                         query_vector,
                         plan.candidate_limit_per_source,
-                    )
-                    _record_candidate_batch(
                         diagnostics,
-                        semantic_candidates,
-                        plan.candidate_limit_per_source,
                     )
                     _extend_unique(
                         candidate_ids,
@@ -187,15 +205,14 @@ def _build_keyword_indexes(
         if key in indexes:
             continue
 
-        postings: dict[str, list[str]] = {}
         targets = documents_by_table.get(plan.target_table, [])
+        tokens_by_entity_id: dict[str, set[str]] = {}
         for target in targets:
             _check_deadline(check_deadline, "构建关键词目标索引时")
             text = _dimension_text(target, plan.target_dimensions)
-            for token in _keyword_tokens(text):
-                postings.setdefault(token, []).append(target.entity_id)
+            tokens_by_entity_id[target.entity_id] = _keyword_tokens(text)
         indexes[key] = _KeywordIndex(
-            postings=postings,
+            tokens_by_entity_id=tokens_by_entity_id,
             order={
                 target.entity_id: index
                 for index, target in enumerate(targets)
@@ -430,13 +447,21 @@ def _extend_unique(
             return
 
 
-def _record_candidate_batch(
+def _observe_pair_buffer(
     diagnostics: RetrievalDiagnostics | None,
-    entity_ids: list[str],
+    materialized_count: int,
     limit: int,
 ) -> None:
-    if diagnostics is not None and len(entity_ids) > limit:
-        diagnostics.explicit_pair_count += len(entity_ids)
+    if diagnostics is None:
+        return
+    diagnostics.peak_materialized_pair_buffer = max(
+        diagnostics.peak_materialized_pair_buffer,
+        materialized_count,
+    )
+    diagnostics.explicit_pair_count += max(
+        0,
+        materialized_count - limit,
+    )
 
 
 def _check_deadline(

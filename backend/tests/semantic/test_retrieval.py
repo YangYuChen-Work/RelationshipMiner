@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import engine.semantic.retrieval as retrieval_module
 from engine.semantic.embeddings import SentenceTransformerEmbeddingAdapter
 from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.models import EntityDocument, RelationshipPlan
@@ -371,43 +370,30 @@ def test_retrieval_returns_duplicate_keyword_and_vector_hit_once():
     ] == ["part:1", "part:2"]
 
 
-def test_diagnostics_observe_oversized_index_batches_before_final_limit(
-    monkeypatch,
-):
-    def return_every_indexed_id(
-        index: retrieval_module._KeywordIndex,
-        query: str,
-        count: int,
-    ) -> list[str]:
-        del query, count
-        return sorted(index.order, key=index.order.__getitem__)
-
-    monkeypatch.setattr(
-        retrieval_module._KeywordIndex,
-        "search",
-        return_every_indexed_id,
-    )
+@pytest.mark.parametrize("retrieval_mode", ["keyword", "semantic"])
+def test_diagnostics_observe_real_index_materialization(retrieval_mode):
     diagnostics = RetrievalDiagnostics()
 
     groups = retrieve_candidate_groups(
         documents=[
-            _document("process:1", "process", "source"),
-            _document("part:1", "part", "target-1"),
-            _document("part:2", "part", "target-2"),
-            _document("part:3", "part", "target-3"),
+            _document("process:1", "process", "shared source"),
+            _document("part:1", "part", "shared target-1"),
+            _document("part:2", "part", "shared target-2"),
+            _document("part:3", "part", "shared target-3"),
         ],
         plans=[
             _plan(
-                retrieval_modes=["keyword"],
+                retrieval_modes=[retrieval_mode],
                 candidate_limit=2,
             )
         ],
-        embedding_adapter=RejectingEmbeddings(),
+        embedding_adapter=FakeEmbeddings(),
         diagnostics=diagnostics,
     )
 
     assert len(groups[0].candidates) == 2
-    assert diagnostics.explicit_pair_count == 3
+    assert diagnostics.peak_materialized_pair_buffer == 2
+    assert diagnostics.explicit_pair_count == 0
 
 
 def test_retrieval_uses_only_dimensions_selected_by_the_plan():
