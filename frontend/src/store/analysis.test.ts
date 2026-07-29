@@ -401,11 +401,69 @@ describe("analysis socket ownership", () => {
     expect(useAnalysisStore.getState()).toMatchObject({
       phase: "error",
       analysisStatus: "failed",
-      graph: null,
+      graph: {
+        table_nodes: [],
+        entity_nodes: [],
+        table_edges: [],
+        entity_edges: [],
+      },
       warnings: ["Planner unavailable"],
       errorMessage: "Planner unavailable",
       activeSocket: null,
     });
+  });
+
+  it("clears a previous result and every graph interaction before a new submission resolves", async () => {
+    let resolveSubmission!: (value: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>((resolve) => {
+        resolveSubmission = resolve;
+      }),
+    );
+    useAnalysisStore.setState({
+      phase: "done",
+      errorMessage: "old error",
+      currentPhase: "complete",
+      progressMessage: "old progress",
+      progressValue: 1,
+      graph: semanticGraph,
+      analysisStatus: "partial",
+      warnings: ["old warning"],
+      diagnostics,
+      taskId: "task-old",
+      hoveredNodeId: "users:1",
+      selectedNodeId: "users:1",
+      focusNodeRequest: { nodeId: "users:1", version: 1 },
+      selectedEntityEdgeId: "entity-edge-1",
+      selectedTableEdgeId: "table-edge-1",
+      activeSocket: null,
+    });
+
+    const starting = useAnalysisStore.getState().startAnalysis();
+
+    expect(useAnalysisStore.getState()).toMatchObject({
+      phase: "analyzing",
+      errorMessage: null,
+      currentPhase: "",
+      progressMessage: "正在提交分析任务...",
+      progressValue: 0,
+      graph: null,
+      analysisStatus: null,
+      warnings: [],
+      diagnostics: null,
+      taskId: null,
+      hoveredNodeId: null,
+      selectedNodeId: null,
+      focusNodeRequest: null,
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
+    });
+
+    resolveSubmission({
+      ok: true,
+      json: () => Promise.resolve({ task_id: "task-new" }),
+    } as Response);
+    await starting;
   });
 
   it("reports malformed socket JSON through the supplied error callback", () => {

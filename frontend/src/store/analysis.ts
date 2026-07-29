@@ -332,6 +332,10 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       diagnostics: null,
       selectedEntityEdgeId: null,
       selectedTableEdgeId: null,
+      taskId: null,
+      hoveredNodeId: null,
+      selectedNodeId: null,
+      focusNodeRequest: null,
       pendingTables: new Set(),
       tableRequestTokens: new Map(),
       activeSocket: null,
@@ -386,7 +390,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
                 ...terminalState,
                 phase: "error",
                 errorMessage: msg.warnings[0] || "分析失败",
-                graph: null,
+                graph: msg.graph,
               });
             } else {
               finishRun({
