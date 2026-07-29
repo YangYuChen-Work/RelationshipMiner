@@ -55,8 +55,17 @@ def _make_node_id(table_name: str, pk_values: list[Any]) -> str:
 
     格式：{table_name}:{pk_value} 或 {table_name}:{pk1}|{pk2}（复合主键）。
     """
-    pk_str = "|".join(str(v) for v in pk_values)
-    return f"{table_name}:{pk_str}"
+    from engine.semantic.corpus import _entity_id
+
+    synthetic_row = {
+        str(position): value
+        for position, value in enumerate(pk_values)
+    }
+    return _entity_id(
+        table_name,
+        synthetic_row,
+        list(synthetic_row),
+    )
 
 
 def _extract_class_name(field_values: dict[str, Any]) -> str | None:
@@ -139,8 +148,14 @@ def compute_relationships(
         target_pk_cols = pk_metadata.get(fk.target_table, [])
         target_index: dict[tuple, str] = {}
         for row in target_rows:
+            target_values = tuple(row[c] for c in fk.target_columns)
+            if any(value is None for value in target_values):
+                continue
             pk_vals = tuple(row[c] for c in target_pk_cols)
-            target_index[pk_vals] = _make_node_id(fk.target_table, pk_vals)
+            target_index[target_values] = _make_node_id(
+                fk.target_table,
+                pk_vals,
+            )
 
         source_pk_cols = pk_metadata.get(fk.source_table, [])
         for row in source_rows:

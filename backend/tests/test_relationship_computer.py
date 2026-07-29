@@ -72,6 +72,31 @@ def _fk_orders_user_id() -> list[FKConstraint]:
 # ── FK 追踪测试 ──────────────────────────────────────────────
 
 
+def test_fk_uses_declared_non_primary_target_column():
+    records = {
+        "users": [{"id": 1, "code": "U-42"}],
+        "orders": [{"id": 10, "user_code": "U-42"}],
+    }
+    fk = [
+        FKConstraint(
+            source_table="orders",
+            source_columns=["user_code"],
+            target_table="users",
+            target_columns=["code"],
+        )
+    ]
+
+    graph = compute_relationships(
+        records,
+        pk_metadata={"users": ["id"], "orders": ["id"]},
+        fk_constraints=fk,
+    )
+
+    assert [
+        (edge["source"], edge["target"]) for edge in graph["edges"]
+    ] == [("orders:10", "users:1")]
+
+
 class TestFKTracking:
     """外键关系追踪。"""
 
