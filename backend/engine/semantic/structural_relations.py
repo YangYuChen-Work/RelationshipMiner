@@ -93,7 +93,22 @@ def build_relation_table_edges(
                         continue
 
                     key = tuple(sorted((source.entity_id, target.entity_id)))
-                    if key in edges:
+                    reason = (
+                        f"{table_name} records {left_class} to {right_class}"
+                    )
+                    evidence = RelationEvidence(
+                        source_field="left_id",
+                        source_value=row["left_id"],
+                        target_field="right_id",
+                        target_value=row["right_id"],
+                        method="relation_table",
+                        reason=reason,
+                    )
+                    existing_edge = edges.get(key)
+                    if existing_edge is not None:
+                        existing_evidence = existing_edge.relations[0].evidence
+                        if evidence not in existing_evidence:
+                            existing_evidence.append(evidence)
                         continue
                     relation_type = _RELATION_TYPES.get(
                         (left_class, right_class),
@@ -106,23 +121,8 @@ def build_relation_table_edges(
                         direction="source_to_target",
                         strength="strong",
                         confidence=1.0,
-                        explanation=(
-                            f"{table_name} records {left_class} to "
-                            f"{right_class}"
-                        ),
-                        evidence=[
-                            RelationEvidence(
-                                source_field="left_id",
-                                source_value=row["left_id"],
-                                target_field="right_id",
-                                target_value=row["right_id"],
-                                method="relation_table",
-                                reason=(
-                                    f"{table_name} records {left_class} to "
-                                    f"{right_class}"
-                                ),
-                            )
-                        ],
+                        explanation=reason,
+                        evidence=[evidence],
                     )
                     edges[key] = EntityEdge(
                         id=f"{source.entity_id}->{target.entity_id}",

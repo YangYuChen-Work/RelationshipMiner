@@ -21,6 +21,14 @@ def test_relation_table_duplicate_rows_merge_to_one_process_operation_edge():
         Column("left_class", String),
         Column("right_class", String),
     )
+    metargetrl = Table(
+        "metargetrl",
+        metadata,
+        Column("left_id", String),
+        Column("right_id", String),
+        Column("left_class", String),
+        Column("right_class", String),
+    )
     Table("meprocess", metadata, Column("id", String, primary_key=True))
     Table("meoperation", metadata, Column("id", String, primary_key=True))
     metadata.create_all(engine)
@@ -40,6 +48,17 @@ def test_relation_table_duplicate_rows_merge_to_one_process_operation_edge():
                     "left_class": "MEProcess",
                     "right_class": "MEOperation",
                 },
+            ],
+        )
+        connection.execute(
+            metargetrl.insert(),
+            [
+                {
+                    "left_id": "process-1",
+                    "right_id": "operation-1",
+                    "left_class": "MEProcess",
+                    "right_class": "MEOperation",
+                }
             ],
         )
 
@@ -68,7 +87,14 @@ def test_relation_table_duplicate_rows_merge_to_one_process_operation_edge():
     )
     assert relation.relation_type == "包含工序"
     assert relation.strength == "strong"
-    assert relation.evidence[0].method == "relation_table"
+    assert len(relation.evidence) == 2
+    assert {evidence.method for evidence in relation.evidence} == {
+        "relation_table"
+    }
+    assert {evidence.reason for evidence in relation.evidence} == {
+        "metargetrl records MEProcess to MEOperation",
+        "relation_id records MEProcess to MEOperation",
+    }
 
 
 def _document(
