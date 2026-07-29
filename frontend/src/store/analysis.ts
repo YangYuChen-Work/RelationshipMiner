@@ -23,7 +23,7 @@ interface FocusNodeRequest {
   version: number;
 }
 
-export function isRequiredColumn(column: ColumnInfo): boolean {
+export function isSystemColumn(column: ColumnInfo): boolean {
   return column.is_class_name || column.is_primary_key;
 }
 
@@ -193,8 +193,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
       try {
         const { columns } = await fetchTableColumns(tableName);
-        const requiredFields = columns.filter(isRequiredColumn);
-        const selectedFields = new Set(requiredFields.map((c) => c.name));
+        const selectedFields = new Set<string>();
         const current = get();
         if (
           current.phase !== "select" ||
@@ -263,7 +262,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     if (!entry) return;
 
     const col = entry.columns.find((c) => c.name === fieldName);
-    if (col && isRequiredColumn(col)) return;
+    if (col && isSystemColumn(col)) return;
 
     const next = patchSelectedTable(selectedTables, tableName, (e) => {
       const nextFields = new Set(e.selectedFields);
@@ -281,7 +280,9 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     const { selectedTables } = get();
     const next = patchSelectedTable(selectedTables, tableName, (e) => ({
       ...e,
-      selectedFields: new Set(e.columns.map((c) => c.name)),
+      selectedFields: new Set(
+        e.columns.filter((column) => !isSystemColumn(column)).map((column) => column.name)
+      ),
     }));
     set({ selectedTables: next });
   },
@@ -290,9 +291,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     const { selectedTables } = get();
     const next = patchSelectedTable(selectedTables, tableName, (e) => ({
       ...e,
-      selectedFields: new Set(
-        e.columns.filter(isRequiredColumn).map((c) => c.name)
-      ),
+      selectedFields: new Set(),
     }));
     set({ selectedTables: next });
   },
@@ -309,7 +308,9 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
     const tableList = Array.from(selectedTables.values()).map((t) => ({
       name: t.name,
-      fields: Array.from(t.selectedFields),
+      fields: t.columns
+        .filter((column) => !isSystemColumn(column) && t.selectedFields.has(column.name))
+        .map((column) => column.name),
     }));
 
     // ── 验证 ──

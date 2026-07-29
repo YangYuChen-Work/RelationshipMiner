@@ -91,7 +91,7 @@ describe("SelectionWorkspace table search", () => {
           {
             name: "UserAccounts",
             columns,
-            selectedFields: new Set(["class_name"]),
+            selectedFields: new Set(),
           },
         ],
       ]),
@@ -111,5 +111,11 @@ describe("SelectionWorkspace table search", () => {
     expect(
       await screen.findByRole("checkbox", { name: "选择表 UserAccounts" })
     ).toBeChecked();
+  });
+
+  it("does not claim system fields are retained as user selections", () => {
+    render(<SelectionWorkspace />);
+
+    expect(screen.queryByText("主键与类名字段会始终保留。")).not.toBeInTheDocument();
   });
 });

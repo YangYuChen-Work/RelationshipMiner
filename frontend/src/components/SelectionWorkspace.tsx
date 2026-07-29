@@ -110,7 +110,7 @@ export default function SelectionWorkspace() {
       )}
 
       <div className="flex items-center justify-between border-t border-gray-200 pt-4">
-        <span className="text-xs text-gray-500">主键与类名字段会始终保留。</span>
+        <span className="text-xs text-gray-500">选择用于语义关系分析的维度字段。</span>
         <AnalysisLauncher />
       </div>
     </section>

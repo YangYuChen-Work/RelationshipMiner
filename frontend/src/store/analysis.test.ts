@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAnalysisSocket } from "../api/analysis";
-import { useAnalysisStore } from "./analysis";
+import { isSystemColumn, useAnalysisStore } from "./analysis";
 
 const columns = [
   { name: "id", type: "int", is_class_name: false, is_primary_key: true },
@@ -91,20 +91,29 @@ describe("analysis selection store", () => {
     });
   });
 
-  it("initially selects primary-key and class-name fields and never removes them", async () => {
-    // This fails if loading a table omits a required field, or either protection is removed.
+  it("keeps system metadata separate from user-selected dimensions", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ table_name: "users", columns }),
     } as Response);
 
     await useAnalysisStore.getState().toggleTable("users");
-    useAnalysisStore.getState().toggleField("users", "id");
-    useAnalysisStore.getState().toggleField("users", "class_name");
-    useAnalysisStore.getState().deselectAllFields("users");
 
+    expect(isSystemColumn(columns[0])).toBe(true);
+    expect(isSystemColumn(columns[1])).toBe(true);
     expect(useAnalysisStore.getState().selectedTables.get("users")?.selectedFields).toEqual(
-      new Set(["id", "class_name"])
+      new Set()
+    );
+
+    useAnalysisStore.getState().toggleField("users", "email");
+    expect(useAnalysisStore.getState().selectedTables.get("users")?.selectedFields).toEqual(
+      new Set(["email"])
+    );
+
+    useAnalysisStore.getState().selectAllFields("users");
+    useAnalysisStore.getState().deselectAllFields("users");
+    expect(useAnalysisStore.getState().selectedTables.get("users")?.selectedFields).toEqual(
+      new Set()
     );
   });
 
@@ -248,7 +257,7 @@ describe("analysis selection store", () => {
     expect(useAnalysisStore.getState().tableRequestTokens).toEqual(new Map());
   });
 
-  it("starts analysis for a table without a class-name field", async () => {
+  it("submits only user semantic dimensions", async () => {
     // This fails if the retired per-table class_name validation is restored.
     class SilentWebSocket {
       onmessage: ((event: MessageEvent) => void) | null = null;
@@ -256,7 +265,7 @@ describe("analysis selection store", () => {
       onclose: (() => void) | null = null;
     }
     vi.stubGlobal("WebSocket", SilentWebSocket);
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ task_id: "task-1" }),
     } as Response);
@@ -266,8 +275,8 @@ describe("analysis selection store", () => {
           "audit_log",
           {
             name: "audit_log",
-            columns: [columns[0]],
-            selectedFields: new Set(["id"]),
+            columns: [columns[0], columns[2]],
+            selectedFields: new Set(["id", "email"]),
           },
         ],
       ]),
@@ -276,7 +285,41 @@ describe("analysis selection store", () => {
     await useAnalysisStore.getState().startAnalysis();
 
     expect(useAnalysisStore.getState().phase).toBe("analyzing");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      tables: [{ name: "audit_log", fields: ["email"] }],
+    });
     vi.unstubAllGlobals();
+  });
+
+  it("allows analysis with no selected dimensions", async () => {
+    class SilentWebSocket {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      onclose: (() => void) | null = null;
+    }
+    vi.stubGlobal("WebSocket", SilentWebSocket);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ task_id: "task-empty-fields" }),
+    } as Response);
+    useAnalysisStore.setState({
+      selectedTables: new Map([
+        [
+          "audit_log",
+          {
+            name: "audit_log",
+            columns: [columns[0], columns[1]],
+            selectedFields: new Set(),
+          },
+        ],
+      ]),
+    });
+
+    await useAnalysisStore.getState().startAnalysis();
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      tables: [{ name: "audit_log", fields: [] }],
+    });
   });
 });
 

@@ -39,8 +39,7 @@ describe("DatabaseTableAccordion", () => {
     });
   });
 
-  it("expands after selecting a table and keeps required fields after deselecting all", async () => {
-    // This fails if selecting no longer opens the accordion, or deselect-all removes required fields.
+  it("selects only semantic dimensions and lets users clear them", async () => {
     mockFields();
     const user = userEvent.setup();
     render(<DatabaseTableAccordion tableName="users" disabled={false} />);
@@ -56,10 +55,11 @@ describe("DatabaseTableAccordion", () => {
 
     await user.click(screen.getByRole("button", { name: "全选 users 字段" }));
     expect(screen.getByRole("checkbox", { name: "字段 email" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "字段 id" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "字段 class_name" })).not.toBeChecked();
 
     await user.click(screen.getByRole("button", { name: "取消全选 users 字段" }));
-    expect(screen.getByRole("checkbox", { name: "字段 id" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "字段 class_name" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "字段 email" })).not.toBeChecked();
   });
 
   it("selects, loads, and expands an unselected table from its expand button", async () => {
@@ -105,8 +105,7 @@ describe("DatabaseTableAccordion", () => {
     ).toBeVisible();
   });
 
-  it("does not allow primary-key or class-name fields to be unchecked", async () => {
-    // This fails if the store or UI permits required fields to be toggled off.
+  it("shows system-field purpose without making it an optional dimension", async () => {
     mockFields();
     const user = userEvent.setup();
     render(<DatabaseTableAccordion tableName="users" disabled={false} />);
@@ -118,10 +117,14 @@ describe("DatabaseTableAccordion", () => {
     const className = screen.getByRole("checkbox", { name: "字段 class_name" });
     expect(id).toBeDisabled();
     expect(className).toBeDisabled();
-    await user.click(id);
-    await user.click(className);
-    expect(id).toBeChecked();
-    expect(className).toBeChecked();
+    expect(id).not.toBeChecked();
+    expect(className).not.toBeChecked();
+    expect(screen.getByText("自动用于实体 ID")).toBeVisible();
+    expect(screen.getByText("用于节点展示")).toBeVisible();
+
+    const email = screen.getByRole("checkbox", { name: "字段 email" });
+    await user.click(email);
+    expect(email).toBeChecked();
   });
 
   it("retries selecting a table after its field request fails", async () => {

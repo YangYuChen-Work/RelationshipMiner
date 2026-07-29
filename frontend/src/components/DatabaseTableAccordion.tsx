@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isRequiredColumn, useAnalysisStore } from "../store/analysis";
+import { isSystemColumn, useAnalysisStore } from "../store/analysis";
 
 interface DatabaseTableAccordionProps {
   tableName: string;
@@ -53,7 +53,7 @@ export default function DatabaseTableAccordion({
   }
 
   const selectedCount = entry?.selectedFields.size ?? 0;
-  const totalFields = entry?.columns.length ?? 0;
+  const totalFields = entry?.columns.filter((column) => !isSystemColumn(column)).length ?? 0;
   const allSelected = totalFields > 0 && selectedCount === totalFields;
 
   return (
@@ -137,19 +137,19 @@ export default function DatabaseTableAccordion({
           className="divide-y divide-gray-100 border-t border-gray-200 bg-white"
         >
           {entry.columns.map((column) => {
-            const required = isRequiredColumn(column);
+            const systemColumn = isSystemColumn(column);
             return (
               <label
                 key={column.name}
                 className={`flex items-center gap-3 px-4 py-2.5 ${
-                  required ? "bg-violet-50/50" : "cursor-pointer hover:bg-gray-50"
+                  systemColumn ? "bg-violet-50/50" : "cursor-pointer hover:bg-gray-50"
                 }`}
               >
                 <input
                   type="checkbox"
                   aria-label={`字段 ${column.name}`}
                   checked={entry.selectedFields.has(column.name)}
-                  disabled={required}
+                  disabled={systemColumn}
                   onChange={() => toggleField(tableName, column.name)}
                   className="h-4 w-4 rounded text-blue-600"
                 />
@@ -164,6 +164,12 @@ export default function DatabaseTableAccordion({
                   <span className="rounded bg-violet-100 px-1.5 py-0.5 text-xs font-medium text-violet-800">
                     类名
                   </span>
+                )}
+                {column.is_primary_key && (
+                  <span className="text-xs text-gray-500">自动用于实体 ID</span>
+                )}
+                {column.is_class_name && (
+                  <span className="text-xs text-gray-500">用于节点展示</span>
                 )}
               </label>
             );
