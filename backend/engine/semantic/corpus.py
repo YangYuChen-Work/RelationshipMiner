@@ -28,6 +28,9 @@ def load_scoped_records(
         requested.extend(schema.primary_keys)
         for foreign_key in schema.foreign_keys:
             requested.extend(foreign_key.source_columns)
+        for foreign_key in schema_result.all_foreign_keys:
+            if foreign_key.target_table == table_scope.name:
+                requested.extend(foreign_key.target_columns)
 
         class_name_field = next(
             (

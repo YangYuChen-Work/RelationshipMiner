@@ -117,30 +117,33 @@ def build_unique_identifier_edges(
         if (
             source_schema is None
             or target_schema is None
-            or not _is_single_column_identifier(
+            or not _has_single_column_unique_index(
                 source_schema,
                 source_field,
             )
-            or not _is_single_column_identifier(
+            or not _has_single_column_unique_index(
                 target_schema,
                 target_field,
             )
         ):
             continue
 
-        target_index = {
-            _normalize_value(row[target_field]): row
-            for row in records.get(plan.target_table, [])
-            if row.get(target_field) is not None
-        }
-        for source_row in records.get(plan.source_table, []):
-            source_value = source_row.get(source_field)
-            if source_value is None:
-                continue
+        target_groups = _group_rows_by_normalized_value(
+            records.get(plan.target_table, []),
+            target_field,
+        )
+        source_groups = _group_rows_by_normalized_value(
+            records.get(plan.source_table, []),
+            source_field,
+        )
 
-            target_row = target_index.get(_normalize_value(source_value))
-            if target_row is None:
+        for normalized_value, source_rows in source_groups.items():
+            target_rows = target_groups.get(normalized_value, [])
+            if len(source_rows) != 1 or len(target_rows) != 1:
                 continue
+            source_row = source_rows[0]
+            source_value = source_row[source_field]
+            target_row = target_rows[0]
 
             source_id = _entity_id(
                 plan.source_table,
@@ -183,14 +186,24 @@ def build_unique_identifier_edges(
     return edges
 
 
-def _is_single_column_identifier(
+def _has_single_column_unique_index(
     table_schema: TableSchema,
     field_name: str,
 ) -> bool:
-    if table_schema.primary_keys == [field_name]:
-        return True
-
     return any(
         index.unique and index.columns == [field_name]
         for index in table_schema.indexes
     )
+
+
+def _group_rows_by_normalized_value(
+    rows: list[dict[str, object]],
+    field_name: str,
+) -> dict[str, list[dict[str, object]]]:
+    groups: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        value = row.get(field_name)
+        if value is None:
+            continue
+        groups.setdefault(_normalize_value(value), []).append(row)
+    return groups
