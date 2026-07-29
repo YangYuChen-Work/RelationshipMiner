@@ -20,6 +20,12 @@ class Settings:
     )
     DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
+    # Semantic retrieval
+    EMBEDDING_MODEL: str = os.getenv(
+        "EMBEDDING_MODEL",
+        "BAAI/bge-small-zh-v1.5",
+    )
+
     @property
     def database_url(self) -> str:
         return (
