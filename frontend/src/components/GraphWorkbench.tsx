@@ -12,6 +12,8 @@ function AnalysisNotice() {
   const errorMessage = useAnalysisStore((state) => state.errorMessage);
   if (!graph) return null;
   if (analysisStatus === "failed") {
+    const failureReason = errorMessage || warnings[0] || "关系判断未能全部完成，请检查后端分析日志后重试。";
+    const additionalWarnings = warnings.filter((warning) => warning !== failureReason);
     return (
       <section
         role="alert"
@@ -19,11 +21,11 @@ function AnalysisNotice() {
       >
         <p className="font-semibold">分析失败，正在显示可用结果。</p>
         <p className="mt-1 text-xs">
-          {errorMessage || warnings[0] || "关系判断未能全部完成，请检查后端分析日志后重试。"}
+          {failureReason}
         </p>
-        {warnings.length > 0 && (
+        {additionalWarnings.length > 0 && (
           <ul className="mt-2 list-disc pl-5 text-xs">
-            {warnings.map((warning, index) => (
+            {additionalWarnings.map((warning, index) => (
               <li key={`${warning}-${index}`}>{warning}</li>
             ))}
           </ul>
@@ -79,7 +81,7 @@ export default function GraphWorkbench() {
         <section className="relative min-h-0 overflow-hidden border-r border-slate-700/70 bg-[#0d1926]">
           <div className="h-full min-h-0 p-3 [&>div]:h-full [&_svg]:h-full">
             <CanvasErrorBoundary>
-              <GraphCanvas />
+              <GraphCanvas suppressStatusOverlay />
             </CanvasErrorBoundary>
           </div>
         </section>

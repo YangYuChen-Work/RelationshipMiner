@@ -28,6 +28,10 @@ interface KeyboardTarget {
   y: number;
 }
 
+interface GraphCanvasProps {
+  suppressStatusOverlay?: boolean;
+}
+
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -150,10 +154,19 @@ function drawScene(
   context.restore();
 }
 
-export default function GraphCanvas() {
+export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<RenderScene | null>(null);
+  const drawnSceneRef = useRef<RenderScene | null>(null);
+  const sceneSourceRef = useRef<{
+    graph: NonNullable<ReturnType<typeof useAnalysisStore.getState>["graph"]>;
+    layout: Awaited<ReturnType<LayoutClient["layoutGraph"]>>;
+  } | null>(null);
+  const sceneInputsRef = useRef<{
+    graph: NonNullable<ReturnType<typeof useAnalysisStore.getState>["graph"]>;
+    confidenceThreshold: number;
+  } | null>(null);
   const transformRef = useRef<GraphTransform>({ k: 1, x: 0, y: 0 });
   const animationFrameRef = useRef<number | null>(null);
   const lastHitRef = useRef<HitTarget | null>(null);
@@ -168,6 +181,7 @@ export default function GraphCanvas() {
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [readyScene, setReadyScene] = useState<RenderScene | null>(null);
 
   const graph = useAnalysisStore((state) => state.graph);
   const analysisStatus = useAnalysisStore((state) => state.analysisStatus);
@@ -176,6 +190,8 @@ export default function GraphCanvas() {
   const hoveredNodeId = useAnalysisStore((state) => state.hoveredNodeId);
   const selectedNodeId = useAnalysisStore((state) => state.selectedNodeId);
   const confidenceThreshold = useAnalysisStore((state) => state.confidenceThreshold);
+  const confidenceThresholdRef = useRef(confidenceThreshold);
+  confidenceThresholdRef.current = confidenceThreshold;
   const fitViewRequest = useAnalysisStore((state) => state.fitViewRequest);
   const relayoutRequest = useAnalysisStore((state) => state.relayoutRequest);
   const focusNodeRequest = useAnalysisStore((state) => state.focusNodeRequest);
@@ -203,6 +219,8 @@ export default function GraphCanvas() {
       const context = canvas.getContext("2d");
       if (!context) return;
       drawScene(context, scene, viewportRef.current.width, viewportRef.current.height, selectedNodeRef.current, hoveredNodeRef.current);
+      drawnSceneRef.current = scene;
+      setReadyScene(scene);
     });
     if (animationFrameRef.current === -1) animationFrameRef.current = frame;
   }, []);
@@ -213,18 +231,35 @@ export default function GraphCanvas() {
     invalidate();
   }, [hoveredNodeId, invalidate, selectedNodeId]);
 
-  const rebuildScene = useCallback(() => {
-    if (!graph || !layout) {
-      sceneRef.current = null;
-      return;
-    }
-    sceneRef.current = buildScene({ graph, layout, transform: transformRef.current, confidenceThreshold });
+  const commitScene = useCallback((
+    sourceGraph: NonNullable<typeof graph>,
+    sourceLayout: Awaited<ReturnType<LayoutClient["layoutGraph"]>>,
+  ) => {
+    const nextScene = buildScene({
+      graph: sourceGraph,
+      layout: sourceLayout,
+      transform: transformRef.current,
+      confidenceThreshold: confidenceThresholdRef.current,
+    });
+    sceneRef.current = nextScene;
+    drawnSceneRef.current = null;
+    sceneInputsRef.current = {
+      graph: sourceGraph,
+      confidenceThreshold: confidenceThresholdRef.current,
+    };
+    setReadyScene(null);
     invalidate();
-  }, [confidenceThreshold, graph, invalidate, layout]);
+  }, [invalidate]);
+
+  const rebuildCurrentScene = useCallback(() => {
+    const source = sceneSourceRef.current;
+    if (source) commitScene(source.graph, source.layout);
+  }, [commitScene]);
 
   useEffect(() => {
-    rebuildScene();
-  }, [rebuildScene]);
+    const source = sceneSourceRef.current;
+    if (source?.graph === graph) commitScene(source.graph, source.layout);
+  }, [commitScene, confidenceThreshold, graph]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -252,16 +287,26 @@ export default function GraphCanvas() {
     canvas.style.height = `${viewport.height}px`;
     const context = canvas.getContext("2d");
     context?.setTransform(ratio, 0, 0, ratio, 0, 0);
-    rebuildScene();
-  }, [rebuildScene, viewport]);
+    rebuildCurrentScene();
+  }, [rebuildCurrentScene, viewport]);
 
   useEffect(() => {
     if (!graph) {
+      sceneSourceRef.current = null;
+      sceneRef.current = null;
+      drawnSceneRef.current = null;
+      sceneInputsRef.current = null;
+      setReadyScene(null);
       setLayout(null);
       setLayoutError(null);
       return;
     }
     let active = true;
+    sceneSourceRef.current = null;
+    sceneRef.current = null;
+    drawnSceneRef.current = null;
+    sceneInputsRef.current = null;
+    setReadyScene(null);
     setLayout(null);
     setLayoutError(null);
     if (relayoutRequest > 0 && zoomRef.current && canvasRef.current) {
@@ -272,7 +317,11 @@ export default function GraphCanvas() {
     client.reset();
     void client.layoutGraph(graph, viewport).then(
       (next) => {
-        if (active) setLayout(next);
+        if (active) {
+          sceneSourceRef.current = { graph, layout: next };
+          commitScene(graph, next);
+          setLayout(next);
+        }
       },
       (error: unknown) => {
         if (!active || error instanceof StaleLayoutRequestError) return;
@@ -283,7 +332,7 @@ export default function GraphCanvas() {
       active = false;
       client.reset();
     };
-  }, [graph, relayoutRequest, viewport]);
+  }, [commitScene, graph, relayoutRequest, viewport]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -292,7 +341,7 @@ export default function GraphCanvas() {
       .scaleExtent([0.25, 2.5])
       .on("zoom", (event) => {
         transformRef.current = event.transform;
-        rebuildScene();
+        rebuildCurrentScene();
       });
     zoomRef.current = zoom;
     d3.select(canvas).call(zoom);
@@ -300,7 +349,7 @@ export default function GraphCanvas() {
       d3.select(canvas).on(".zoom", null);
       zoomRef.current = null;
     };
-  }, [rebuildScene]);
+  }, [rebuildCurrentScene]);
 
   const fitView = useCallback(() => {
     if (!layout || !graph || !zoomRef.current || !canvasRef.current) return;
@@ -521,13 +570,31 @@ export default function GraphCanvas() {
   const tableCount = graph?.table_nodes.length ?? 0;
   const edgeCount = graph ? graph.entity_edges.length + graph.table_edges.length : 0;
   const notice = layoutError ?? (analysisStatus === "failed" ? errorMessage || "分析失败，以下图谱为可用的部分结果。" : null);
+  const sceneIsReady =
+    readyScene !== null &&
+    readyScene === sceneRef.current &&
+    drawnSceneRef.current === readyScene &&
+    sceneInputsRef.current?.graph === graph &&
+    sceneInputsRef.current?.confidenceThreshold === confidenceThreshold;
+  const interactiveScene = () => {
+    const scene = sceneRef.current;
+    const inputs = sceneInputsRef.current;
+    const currentAnalysis = useAnalysisStore.getState();
+    return scene &&
+      drawnSceneRef.current === scene &&
+      inputs?.graph === currentAnalysis.graph &&
+      inputs.confidenceThreshold === currentAnalysis.confidenceThreshold
+      ? scene
+      : null;
+  };
 
   return (
     <div ref={containerRef} role="group" aria-label={graphSummary(entityCount, tableCount, edgeCount)} className="relative h-full min-h-[420px] overflow-hidden rounded-xl border border-slate-700/70 bg-[#0d1926]">
       <canvas
         ref={canvasRef}
         role="img"
-        data-layout-ready={layout ? "true" : "false"}
+        data-layout-ready={sceneIsReady ? "true" : "false"}
+        data-scene-ready={sceneIsReady ? "true" : "false"}
         tabIndex={0}
         aria-label={graphSummary(entityCount, tableCount, edgeCount)}
         className="block h-full w-full touch-none outline-none focus:ring-2 focus:ring-teal-300"
@@ -536,9 +603,15 @@ export default function GraphCanvas() {
             setKeyboardTarget(keyboardTargets()[0] ?? null);
           }
         }}
-        onPointerMove={(event) => applyHit(sceneRef.current ? hitTest(sceneRef.current, pointFromEvent(event.currentTarget, event.nativeEvent)) : null)}
+        onPointerMove={(event) => {
+          const scene = interactiveScene();
+          applyHit(scene ? hitTest(scene, pointFromEvent(event.currentTarget, event.nativeEvent)) : null);
+        }}
         onPointerLeave={() => applyHit(null)}
-        onClick={(event) => selectHit(sceneRef.current ? hitTest(sceneRef.current, pointFromEvent(event.currentTarget, event.nativeEvent)) : null)}
+        onClick={(event) => {
+          const scene = interactiveScene();
+          selectHit(scene ? hitTest(scene, pointFromEvent(event.currentTarget, event.nativeEvent)) : null);
+        }}
         onKeyDown={(event) => {
           if (event.key.startsWith("Arrow")) {
             event.preventDefault();
@@ -583,8 +656,8 @@ export default function GraphCanvas() {
         </form>
       )}
       {!graph && <p data-empty-warning className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-slate-400">等待分析结果生成语义关系图。</p>}
-      {analysisStatus === "partial" && <p role="status" className="absolute left-3 top-3 rounded bg-amber-400/15 px-3 py-2 text-xs text-amber-100">分析部分完成，正在显示可用关系。</p>}
-      {notice && <div role="alert" className="absolute bottom-3 left-3 right-3 rounded border border-amber-400/30 bg-slate-950/85 px-3 py-2 text-sm text-amber-100"><p>{notice}</p>{warnings.length > 0 && <ul className="mt-1 list-disc pl-5 text-xs text-amber-200">{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
+      {!suppressStatusOverlay && analysisStatus === "partial" && <p role="status" className="absolute left-3 top-3 rounded bg-amber-400/15 px-3 py-2 text-xs text-amber-100">分析部分完成，正在显示可用关系。</p>}
+      {!suppressStatusOverlay && notice && <div role="alert" className="absolute bottom-3 left-3 right-3 rounded border border-amber-400/30 bg-slate-950/85 px-3 py-2 text-sm text-amber-100"><p>{notice}</p>{warnings.filter((warning) => warning !== notice).length > 0 && <ul className="mt-1 list-disc pl-5 text-xs text-amber-200">{warnings.filter((warning) => warning !== notice).map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
     </div>
   );
 }

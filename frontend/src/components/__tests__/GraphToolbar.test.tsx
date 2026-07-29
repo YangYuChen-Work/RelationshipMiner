@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import GraphToolbar from "../GraphToolbar";
 import { useAnalysisStore } from "../../store/analysis";
 
@@ -30,7 +30,22 @@ describe("GraphToolbar", () => {
       fitViewRequest: 0,
       relayoutRequest: 0,
       phase: "done",
+      analysisStatus: "complete",
     });
+  });
+
+  it.each([
+    ["complete", "分析完成"],
+    ["partial", "部分结果 · 分析未完成"],
+    ["failed", "分析失败 · 可用结果"],
+  ] as const)("shows the %s analysis subtitle without contradictory completion text", (analysisStatus, subtitle) => {
+    act(() => useAnalysisStore.setState({ analysisStatus }));
+    render(<GraphToolbar />);
+
+    expect(screen.getByText(subtitle)).toBeInTheDocument();
+    if (analysisStatus !== "complete") {
+      expect(screen.queryByText("分析完成")).not.toBeInTheDocument();
+    }
   });
 
   it("shows total and threshold-filtered relationship counts without removing node totals", () => {

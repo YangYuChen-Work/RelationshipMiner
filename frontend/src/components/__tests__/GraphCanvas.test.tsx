@@ -61,7 +61,7 @@ function setGraph(next: SemanticGraphData | null = graph) {
 }
 
 async function ready() {
-  await waitFor(() => expect(screen.getByRole("img", { name: /语义关系图/ })).toHaveAttribute("data-layout-ready", "true"));
+  await waitFor(() => expect(screen.getByRole("img", { name: /语义关系图/ })).toHaveAttribute("data-scene-ready", "true"));
 }
 
 describe("GraphCanvas", () => {
@@ -74,19 +74,57 @@ describe("GraphCanvas", () => {
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(canvasContext());
     vi.spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 960, height: 600, top: 0, left: 0, bottom: 600, right: 960, toJSON: () => ({}) });
-    setGraph();
+    act(() => setGraph());
   });
 
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
-    setGraph(null);
+    act(() => setGraph(null));
+  });
+
+  it("does not expose interaction until the committed scene has drawn, then accepts the first click", async () => {
+    LayoutWorker.autoReply = false;
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = ++nextFrame;
+      callbacks.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => callbacks.delete(id));
+    render(<GraphCanvas />);
+    const canvas = screen.getByRole("img", { name: /语义关系图/ });
+    await waitFor(() => expect(LayoutWorker.instances[0]?.messages).toHaveLength(1));
+
+    await act(async () => {
+      LayoutWorker.instances[0].reply();
+      await Promise.resolve();
+    });
+    expect(canvas).toHaveAttribute("data-scene-ready", "false");
+
+    const entity = computeGroupedLayout(graph, { width: 960, height: 600 })
+      .entityNodes.find((node) => node.id === "a")!;
+    const readyPoint = d3.zoomTransform(canvas).apply([entity.x, entity.y]);
+    fireEvent.click(canvas, { clientX: readyPoint[0], clientY: readyPoint[1] });
+    expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
+
+    act(() => {
+      for (const [id, callback] of [...callbacks]) {
+        callbacks.delete(id);
+        callback(16);
+      }
+    });
+    expect(canvas).toHaveAttribute("data-scene-ready", "true");
+    const firstInteractivePoint = d3.zoomTransform(canvas).apply([entity.x, entity.y]);
+    fireEvent.click(canvas, { clientX: firstInteractivePoint[0], clientY: firstInteractivePoint[1] });
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
   });
 
   it("uses one canvas and no per-entity DOM for a 7000 entity graph", async () => {
     const entities = Array.from({ length: 7_000 }, (_, index) => ({ id: `entity-${index}`, table_id: "bulk", display_name: `Entity ${index}`, class_name: null, dimensions: {} }));
-    setGraph({ table_nodes: [{ id: "bulk", display_name: "Bulk", entity_count: entities.length }], entity_nodes: entities, table_edges: [], entity_edges: [] });
+    act(() => setGraph({ table_nodes: [{ id: "bulk", display_name: "Bulk", entity_count: entities.length }], entity_nodes: entities, table_edges: [], entity_edges: [] }));
     const { container } = render(<GraphCanvas />);
     await ready();
     expect(container.querySelectorAll("canvas")).toHaveLength(1);
@@ -139,11 +177,11 @@ describe("GraphCanvas", () => {
   });
 
   it("renders empty, complete, partial, and failed analysis states", async () => {
-    setGraph(null);
+    act(() => setGraph(null));
     const { rerender } = render(<GraphCanvas />);
     expect(screen.getByText("等待分析结果生成语义关系图。")).toBeInTheDocument();
 
-    setGraph();
+    act(() => setGraph());
     rerender(<GraphCanvas />);
     await ready();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -157,10 +195,10 @@ describe("GraphCanvas", () => {
   });
 
   it("selects an entity through spatial pointer hit testing", async () => {
-    useAnalysisStore.setState({
+    act(() => useAnalysisStore.setState({
       selectedEntityEdgeId: "a--invoice",
       selectedTableEdgeId: null,
-    });
+    }));
     render(<GraphCanvas />);
     await ready();
     const canvas = screen.getByRole("img", { name: /语义关系图/ });
@@ -174,7 +212,7 @@ describe("GraphCanvas", () => {
   });
 
   it("selects an entity edge through the real canvas and clears node selection", async () => {
-    useAnalysisStore.setState({ selectedNodeId: "b" });
+    act(() => useAnalysisStore.setState({ selectedNodeId: "b" }));
     render(<GraphCanvas />);
     await ready();
     const canvas = screen.getByRole("img", { name: /语义关系图/ });
@@ -286,7 +324,7 @@ describe("GraphCanvas", () => {
         supporting_entity_edges: [],
       })),
     };
-    setGraph(graphWithoutSupport);
+    act(() => setGraph(graphWithoutSupport));
     render(<GraphCanvas />);
     await ready();
     const canvas = document.querySelector("canvas")!;
@@ -323,7 +361,10 @@ describe("GraphCanvas", () => {
 
   it("uses DPR backing dimensions and coalesces rendering into one animation frame", async () => {
     vi.stubGlobal("devicePixelRatio", 2);
-    const request = vi.fn(() => 7);
+    const request = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 7;
+    });
     vi.stubGlobal("requestAnimationFrame", request);
     const { container } = render(<GraphCanvas />);
     await ready();
@@ -334,6 +375,8 @@ describe("GraphCanvas", () => {
   });
 
   it("keeps at most one RAF outstanding and schedules again after drawing", async () => {
+    const { unmount } = render(<GraphCanvas />);
+    await ready();
     const callbacks = new Map<number, FrameRequestCallback>();
     let nextFrame = 0;
     const request = vi.fn((callback: FrameRequestCallback) => {
@@ -344,8 +387,6 @@ describe("GraphCanvas", () => {
     const cancel = vi.fn((id: number) => callbacks.delete(id));
     vi.stubGlobal("requestAnimationFrame", request);
     vi.stubGlobal("cancelAnimationFrame", cancel);
-    const { unmount } = render(<GraphCanvas />);
-    await ready();
 
     act(() => {
       useAnalysisStore.getState().setHoveredNode("a");
@@ -370,10 +411,11 @@ describe("GraphCanvas", () => {
 
   it("cleans up the active frame and worker when unmounted", async () => {
     const cancel = vi.fn();
-    vi.stubGlobal("requestAnimationFrame", () => 73);
+    const request = vi.fn(() => 73);
+    vi.stubGlobal("requestAnimationFrame", request);
     vi.stubGlobal("cancelAnimationFrame", cancel);
     const { unmount } = render(<GraphCanvas />);
-    await ready();
+    await waitFor(() => expect(request).toHaveBeenCalled());
     unmount();
     expect(cancel).toHaveBeenCalledWith(73);
   });

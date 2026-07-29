@@ -7,6 +7,7 @@ export default function GraphToolbar() {
   const confidenceThreshold = useAnalysisStore(
     (state) => state.confidenceThreshold,
   );
+  const analysisStatus = useAnalysisStore((state) => state.analysisStatus);
   const requestFitView = useAnalysisStore((state) => state.requestFitView);
   const requestRelayout = useAnalysisStore((state) => state.requestRelayout);
   const resetAnalysis = useAnalysisStore((state) => state.resetAnalysis);
@@ -23,13 +24,19 @@ export default function GraphToolbar() {
     (edge) =>
       edge.strong_count > 0 || edge.average_confidence >= confidenceThreshold,
   ).length;
+  const analysisSubtitle =
+    analysisStatus === "failed"
+      ? "分析失败 · 可用结果"
+      : analysisStatus === "partial"
+        ? "部分结果 · 分析未完成"
+        : "分析完成";
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-slate-700/80 bg-[#101c2a] px-4 text-slate-200 lg:px-6">
       <div className="min-w-0 shrink-0">
         <h1 className="text-sm font-semibold tracking-wide text-slate-50">关系图谱</h1>
         <p className="hidden text-xs text-slate-400 sm:block">
-          <span>分析完成</span> · 结果工作台
+          <span>{analysisSubtitle}</span> · 结果工作台
         </p>
       </div>
 

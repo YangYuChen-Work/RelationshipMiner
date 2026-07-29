@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { SemanticGraphData } from "../api/analysis";
@@ -109,6 +109,8 @@ describe("App graph error result", () => {
         alert.textContent.includes("仅显示已完成的关系"),
       ),
     ).toBe(true);
+    expect(screen.getAllByText("分析超时")).toHaveLength(1);
+    expect(screen.getAllByText("仅显示已完成的关系")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "导出 JSON" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "新分析" })).toBeEnabled();
     expect(screen.getByText("节点概览")).toBeInTheDocument();
@@ -118,7 +120,7 @@ describe("App graph error result", () => {
   });
 
   it("shows the plain error workspace when no graph is available", () => {
-    useAnalysisStore.setState({ graph: null, analysisStatus: null });
+    act(() => useAnalysisStore.setState({ graph: null, analysisStatus: null }));
 
     render(<App />);
 
