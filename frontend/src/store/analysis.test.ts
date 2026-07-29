@@ -342,6 +342,35 @@ describe("analysis graph display controls", () => {
     useAnalysisStore.getState().resetAnalysis();
     expect(useAnalysisStore.getState().showIsolatedNodes).toBe(false);
   });
+
+  it("hides isolated entities when a new analysis starts", async () => {
+    vi.stubGlobal("WebSocket", ControllableWebSocket);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ task_id: "task-new-analysis" }),
+    } as Response);
+    useAnalysisStore.setState({
+      phase: "select",
+      selectedTables: new Map([
+        [
+          "users",
+          {
+            name: "users",
+            columns,
+            selectedFields: new Set(["email"]),
+          },
+        ],
+      ]),
+      pendingTables: new Set(),
+      activeSocket: null,
+      showIsolatedNodes: true,
+    });
+
+    await useAnalysisStore.getState().startAnalysis();
+
+    expect(useAnalysisStore.getState().phase).toBe("analyzing");
+    expect(useAnalysisStore.getState().showIsolatedNodes).toBe(false);
+  });
 });
 
 describe("analysis graph workbench commands", () => {

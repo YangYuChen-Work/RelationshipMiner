@@ -36,4 +36,34 @@ describe("projectGraph", () => {
 
     expect(projected).toEqual(graph);
   });
+
+  it.each([false, true])(
+    "drops entity edges with a missing endpoint when showIsolatedNodes is %s",
+    (showIsolatedNodes) => {
+      const graphWithDanglingEdge = {
+        ...graph,
+        entity_edges: [
+          ...graph.entity_edges,
+          {
+            id: "users:2--missing",
+            source: "users:2",
+            target: "missing",
+            relations: [],
+          },
+        ],
+      };
+
+      const projected = projectGraph(graphWithDanglingEdge, showIsolatedNodes);
+
+      expect(projected.entity_edges.map((edge) => edge.id)).toEqual([
+        "users:1--orders:1",
+      ]);
+      expect(projected.entity_nodes.map((node) => node.id)).toEqual(
+        showIsolatedNodes
+          ? ["users:1", "orders:1", "users:2"]
+          : ["users:1", "orders:1"],
+      );
+      expect(graphWithDanglingEdge.entity_edges).toHaveLength(2);
+    },
+  );
 });
