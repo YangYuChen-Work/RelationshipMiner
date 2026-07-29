@@ -168,7 +168,7 @@ def _contains_model_files(directory: Path) -> bool:
 
 
 def _is_model_snapshot(directory: Path) -> bool:
-    if not (directory / "config.json").is_file():
+    if not _has_essential_sentence_transformer_files(directory):
         return False
     if any(
         _is_nonempty_file(directory / name)
@@ -193,6 +193,19 @@ def _is_model_snapshot(directory: Path) -> bool:
                 ),
             ),
         )
+    )
+
+
+def _has_essential_sentence_transformer_files(directory: Path) -> bool:
+    """Check cached files only; do not import or construct a model here."""
+    if not all(
+        _is_nonempty_file(directory / name)
+        for name in ("config.json", "modules.json", "tokenizer_config.json")
+    ):
+        return False
+    return any(
+        _is_nonempty_file(directory / name)
+        for name in ("tokenizer.json", "tokenizer.model", "vocab.txt")
     )
 
 

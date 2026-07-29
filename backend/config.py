@@ -33,6 +33,9 @@ class Settings:
         os.getenv("EMBEDDING_BATCH_SIZE", "256")
     )
     LLM_CONCURRENCY: int = int(os.getenv("LLM_CONCURRENCY", "4"))
+    RELATIONSHIP_PLAN_LIMIT: int = int(
+        os.getenv("RELATIONSHIP_PLAN_LIMIT", "20")
+    )
 
     @property
     def database_url(self) -> str:

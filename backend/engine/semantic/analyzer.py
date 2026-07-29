@@ -36,6 +36,41 @@ from .retrieval import iter_candidate_groups
 
 ProgressCallback = Callable[[dict[str, object]], object]
 
+_END = object()
+_SAFE_TIMEOUT_WARNING = "Analysis timed out."
+_SAFE_RETRIEVAL_WARNING = "Candidate retrieval failed (internal_error)."
+_SAFE_INCOMPLETE_JUDGEMENT_WARNING = (
+    "Candidate judgement did not complete for all groups."
+)
+
+
+class _ThreadedCandidateGroups:
+    """Advance a blocking retrieval iterator without blocking the event loop."""
+
+    def __init__(self, groups: object, deadline: float) -> None:
+        self._iterator = iter(groups)
+        self._deadline = deadline
+
+    def __aiter__(self) -> "_ThreadedCandidateGroups":
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            async with asyncio.timeout_at(self._deadline):
+                group = await asyncio.to_thread(
+                    _next_or_end,
+                    self._iterator,
+                )
+        except TimeoutError as error:
+            raise StopAsyncIteration from error
+        if group is _END:
+            raise StopAsyncIteration
+        return group
+
+
+def _next_or_end(iterator: object) -> object:
+    return next(iterator, _END)
+
 
 class RelationshipAnalyzer:
     """Coordinate one bounded, explainable relationship-analysis task.
@@ -126,13 +161,41 @@ class RelationshipAnalyzer:
             require_deadline(stage)
             return max(0.0, deadline - time.monotonic())
 
+        async def await_blocking(
+            operation: Callable[..., Any],
+            *args: object,
+            stage: str,
+            **kwargs: object,
+        ) -> Any:
+            """Keep blocking DB/schema work off the FastAPI event loop.
+
+            Timing out this wait does not physically interrupt a driver call;
+            deployments must configure a database-driver statement timeout as
+            well for physical query cancellation.
+            """
+            try:
+                async with asyncio.timeout(
+                    max(0.0, deadline - time.monotonic())
+                ):
+                    value = await asyncio.to_thread(
+                        operation,
+                        *args,
+                        **kwargs,
+                    )
+            except TimeoutError as error:
+                raise DeadlineExceeded(stage) from error
+            require_deadline(stage)
+            return value
+
         await emit("schema", "Reading selected table schemas.", 0.02)
         if not before("读取 Schema 前"):
             return self._empty_partial(diagnostics, warnings)
         try:
-            schema_result = analyze_schema(
+            schema_result = await await_blocking(
+                analyze_schema,
                 engine,
                 [table.name for table in scope.tables],
+                stage="schema",
             )
             require_deadline("读取 Schema 后")
         except DeadlineExceeded as error:
@@ -185,11 +248,12 @@ class RelationshipAnalyzer:
                 time_budget_seconds=scope.time_budget_seconds,
             )
             try:
-                loaded = load_scoped_records(
+                loaded = await await_blocking(
+                    load_scoped_records,
                     engine,
                     table_scope_only,
                     schema_result,
-                    check_deadline=require_deadline,
+                    stage="records",
                 )
             except DeadlineExceeded as error:
                 timed_out = True
@@ -287,9 +351,12 @@ class RelationshipAnalyzer:
                 failed_groups += 1
                 continue
             candidate_count = 0
-            def non_empty_groups():
+            async def non_empty_groups():
                 nonlocal candidate_count
-                for group in retrieved_groups:
+                async for group in _ThreadedCandidateGroups(
+                    retrieved_groups,
+                    deadline,
+                ):
                     if group.candidates:
                         candidate_count += len(group.candidates)
                         yield group
@@ -398,7 +465,7 @@ class RelationshipAnalyzer:
             table_edges=table_edges,
             entity_edges=entity_edges,
             diagnostics=diagnostics,
-            warnings=warnings,
+            warnings=_safe_warnings(warnings),
         )
         return result
 
@@ -414,7 +481,7 @@ class RelationshipAnalyzer:
             table_edges=[],
             entity_edges=[],
             diagnostics=diagnostics,
-            warnings=warnings,
+            warnings=_safe_warnings(warnings),
         )
 
     @staticmethod
@@ -429,8 +496,30 @@ class RelationshipAnalyzer:
             table_edges=[],
             entity_edges=[],
             diagnostics=diagnostics,
-            warnings=warnings,
+            warnings=_safe_warnings(warnings),
         )
+
+
+def _safe_warnings(warnings: list[str]) -> list[str]:
+    """Keep exception details and dynamic counters out of public payloads."""
+    safe: list[str] = []
+    for warning in warnings:
+        if warning.startswith("Candidate retrieval failed"):
+            normalized = _SAFE_RETRIEVAL_WARNING
+        elif warning.endswith("candidate groups did not complete judgement."):
+            normalized = _SAFE_INCOMPLETE_JUDGEMENT_WARNING
+        elif warning in {
+            "Schema analysis failed (internal_error).",
+            "Relationship planning failed (internal_error).",
+            "Semantic judgement failed (internal_error).",
+            "No relationships were found after all planned candidates completed.",
+        }:
+            normalized = warning
+        else:
+            normalized = _SAFE_TIMEOUT_WARNING
+        if normalized not in safe:
+            safe.append(normalized)
+    return safe
 
 
 def _expand_signature_decisions(

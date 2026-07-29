@@ -4,6 +4,7 @@ import json
 
 from pydantic import BaseModel
 
+from config import settings
 from engine.schema_analyzer import TableSchema
 
 from .interfaces import JsonLlmAdapter
@@ -12,6 +13,10 @@ from .models import AnalysisScope, RelationshipPlan
 
 class _PlanEnvelope(BaseModel):
     plans: list[RelationshipPlan]
+
+
+class PlanValidationError(ValueError):
+    """Raised when an LLM plan cannot be used safely and deterministically."""
 
 
 class RelationshipPlanner:
@@ -33,11 +38,12 @@ class RelationshipPlanner:
         )
         envelope = await self._complete_plan(messages)
 
-        return [
-            plan
-            for plan in envelope.plans
-            if _is_scoped_plan(plan, allowed_dimensions)
-        ]
+        plans = _validate_and_cap_plans(
+            envelope.plans,
+            allowed_dimensions,
+            settings.RELATIONSHIP_PLAN_LIMIT,
+        )
+        return plans
 
     async def _complete_plan(
         self,
@@ -164,3 +170,27 @@ def _is_scoped_plan(
         and set(plan.target_dimensions)
         <= allowed_dimensions[plan.target_table]
     )
+
+
+def _validate_and_cap_plans(
+    plans: list[RelationshipPlan],
+    allowed_dimensions: dict[str, set[str]],
+    limit: int,
+) -> list[RelationshipPlan]:
+    if limit < 1:
+        raise PlanValidationError("relationship plan limit must be positive")
+
+    unique: list[RelationshipPlan] = []
+    seen: set[str] = set()
+    for plan in plans:
+        if not _is_scoped_plan(plan, allowed_dimensions):
+            raise PlanValidationError("planner returned a plan outside scope")
+        key = json.dumps(plan.model_dump(), sort_keys=True, separators=(",", ":"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(plan)
+
+    if len(unique) > limit:
+        raise PlanValidationError("planner returned more plans than allowed")
+    return unique

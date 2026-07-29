@@ -179,6 +179,7 @@ def main() -> None:
                 "peak_materialized_pair_buffer": (
                     diagnostics.peak_materialized_pair_buffer
                 ),
+                "peak_groups_buffered": diagnostics.peak_groups_buffered,
                 "keyword_indexes": len(keyword_indexes),
                 "vector_indexes": len(vector_indexes),
                 "corpus_build_seconds": round(corpus_build_seconds, 6),

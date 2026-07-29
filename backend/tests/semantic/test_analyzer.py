@@ -19,6 +19,123 @@ from engine.semantic.models import (
 )
 
 
+@pytest.mark.asyncio
+async def test_analyzer_redacts_retrieval_exception_from_public_warning(
+    engine, monkeypatch
+):
+    from engine.semantic import analyzer
+
+    def leaking_retrieval(*args, **kwargs):
+        raise RuntimeError("database password=secret-value")
+
+    monkeypatch.setattr(analyzer, "iter_candidate_groups", leaking_retrieval)
+    result = await analyzer.RelationshipAnalyzer(
+        planner=_StaticPlanner([_product_plan()]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="products", dimensions=["title"]),
+            ]
+        ),
+    )
+
+    assert result.status == AnalysisStatus.FAILED
+    assert result.warnings == [
+        "Candidate retrieval failed (internal_error)."
+    ]
+    assert "secret" not in str(result.model_dump())
+
+
+@pytest.mark.asyncio
+async def test_schema_deadline_keeps_event_loop_responsive(engine, monkeypatch):
+    import time as blocking_time
+
+    from engine.semantic import analyzer
+    from engine.schema_analyzer import analyze_schema as real_analyze_schema
+
+    def slow_schema(*args, **kwargs):
+        blocking_time.sleep(0.1)
+        return real_analyze_schema(*args, **kwargs)
+
+    monkeypatch.setattr(analyzer, "analyze_schema", slow_schema)
+    loop_tick = asyncio.Event()
+
+    async def tick() -> None:
+        await asyncio.sleep(0.01)
+        loop_tick.set()
+
+    analysis = asyncio.create_task(
+        analyzer.RelationshipAnalyzer(
+            planner=_StaticPlanner([]),
+            embedding_adapter=_ConstantEmbeddings(),
+            judge=_ApprovingJudge(),
+        ).analyze(
+            engine,
+            AnalysisScope(
+                tables=[TableScope(name="users", dimensions=["name"])],
+                time_budget_seconds=0.03,
+            ),
+        )
+    )
+    tick_task = asyncio.create_task(tick())
+    await asyncio.wait_for(loop_tick.wait(), timeout=0.05)
+    result = await analysis
+    await tick_task
+
+    assert result.status == AnalysisStatus.PARTIAL
+    assert result.warnings == ["Analysis timed out."]
+
+
+@pytest.mark.asyncio
+async def test_embedding_deadline_keeps_event_loop_responsive(engine):
+    import time as blocking_time
+
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    class SlowEmbeddings:
+        def encode_documents(self, texts: list[str]) -> list[list[float]]:
+            blocking_time.sleep(0.1)
+            return [[1.0, 0.0] for _ in texts]
+
+        def encode_queries(self, texts: list[str]) -> list[list[float]]:
+            blocking_time.sleep(0.1)
+            return [[1.0, 0.0] for _ in texts]
+
+    loop_tick = asyncio.Event()
+
+    async def tick() -> None:
+        await asyncio.sleep(0.01)
+        loop_tick.set()
+
+    analysis = asyncio.create_task(
+        RelationshipAnalyzer(
+            planner=_StaticPlanner([_product_plan()]),
+            embedding_adapter=SlowEmbeddings(),
+            judge=_ApprovingJudge(),
+        ).analyze(
+            engine,
+            AnalysisScope(
+                tables=[
+                    TableScope(name="users", dimensions=["name"]),
+                    TableScope(name="products", dimensions=["title"]),
+                ],
+                time_budget_seconds=0.03,
+            ),
+        )
+    )
+    tick_task = asyncio.create_task(tick())
+    await asyncio.wait_for(loop_tick.wait(), timeout=0.05)
+    result = await analysis
+    await tick_task
+
+    assert result.status == AnalysisStatus.PARTIAL
+    assert result.warnings == ["Analysis timed out."]
+
+
 class _StaticPlanner:
     def __init__(self, plans: list[RelationshipPlan] | Exception) -> None:
         self._plans = plans
@@ -27,6 +144,12 @@ class _StaticPlanner:
         if isinstance(self._plans, Exception):
             raise self._plans
         return self._plans
+
+
+async def _materialize_groups(groups: object) -> list[object]:
+    if hasattr(groups, "__aiter__"):
+        return [group async for group in groups]
+    return list(groups)
 
 
 class _ConstantEmbeddings:
@@ -39,7 +162,7 @@ class _ConstantEmbeddings:
 
 class _ApprovingJudge:
     async def judge_groups(self, groups: list[object], deadline: float) -> JudgementBatchResult:
-        groups = list(groups)
+        groups = await _materialize_groups(groups)
         decisions = []
         for group in groups:
             if not group.candidates:
@@ -83,7 +206,7 @@ class _ApprovingJudge:
 
 class _FailedJudge:
     async def judge_groups(self, groups: list[object], deadline: float) -> JudgementBatchResult:
-        groups = list(groups)
+        groups = await _materialize_groups(groups)
         return JudgementBatchResult(
             decisions=[],
             failed_groups=len(groups),
@@ -275,7 +398,7 @@ async def test_schema_overrun_does_not_start_record_loading(engine, monkeypatch)
 
     assert loaded is False
     assert result.status == AnalysisStatus.PARTIAL
-    assert result.warnings == ["分析超时：读取 Schema 后已达到时间预算。"]
+    assert result.warnings == ["Analysis timed out."]
 
 
 @pytest.mark.asyncio
@@ -378,7 +501,7 @@ async def test_deadline_stops_before_next_table_and_returns_chinese_partial(
 
     assert reads == ["users"]
     assert result.status == AnalysisStatus.PARTIAL
-    assert result.warnings == ["分析超时：读取表 orders 前已达到时间预算。"]
+    assert result.warnings == ["Analysis timed out."]
 
 
 @pytest.mark.asyncio
@@ -401,7 +524,7 @@ async def test_planner_uses_remaining_deadline_and_returns_failed_warning(engine
     )
 
     assert result.status == AnalysisStatus.FAILED
-    assert result.warnings == ["分析超时：关系规划阶段未在剩余时间内完成。"]
+    assert result.warnings == ["Analysis timed out."]
 
 
 @pytest.mark.asyncio
@@ -446,4 +569,4 @@ async def test_deadline_before_graph_assembly_does_not_start_graph_builder(
     )
 
     assert result.status == AnalysisStatus.PARTIAL
-    assert result.warnings == ["分析超时：组装图谱前已达到时间预算。"]
+    assert result.warnings == ["Analysis timed out."]

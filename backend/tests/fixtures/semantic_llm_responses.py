@@ -91,7 +91,10 @@ class FixtureSemanticJudge:
         groups: list[CandidateGroup],
         deadline: float,
     ) -> JudgementBatchResult:
-        groups = list(groups)
+        if hasattr(groups, "__aiter__"):
+            groups = [group async for group in groups]
+        else:
+            groups = list(groups)
         decisions: list[EntityRelation] = []
         for group in groups:
             for candidate in group.candidates:

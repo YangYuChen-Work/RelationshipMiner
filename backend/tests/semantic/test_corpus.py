@@ -256,5 +256,5 @@ def test_schema_timeout_is_reported_before_schema_completion(
         timeout_seconds=180.0, on_progress=progress_events.append,
     ))
     assert result.status == "partial"
-    assert result.warnings == ["分析超时：读取 Schema 前已达到时间预算。"]
+    assert result.warnings == ["Analysis timed out."]
     assert progress_events[0]["phase"] == "schema"

@@ -25,6 +25,12 @@ class TestHealthReadiness:
         directory.mkdir(parents=True)
         (directory / "config.json").write_text("{}", encoding="utf-8")
         (directory / "model.safetensors").write_bytes(b"cached-weights")
+        (directory / "modules.json").write_text("[]", encoding="utf-8")
+        (directory / "tokenizer_config.json").write_text(
+            "{}",
+            encoding="utf-8",
+        )
+        (directory / "tokenizer.json").write_text("{}", encoding="utf-8")
 
     def test_health_requires_complete_recognized_weight_artifacts(
         self,
@@ -98,6 +104,21 @@ class TestHealthReadiness:
             encoding="utf-8",
         )
 
+        for directory in (
+            pytorch_single,
+            complete_shards,
+            complete_safe_shards,
+        ):
+            (directory / "modules.json").write_text("[]", encoding="utf-8")
+            (directory / "tokenizer_config.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (directory / "tokenizer.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+
         assert readiness._is_model_snapshot(unrelated) is False
         assert readiness._is_model_snapshot(empty_single) is False
         assert readiness._is_model_snapshot(empty_pytorch) is False
@@ -106,6 +127,25 @@ class TestHealthReadiness:
         assert readiness._is_model_snapshot(incomplete_shards) is False
         assert readiness._is_model_snapshot(complete_shards) is True
         assert readiness._is_model_snapshot(complete_safe_shards) is True
+
+    def test_health_requires_sentence_transformer_and_tokenizer_artifacts(
+        self,
+        tmp_path,
+    ):
+        from engine.semantic import readiness
+
+        snapshot = tmp_path / "weights-only"
+        snapshot.mkdir()
+        (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        (snapshot / "model.safetensors").write_bytes(b"weights")
+
+        assert readiness._is_model_snapshot(snapshot) is False
+
+        (snapshot / "modules.json").write_text("[]", encoding="utf-8")
+        (snapshot / "tokenizer_config.json").write_text("{}", encoding="utf-8")
+        (snapshot / "tokenizer.json").write_text("{}", encoding="utf-8")
+
+        assert readiness._is_model_snapshot(snapshot) is True
 
     @pytest.mark.parametrize(
         "unsafe_repo_id",
@@ -363,6 +403,12 @@ class TestHealthReadiness:
         snapshot.mkdir(parents=True)
         (snapshot / "config.json").write_text("{}", encoding="utf-8")
         (snapshot / "model.safetensors").write_bytes(b"cached-weights")
+        (snapshot / "modules.json").write_text("[]", encoding="utf-8")
+        (snapshot / "tokenizer_config.json").write_text(
+            "{}",
+            encoding="utf-8",
+        )
+        (snapshot / "tokenizer.json").write_text("{}", encoding="utf-8")
         monkeypatch.setattr(
             readiness,
             "_huggingface_cache_roots",
@@ -831,7 +877,7 @@ class TestExportEndpoint:
 
 
 class TestAnalyzeErrorPaths:
-    def test_timeout_error_contains_chinese_prompt(self, client: TestClient, monkeypatch):
+    def test_timeout_error_uses_a_fixed_safe_warning(self, client: TestClient, monkeypatch):
         from engine.semantic import analyzer
         from engine.semantic.models import AnalysisScope, TableScope
         from tests.conftest import create_test_engine
@@ -852,7 +898,7 @@ class TestAnalyzeErrorPaths:
             ),
         ))
         assert result.status == "partial"
-        assert result.warnings == ["分析超时：读取 Schema 前已达到时间预算。"]
+        assert result.warnings == ["Analysis timed out."]
 
     def test_db_connection_error_format(self, client: TestClient):
         response = client.get("/api/tables/nonexistent/fields")

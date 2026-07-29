@@ -130,6 +130,7 @@ class JudgementBatchResult(BaseModel):
     pending_groups: int = 0
     outcomes: list["JudgementGroupOutcome"] = Field(default_factory=list)
     peak_live_tasks: int = 0
+    peak_live_groups: int = 0
 
 
 class JudgementGroupOutcome(BaseModel):

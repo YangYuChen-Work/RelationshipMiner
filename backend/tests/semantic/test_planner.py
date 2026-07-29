@@ -403,7 +403,7 @@ async def test_planner_prompt_contains_only_selected_semantic_fields():
 
 
 @pytest.mark.asyncio
-async def test_planner_discards_unselected_dimensions_and_tables():
+async def test_planner_rejects_unselected_dimensions_and_tables():
     unselected_dimension = {
         **_valid_plan(),
         "source_dimensions": ["private_note"],
@@ -427,17 +427,12 @@ async def test_planner_discards_unselected_dimensions_and_tables():
         }
     )
 
-    plans = await RelationshipPlanner(llm).plan(
-        _scope(),
-        _schemas(),
-        _samples(),
-    )
-
-    assert len(plans) == 1
-    assert plans[0].source_dimensions == [
-        "process_name",
-        "description",
-    ]
+    with pytest.raises(ValueError):
+        await RelationshipPlanner(llm).plan(
+            _scope(),
+            _schemas(),
+            _samples(),
+        )
 
 
 @pytest.mark.asyncio
@@ -502,3 +497,45 @@ async def test_transparent_adapter_keeps_planner_to_two_sdk_attempts():
         )
 
     assert create.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_planner_deduplicates_identical_valid_plans_before_applying_cap(
+    monkeypatch,
+):
+    from engine.semantic import planner
+
+    monkeypatch.setattr(planner.settings, "RELATIONSHIP_PLAN_LIMIT", 1)
+    llm = _RecordingLlm({"plans": [_valid_plan(), _valid_plan()]})
+
+    plans = await RelationshipPlanner(llm).plan(
+        _scope(),
+        _schemas(),
+        _samples(),
+    )
+
+    assert plans == [plans[0]]
+
+
+@pytest.mark.asyncio
+async def test_planner_rejects_invalid_or_excess_distinct_output(monkeypatch):
+    from engine.semantic import planner
+
+    monkeypatch.setattr(planner.settings, "RELATIONSHIP_PLAN_LIMIT", 1)
+    second_plan = {
+        **_valid_plan(),
+        "source_table": "part",
+        "target_table": "process",
+        "source_dimensions": ["part_name"],
+        "target_dimensions": ["process_name"],
+    }
+    for payload in (
+        {"plans": [{**_valid_plan(), "source_dimensions": ["private_note"]}]},
+        {"plans": [_valid_plan(), second_plan]},
+    ):
+        with pytest.raises(ValueError):
+            await RelationshipPlanner(_RecordingLlm(payload)).plan(
+                _scope(),
+                _schemas(),
+                _samples(),
+            )

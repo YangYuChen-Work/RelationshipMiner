@@ -6,7 +6,7 @@ import json
 import math
 import time
 from dataclasses import dataclass
-from collections.abc import Iterable
+from collections.abc import AsyncIterable, Iterable, Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
@@ -87,62 +87,159 @@ class SemanticJudge:
 
     async def judge_groups(
         self,
-        groups: Iterable[CandidateGroup],
+        groups: Iterable[CandidateGroup] | AsyncIterable[CandidateGroup],
         deadline: float,
     ) -> JudgementBatchResult:
-        iterator = iter(groups)
-        outcomes: list[tuple[CandidateGroup, _GroupOutcome]] = []
+        if time.monotonic() >= deadline:
+            # A concrete sequence can be counted without touching a lazy,
+            # deadline-aware generator.  Generators deliberately remain
+            # unconsumed once the deadline has elapsed.
+            outcomes = (
+                [
+                    JudgementGroupOutcome(
+                        source_id=group.source.entity_id,
+                        candidate_count=len(group.candidates),
+                        status="pending",
+                    )
+                    for group in groups
+                ]
+                if isinstance(groups, Sequence)
+                else []
+            )
+            return JudgementBatchResult(
+                decisions=[],
+                pending_groups=len(outcomes),
+                outcomes=outcomes,
+                peak_live_tasks=0,
+                peak_live_groups=0,
+            )
+        queue: asyncio.Queue[tuple[int, CandidateGroup] | object] = (
+            asyncio.Queue(maxsize=self._concurrency)
+        )
+        stop = object()
+        outcomes: dict[int, JudgementGroupOutcome] = {}
+        decisions: list[RelationDecision] = []
+        active: dict[asyncio.Task[None], tuple[int, CandidateGroup]] = {}
+        producer_current: tuple[int, CandidateGroup] | None = None
+        peak_live_groups = 0
+
+        def observe_live_groups() -> None:
+            nonlocal peak_live_groups
+            peak_live_groups = max(
+                peak_live_groups,
+                queue.qsize() + len(active),
+            )
+
+        def record(
+            item: tuple[int, CandidateGroup],
+            outcome: _GroupOutcome,
+        ) -> None:
+            sequence, group = item
+            if sequence in outcomes:
+                return
+            outcomes[sequence] = JudgementGroupOutcome(
+                source_id=group.source.entity_id,
+                candidate_count=len(group.candidates),
+                status=outcome.status,
+            )
+            decisions.extend(outcome.decisions)
+
+        async def producer() -> None:
+            nonlocal producer_current
+            is_async = isinstance(groups, AsyncIterable)
+            iterator = aiter(groups) if is_async else iter(groups)
+            sequence = 0
+            while time.monotonic() < deadline:
+                try:
+                    group = await anext(iterator) if is_async else next(iterator)
+                except (StopAsyncIteration, StopIteration):
+                    for _ in range(self._concurrency):
+                        async with asyncio.timeout_at(deadline):
+                            await queue.put(stop)
+                    return
+                item = (sequence, group)
+                sequence += 1
+                producer_current = item
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        await queue.put(item)
+                except TimeoutError:
+                    record(item, _GroupOutcome("pending", []))
+                    producer_current = None
+                    return
+                producer_current = None
+                observe_live_groups()
+                # Let workers begin judging before requesting another group.
+                await asyncio.sleep(0)
 
         async def worker() -> None:
+            task = asyncio.current_task()
+            assert task is not None
             while True:
                 try:
-                    group = next(iterator)
-                except StopIteration:
+                    async with asyncio.timeout_at(deadline):
+                        item = await queue.get()
+                except TimeoutError:
                     return
-                if time.monotonic() >= deadline:
-                    outcomes.append((group, _GroupOutcome("pending", [])))
-                    outcomes.extend((left, _GroupOutcome("pending", [])) for left in iterator)
+                if item is stop:
                     return
-                outcome = await self._judge_group(group, deadline)
-                outcomes.append((group, outcome))
-                if time.monotonic() >= deadline:
-                    outcomes.extend((left, _GroupOutcome("pending", [])) for left in iterator)
-                    return
+                assert isinstance(item, tuple)
+                active[task] = item
+                observe_live_groups()
+                try:
+                    outcome = await self._judge_group(item[1], deadline)
+                except asyncio.CancelledError:
+                    # The deadline/error coordinator records this in-flight
+                    # group only after all LLM calls have been awaited.
+                    raise
+                else:
+                    active.pop(task, None)
+                    record(item, outcome)
+                    observe_live_groups()
 
-        # Exactly this many tasks are created, independent of group count.
-        workers = [asyncio.create_task(worker()) for _ in range(self._concurrency)]
+        workers = [
+            asyncio.create_task(worker()) for _ in range(self._concurrency)
+        ]
+        producer_task = asyncio.create_task(producer())
+        tasks = [producer_task, *workers]
         try:
-            await asyncio.gather(*workers)
-        except asyncio.CancelledError:
-            for task in workers:
+            remaining = max(0.0, deadline - time.monotonic())
+            await asyncio.wait_for(asyncio.gather(*tasks), remaining)
+        except TimeoutError:
+            for task in tasks:
                 task.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for item in active.values():
+                record(item, _GroupOutcome("failed", []))
+            if producer_current is not None:
+                record(producer_current, _GroupOutcome("pending", []))
+            while not queue.empty():
+                queued = queue.get_nowait()
+                if queued is not stop:
+                    assert isinstance(queued, tuple)
+                    record(queued, _GroupOutcome("pending", []))
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
+        ordered_outcomes = [outcomes[index] for index in sorted(outcomes)]
         return JudgementBatchResult(
-            decisions=[
-                decision
-                for _, outcome in outcomes
-                for decision in outcome.decisions
-            ],
+            decisions=decisions,
             completed_groups=sum(
-                outcome.status == "completed" for _, outcome in outcomes
+                outcome.status == "completed"
+                for outcome in ordered_outcomes
             ),
             failed_groups=sum(
-                outcome.status == "failed" for _, outcome in outcomes
+                outcome.status == "failed" for outcome in ordered_outcomes
             ),
             pending_groups=sum(
-                outcome.status == "pending" for _, outcome in outcomes
+                outcome.status == "pending" for outcome in ordered_outcomes
             ),
-            outcomes=[
-                JudgementGroupOutcome(
-                    source_id=group.source.entity_id,
-                    candidate_count=len(group.candidates),
-                    status=outcome.status,
-                )
-                for group, outcome in outcomes
-            ],
+            outcomes=ordered_outcomes,
             peak_live_tasks=len(workers),
+            peak_live_groups=peak_live_groups,
         )
 
     async def _judge_group(

@@ -656,3 +656,149 @@ async def test_judge_uses_fixed_workers_and_returns_group_identity():
     assert [outcome.source_id for outcome in result.outcomes] == [
         f"process:{index}" for index in range(50)
     ]
+
+
+@pytest.mark.asyncio
+async def test_judge_observes_a_bounded_live_group_peak():
+    class BlockingLlm:
+        async def complete_json(
+            self,
+            messages: list[dict[str, object]],
+            max_tokens: int,
+            response_model: type[BaseModel] | None = None,
+        ) -> dict[str, object]:
+            await asyncio.sleep(0.005)
+            payload: dict[str, object] = {"decisions": []}
+            return response_model.model_validate(payload).model_dump()
+
+    result = await SemanticJudge(BlockingLlm(), concurrency=2).judge_groups(
+        (_candidate_group(f"process:{index}") for index in range(100)),
+        deadline=time.monotonic() + 30,
+    )
+
+    assert result.completed_groups == 100
+    assert result.peak_live_tasks == 2
+    assert result.peak_live_groups <= 4
+
+
+@pytest.mark.asyncio
+async def test_deadline_does_not_drain_a_deadline_aware_generator():
+    deadline = time.monotonic() + 0.03
+
+    class DeadlineAwareGroups:
+        def __init__(self) -> None:
+            self.index = 0
+            self.calls_after_deadline = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self) -> CandidateGroup:
+            if time.monotonic() >= deadline:
+                self.calls_after_deadline += 1
+                raise AssertionError("deadline must not drain the generator")
+            if self.index == 100:
+                raise StopIteration
+            self.index += 1
+            return _candidate_group(f"process:{self.index}")
+
+    class BlockingLlm:
+        async def complete_json(
+            self,
+            messages: list[dict[str, object]],
+            max_tokens: int,
+            response_model: type[BaseModel] | None = None,
+        ) -> dict[str, object]:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    groups = DeadlineAwareGroups()
+    result = await SemanticJudge(BlockingLlm(), concurrency=1).judge_groups(
+        groups,
+        deadline=deadline,
+    )
+
+    assert groups.calls_after_deadline == 0
+    assert result.failed_groups == 1
+    assert result.pending_groups >= 1
+    assert result.failed_groups + result.pending_groups == len(result.outcomes)
+
+
+@pytest.mark.asyncio
+async def test_producer_failure_cancels_and_awaits_started_llm_call():
+    class CancellableLlm:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def complete_json(
+            self,
+            messages: list[dict[str, object]],
+            max_tokens: int,
+            response_model: type[BaseModel] | None = None,
+        ) -> dict[str, object]:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+            raise AssertionError("unreachable")
+
+    def broken_groups():
+        yield _candidate_group("process:1")
+        raise RuntimeError("producer failure")
+
+    llm = CancellableLlm()
+    with pytest.raises(RuntimeError, match="producer failure"):
+        await asyncio.wait_for(
+            SemanticJudge(llm, concurrency=1).judge_groups(
+                broken_groups(),
+                deadline=time.monotonic() + 30,
+            ),
+            timeout=1,
+        )
+
+    assert llm.started.is_set()
+    assert llm.cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_worker_failure_cancels_and_awaits_sibling(monkeypatch):
+    class CancellableLlm:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def complete_json(
+            self,
+            messages: list[dict[str, object]],
+            max_tokens: int,
+            response_model: type[BaseModel] | None = None,
+        ) -> dict[str, object]:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+            raise AssertionError("unreachable")
+
+    judge = SemanticJudge(CancellableLlm(), concurrency=2)
+    original = judge._judge_group
+
+    async def crashing_worker(group: CandidateGroup, deadline: float):
+        if group.source.entity_id == "process:1":
+            await asyncio.sleep(0)
+            raise RuntimeError("worker failure")
+        return await original(group, deadline)
+
+    monkeypatch.setattr(judge, "_judge_group", crashing_worker)
+    with pytest.raises(RuntimeError, match="worker failure"):
+        await judge.judge_groups(
+            [_candidate_group("process:1"), _candidate_group("process:2")],
+            deadline=time.monotonic() + 30,
+        )
+
+    assert judge._llm.started.is_set()
+    assert judge._llm.cancelled.is_set()
