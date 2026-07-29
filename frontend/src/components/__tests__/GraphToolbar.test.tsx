@@ -12,6 +12,7 @@ const graph = {
     { id: "users|1", table_id: "users", display_name: "User", class_name: "User", dimensions: {} },
     { id: "orders|1", table_id: "orders", display_name: "Order", class_name: "Order", dimensions: {} },
     { id: "payments|1", table_id: "orders", display_name: "Payment", class_name: "Payment", dimensions: {} },
+    { id: "users|2", table_id: "users", display_name: "Isolated user", class_name: "User", dimensions: {} },
   ],
   table_edges: [{ id: "users--orders", source_table: "users", target_table: "orders", relation_types: ["owns"], strong_count: 1, weak_count: 0, entity_edge_count: 2, average_confidence: 0.9, supporting_entity_edges: ["users|1--orders|1"] }],
   entity_edges: [
@@ -53,10 +54,23 @@ describe("GraphToolbar", () => {
     render(<GraphToolbar />);
 
     expect(screen.getByText("2 张表")).toBeInTheDocument();
-    expect(screen.getByText("3 个实体")).toBeInTheDocument();
+    expect(screen.getByText("4 个实体")).toBeInTheDocument();
     expect(screen.getByText("1 条表关系")).toBeInTheDocument();
     expect(screen.getByText("3 条实体关系")).toBeInTheDocument();
     expect(screen.getByText("3 条可见关系")).toBeInTheDocument();
+  });
+
+  it("lets users include the one isolated entity that is hidden by default", () => {
+    render(<GraphToolbar />);
+
+    const isolatedNodes = screen.getByRole("checkbox", { name: "显示孤立节点（隐藏 1 个）" });
+    expect(isolatedNodes).not.toBeChecked();
+
+    fireEvent.click(isolatedNodes);
+    expect(useAnalysisStore.getState().showIsolatedNodes).toBe(true);
+    expect(
+      screen.getByRole("checkbox", { name: "显示孤立节点（隐藏 0 个）" }),
+    ).toBeChecked();
   });
 
   it("exposes graph actions and sends fit and relayout commands", () => {

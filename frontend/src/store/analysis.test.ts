@@ -330,6 +330,20 @@ describe("analysis selection store", () => {
   });
 });
 
+describe("analysis graph display controls", () => {
+  beforeEach(() => {
+    useAnalysisStore.setState({ showIsolatedNodes: false });
+  });
+
+  it("toggles isolated entities and resets the control for a new analysis", () => {
+    useAnalysisStore.getState().setShowIsolatedNodes(true);
+    expect(useAnalysisStore.getState().showIsolatedNodes).toBe(true);
+
+    useAnalysisStore.getState().resetAnalysis();
+    expect(useAnalysisStore.getState().showIsolatedNodes).toBe(false);
+  });
+});
+
 describe("analysis graph workbench commands", () => {
   it("increments the fit-view request marker for every request", () => {
     // This fails if a fit command is dropped because the marker does not change.

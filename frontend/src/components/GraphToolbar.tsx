@@ -1,6 +1,7 @@
 import ExportButton from "./ExportButton";
 import StrengthFilter from "./StrengthFilter";
 import { useAnalysisStore } from "../store/analysis";
+import { projectGraph } from "../graph/projection";
 
 export default function GraphToolbar() {
   const graph = useAnalysisStore((state) => state.graph);
@@ -8,11 +9,17 @@ export default function GraphToolbar() {
     (state) => state.confidenceThreshold,
   );
   const analysisStatus = useAnalysisStore((state) => state.analysisStatus);
+  const showIsolatedNodes = useAnalysisStore((state) => state.showIsolatedNodes);
+  const setShowIsolatedNodes = useAnalysisStore((state) => state.setShowIsolatedNodes);
   const requestFitView = useAnalysisStore((state) => state.requestFitView);
   const requestRelayout = useAnalysisStore((state) => state.requestRelayout);
   const resetAnalysis = useAnalysisStore((state) => state.resetAnalysis);
 
   if (!graph) return null;
+
+  const isolatedNodeCount =
+    graph.entity_nodes.length - projectGraph(graph, false).entity_nodes.length;
+  const hiddenIsolatedNodeCount = showIsolatedNodes ? 0 : isolatedNodeCount;
 
   const visibleEntityEdgeCount = graph.entity_edges.filter((edge) =>
     edge.relations.some(
@@ -67,6 +74,14 @@ export default function GraphToolbar() {
         <div className="shrink-0">
           <StrengthFilter />
         </div>
+        <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-300">
+          <input
+            type="checkbox"
+            checked={showIsolatedNodes}
+            onChange={(event) => setShowIsolatedNodes(event.target.checked)}
+          />
+          显示孤立节点（隐藏 {hiddenIsolatedNodeCount} 个）
+        </label>
         <button
           type="button"
           onClick={requestFitView}

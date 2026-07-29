@@ -62,6 +62,7 @@ interface AnalysisState {
   hoveredNodeId: string | null;
   selectedNodeId: string | null;
   confidenceThreshold: number;
+  showIsolatedNodes: boolean;
   fitViewRequest: number;
   relayoutRequest: number;
   focusNodeRequest: FocusNodeRequest | null;
@@ -84,6 +85,7 @@ interface AnalysisState {
   setSelectedNode: (id: string | null) => void;
   requestNodeFocus: (id: string) => void;
   setConfidenceThreshold: (value: number) => void;
+  setShowIsolatedNodes: (value: boolean) => void;
   requestFitView: () => void;
   requestRelayout: () => void;
   selectEntityEdge: (id: string | null) => void;
@@ -143,6 +145,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   hoveredNodeId: null,
   selectedNodeId: null,
   confidenceThreshold: 0,
+  showIsolatedNodes: false,
   fitViewRequest: 0,
   relayoutRequest: 0,
   focusNodeRequest: null,
@@ -333,6 +336,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       diagnostics: null,
       selectedEntityEdgeId: null,
       selectedTableEdgeId: null,
+      showIsolatedNodes: false,
       taskId: null,
       hoveredNodeId: null,
       selectedNodeId: null,
@@ -464,6 +468,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       hoveredNodeId: null,
       selectedNodeId: null,
       confidenceThreshold: 0,
+      showIsolatedNodes: false,
       fitViewRequest: 0,
       relayoutRequest: 0,
       focusNodeRequest: null,
@@ -504,6 +509,10 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
   setConfidenceThreshold: (value) => {
     set({ confidenceThreshold: value });
+  },
+
+  setShowIsolatedNodes: (value) => {
+    set({ showIsolatedNodes: value });
   },
 
   requestFitView: () => {
