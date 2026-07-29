@@ -55,12 +55,20 @@ class _SourceVectorCache:
     vectors_by_entity_id: dict[str, np.ndarray]
 
 
+@dataclass
+class RetrievalDiagnostics:
+    """Observed candidate batches before the final per-source Top-K cap."""
+
+    explicit_pair_count: int = 0
+
+
 def retrieve_candidate_groups(
     documents: list[EntityDocument],
     plans: list[RelationshipPlan],
     embedding_adapter: EmbeddingAdapter,
     *,
     check_deadline: Callable[[str], None] | None = None,
+    diagnostics: RetrievalDiagnostics | None = None,
 ) -> list[CandidateGroup]:
     _check_deadline(check_deadline, "构建候选索引前")
     documents_by_table = _documents_by_table(documents)
@@ -100,13 +108,19 @@ def retrieve_candidate_groups(
             )
 
             if "keyword" in plan.retrieval_modes:
+                keyword_candidates = keyword_indexes[corpus_key].search(
+                    source_text,
+                    plan.candidate_limit_per_source,
+                )
+                _record_candidate_batch(
+                    diagnostics,
+                    keyword_candidates,
+                    plan.candidate_limit_per_source,
+                )
                 _extend_unique(
                     candidate_ids,
                     seen,
-                    keyword_indexes[corpus_key].search(
-                        source_text,
-                        plan.candidate_limit_per_source,
-                    ),
+                    keyword_candidates,
                     plan.candidate_limit_per_source,
                 )
 
@@ -122,13 +136,19 @@ def retrieve_candidate_groups(
                     source.entity_id
                 )
                 if query_vector is not None:
+                    semantic_candidates = vector_index.search(
+                        query_vector,
+                        plan.candidate_limit_per_source,
+                    )
+                    _record_candidate_batch(
+                        diagnostics,
+                        semantic_candidates,
+                        plan.candidate_limit_per_source,
+                    )
                     _extend_unique(
                         candidate_ids,
                         seen,
-                        vector_index.search(
-                            query_vector,
-                            plan.candidate_limit_per_source,
-                        ),
+                        semantic_candidates,
                         plan.candidate_limit_per_source,
                     )
 
@@ -408,6 +428,15 @@ def _extend_unique(
         destination.append(entity_id)
         if len(destination) >= limit:
             return
+
+
+def _record_candidate_batch(
+    diagnostics: RetrievalDiagnostics | None,
+    entity_ids: list[str],
+    limit: int,
+) -> None:
+    if diagnostics is not None and len(entity_ids) > limit:
+        diagnostics.explicit_pair_count += len(entity_ids)
 
 
 def _check_deadline(

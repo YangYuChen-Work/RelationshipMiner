@@ -142,25 +142,19 @@ def main() -> None:
     index_build_seconds = perf_counter() - started
 
     started = perf_counter()
+    diagnostics = retrieval.RetrievalDiagnostics()
     groups = retrieval.retrieve_candidate_groups(
         documents,
         plans,
         embeddings,
+        diagnostics=diagnostics,
     )
-    top_k_retrieval_seconds = perf_counter() - started
+    end_to_end_retrieval_seconds = perf_counter() - started
 
     candidates = sum(len(group.candidates) for group in groups)
     plans_per_source = Counter(plan.source_table for plan in plans)
     max_plans_per_source = max(plans_per_source.values())
-    target_counts = Counter(
-        document.table_name
-        for document in documents
-    )
-    explicit_pair_count = sum(
-        len(group.candidates)
-        for group in groups
-        if len(group.candidates) == target_counts[group.plan.target_table]
-    )
+    explicit_pair_count = diagnostics.explicit_pair_count
 
     assert len(documents) == ENTITY_COUNT
     assert len(plans) == PLANS_COUNT
@@ -182,8 +176,8 @@ def main() -> None:
                 "vector_indexes": len(vector_indexes),
                 "corpus_build_seconds": round(corpus_build_seconds, 6),
                 "index_build_seconds": round(index_build_seconds, 6),
-                "top_k_retrieval_seconds": round(
-                    top_k_retrieval_seconds,
+                "end_to_end_retrieval_seconds": round(
+                    end_to_end_retrieval_seconds,
                     6,
                 ),
             },

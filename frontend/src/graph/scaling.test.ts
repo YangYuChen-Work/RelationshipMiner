@@ -148,6 +148,7 @@ describe("7000-entity graph scaling", () => {
     });
 
     expect(container.querySelectorAll("canvas")).toHaveLength(1);
-    expect(container.querySelectorAll("[data-node-id]")).toHaveLength(0);
+    expect(container.querySelectorAll("svg")).toHaveLength(0);
+    expect(container.querySelectorAll("*").length).toBeLessThanOrEqual(10);
   });
 });
