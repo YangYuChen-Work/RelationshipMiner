@@ -18,7 +18,10 @@ class Settings:
     DEEPSEEK_BASE_URL: str = os.getenv(
         "DEEPSEEK_BASE_URL", "https://api.deepseek.com"
     )
-    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    DEEPSEEK_MODEL: str = os.getenv(
+        "DEEPSEEK_MODEL",
+        "deepseek-v4-flash",
+    )
 
     # Semantic retrieval
     EMBEDDING_MODEL: str = os.getenv(

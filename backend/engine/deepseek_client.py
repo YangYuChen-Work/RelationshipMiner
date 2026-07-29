@@ -3,9 +3,111 @@
 通过 OpenAI 兼容接口调用 DeepSeek API，用于 AI 字段语义匹配决策。
 """
 
+import json
+
+from openai import AsyncOpenAI
 from openai import OpenAI
+from pydantic import BaseModel
 
 from config import settings
+
+
+class LlmBatchError(RuntimeError):
+    """Raised when a structured LLM response cannot be completed."""
+
+
+class DeepSeekJsonAdapter:
+    """Async DeepSeek adapter for JSON-object completions."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        client: object | None = None,
+    ):
+        self.api_key = (
+            api_key
+            if api_key is not None
+            else settings.DEEPSEEK_API_KEY
+        )
+        self.base_url = (
+            base_url
+            if base_url is not None
+            else settings.DEEPSEEK_BASE_URL
+        )
+        self.model = (
+            model if model is not None else settings.DEEPSEEK_MODEL
+        )
+        self._client = client
+
+    async def complete_json(
+        self,
+        messages: list[dict[str, object]],
+        max_tokens: int,
+        response_model: type[BaseModel] | None = None,
+    ) -> dict[str, object]:
+        if self._client is None:
+            self._client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+            )
+
+        attempt_messages = [dict(message) for message in messages]
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self.model,
+                    messages=attempt_messages,
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                    max_tokens=max_tokens,
+                )
+                choice = response.choices[0]
+                if choice.finish_reason == "length":
+                    raise ValueError(
+                        "finish_reason=length: JSON output was truncated"
+                    )
+                content = choice.message.content
+                if not content or not content.strip():
+                    raise ValueError("empty response content")
+                try:
+                    data = json.loads(content)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        f"JSON validation error: {error}"
+                    ) from error
+                if not isinstance(data, dict):
+                    raise ValueError(
+                        "JSON validation error: root must be an object"
+                    )
+                if response_model is not None:
+                    return (
+                        response_model.model_validate(data).model_dump()
+                    )
+                return data
+            except Exception as error:
+                last_error = error
+                if attempt == 1:
+                    break
+                attempt_messages = [
+                    *attempt_messages,
+                    {
+                        "role": "user",
+                        "content": (
+                            "The previous JSON response failed "
+                            f"validation: {error}. Return one corrected "
+                            "JSON object matching the requested example "
+                            "and schema."
+                        ),
+                    },
+                ]
+
+        raise LlmBatchError(
+            "DeepSeek JSON completion failed after two attempts: "
+            f"{last_error}"
+        ) from last_error
 
 
 class DeepSeekClient:

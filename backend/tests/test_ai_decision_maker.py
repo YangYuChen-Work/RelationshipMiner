@@ -5,6 +5,10 @@
 """
 
 import json
+import runpy
+from pathlib import Path
+
+import dotenv
 import pytest
 from unittest.mock import Mock
 
@@ -14,6 +18,19 @@ from engine.ai_decision_maker import (
     _build_prompt_messages,
     _parse_ai_response,
 )
+
+
+def test_default_deepseek_model_is_v4_flash(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda: None)
+    config_path = Path(__file__).parents[1] / "config.py"
+
+    config_module = runpy.run_path(str(config_path))
+
+    assert (
+        config_module["Settings"].DEEPSEEK_MODEL
+        == "deepseek-v4-flash"
+    )
 
 
 # ── 测试数据 ──────────────────────────────────────────────────

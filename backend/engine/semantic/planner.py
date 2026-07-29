@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+import json
+
+from pydantic import BaseModel, ValidationError
+
+from engine.deepseek_client import DeepSeekJsonAdapter, LlmBatchError
+from engine.schema_analyzer import TableSchema
+
+from .interfaces import JsonLlmAdapter
+from .models import AnalysisScope, RelationshipPlan
+
+
+class _PlanEnvelope(BaseModel):
+    plans: list[RelationshipPlan]
+
+
+class RelationshipPlanner:
+    def __init__(self, llm: JsonLlmAdapter):
+        self._llm = llm
+
+    async def plan(
+        self,
+        scope: AnalysisScope,
+        schemas: dict[str, TableSchema],
+        samples: dict[str, list[dict[str, object]]],
+    ) -> list[RelationshipPlan]:
+        allowed_dimensions = _allowed_dimensions(scope, schemas)
+        messages = _build_messages(
+            scope,
+            schemas,
+            samples,
+            allowed_dimensions,
+        )
+        envelope = await self._complete_plan(messages)
+
+        return [
+            plan
+            for plan in envelope.plans
+            if _is_scoped_plan(plan, allowed_dimensions)
+        ]
+
+    async def _complete_plan(
+        self,
+        messages: list[dict[str, object]],
+    ) -> _PlanEnvelope:
+        if isinstance(self._llm, DeepSeekJsonAdapter):
+            payload = await self._llm.complete_json(
+                messages,
+                max_tokens=4096,
+                response_model=_PlanEnvelope,
+            )
+            return _PlanEnvelope.model_validate(payload)
+
+        attempt_messages = [dict(message) for message in messages]
+        last_error: Exception | None = None
+        for attempt in range(2):
+            payload = await self._llm.complete_json(
+                attempt_messages,
+                max_tokens=4096,
+            )
+            try:
+                return _PlanEnvelope.model_validate(payload)
+            except (ValidationError, TypeError, ValueError) as error:
+                last_error = error
+                if attempt == 1:
+                    break
+                attempt_messages = [
+                    *attempt_messages,
+                    {
+                        "role": "user",
+                        "content": (
+                            "The previous JSON response failed "
+                            f"validation: {error}. Return one corrected "
+                            "JSON object matching the requested example."
+                        ),
+                    },
+                ]
+
+        raise LlmBatchError(
+            "Relationship plan validation failed after two attempts: "
+            f"{last_error}"
+        ) from last_error
+
+
+def _allowed_dimensions(
+    scope: AnalysisScope,
+    schemas: dict[str, TableSchema],
+) -> dict[str, set[str]]:
+    allowed: dict[str, set[str]] = {}
+    for table_scope in scope.tables:
+        schema = schemas.get(table_scope.name)
+        if schema is None:
+            allowed[table_scope.name] = set()
+            continue
+        primary_keys = set(schema.primary_keys)
+        selected = set(table_scope.dimensions)
+        allowed[table_scope.name] = {
+            column.name
+            for column in schema.columns
+            if (
+                column.name in selected
+                and not column.is_primary_key
+                and column.name not in primary_keys
+            )
+        }
+    return allowed
+
+
+def _build_messages(
+    scope: AnalysisScope,
+    schemas: dict[str, TableSchema],
+    samples: dict[str, list[dict[str, object]]],
+    allowed_dimensions: dict[str, set[str]],
+) -> list[dict[str, object]]:
+    context: list[dict[str, object]] = []
+    for table_scope in scope.tables:
+        schema = schemas.get(table_scope.name)
+        columns_by_name = (
+            {column.name: column for column in schema.columns}
+            if schema is not None
+            else {}
+        )
+        sample = samples.get(table_scope.name, [])
+        sample_row = sample[0] if sample else {}
+        dimensions = []
+        for name in table_scope.dimensions:
+            if name not in allowed_dimensions[table_scope.name]:
+                continue
+            column = columns_by_name[name]
+            dimensions.append(
+                {
+                    "name": name,
+                    "type": column.type,
+                    "sample_value": sample_row.get(name),
+                }
+            )
+        context.append(
+            {
+                "table": table_scope.name,
+                "dimensions": dimensions,
+            }
+        )
+
+    example = {
+        "plans": [
+            {
+                "source_table": "source_table_name",
+                "target_table": "target_table_name",
+                "relation_type": "business_relationship",
+                "direction": "source_to_target",
+                "source_dimensions": ["selected_source_dimension"],
+                "target_dimensions": ["selected_target_dimension"],
+                "retrieval_modes": ["keyword", "semantic"],
+                "candidate_limit_per_source": 20,
+                "reason": "Why these selected values can reveal a link.",
+            }
+        ]
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Plan plausible cross-table semantic relationships. "
+                "Use only the provided tables and dimensions. Return "
+                "one JSON object and no prose."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Selected analysis context:\n"
+                f"{json.dumps(context, ensure_ascii=False, default=str)}"
+                "\nReturn JSON matching this example:\n"
+                f"{json.dumps(example, ensure_ascii=False)}"
+            ),
+        },
+    ]
+
+
+def _is_scoped_plan(
+    plan: RelationshipPlan,
+    allowed_dimensions: dict[str, set[str]],
+) -> bool:
+    if (
+        plan.source_table == plan.target_table
+        or plan.source_table not in allowed_dimensions
+        or plan.target_table not in allowed_dimensions
+        or not plan.source_dimensions
+        or not plan.target_dimensions
+    ):
+        return False
+    return (
+        set(plan.source_dimensions)
+        <= allowed_dimensions[plan.source_table]
+        and set(plan.target_dimensions)
+        <= allowed_dimensions[plan.target_table]
+    )
