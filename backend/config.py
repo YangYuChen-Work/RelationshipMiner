@@ -25,6 +25,9 @@ class Settings:
         "EMBEDDING_MODEL",
         "BAAI/bge-small-zh-v1.5",
     )
+    EMBEDDING_BATCH_SIZE: int = int(
+        os.getenv("EMBEDDING_BATCH_SIZE", "256")
+    )
 
     @property
     def database_url(self) -> str:

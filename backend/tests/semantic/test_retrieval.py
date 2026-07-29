@@ -44,6 +44,30 @@ class RejectingEmbeddings:
         raise AssertionError("keyword-only retrieval must not embed queries")
 
 
+class EdgeCaseEmbeddings:
+    def __init__(self) -> None:
+        self.document_batches: list[list[str]] = []
+        self.query_batches: list[list[str]] = []
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        self.document_batches.append(texts)
+        return [self._vector(text) for text in texts]
+
+    def encode_queries(self, texts: list[str]) -> list[list[float]]:
+        self.query_batches.append(texts)
+        return [self._vector(text) for text in texts]
+
+    @staticmethod
+    def _vector(text: str) -> list[float]:
+        if text.startswith("empty-vector"):
+            return []
+        if text.startswith("zero-vector"):
+            return [0.0, 0.0]
+        if text.startswith("wrong-dimension"):
+            return [1.0, 0.0, 0.0]
+        return [1.0, 0.0]
+
+
 def _document(
     entity_id: str,
     table_name: str,
@@ -68,6 +92,24 @@ def _document(
     )
 
 
+def _document_with_dimensions(
+    entity_id: str,
+    table_name: str,
+    dimensions: dict[str, str],
+) -> EntityDocument:
+    return EntityDocument(
+        entity_id=entity_id,
+        table_name=table_name,
+        display_name=next(iter(dimensions.values()), entity_id),
+        dimensions=dimensions,
+        normalized_dimensions=dimensions,
+        search_text="；".join(
+            f"{name}：{value}"
+            for name, value in dimensions.items()
+        ),
+    )
+
+
 def _plan(
     *,
     retrieval_modes: list[str] | None = None,
@@ -84,6 +126,185 @@ def _plan(
         candidate_limit_per_source=candidate_limit,
         reason="名称语义",
     )
+
+
+def test_semantic_queries_are_batched_for_large_source_tables():
+    embeddings = FakeEmbeddings()
+    documents = [
+        _document(f"process:{index}", "process", f"source-{index}")
+        for index in range(7000)
+    ]
+    documents.append(_document("part:1", "part", "target"))
+
+    groups = retrieve_candidate_groups(
+        documents=documents,
+        plans=[
+            _plan(
+                retrieval_modes=["semantic"],
+                candidate_limit=1,
+            )
+        ],
+        embedding_adapter=embeddings,
+    )
+
+    assert len(groups) == 7000
+    assert len(embeddings.query_batches) == 28
+    assert max(map(len, embeddings.query_batches)) <= 256
+    assert sum(map(len, embeddings.query_batches)) == 7000
+
+
+def test_source_vector_cache_is_reused_across_dimension_isolated_plans():
+    embeddings = FakeEmbeddings()
+    documents = [
+        _document_with_dimensions(
+            "process:1",
+            "process",
+            {"name": "转子"},
+        ),
+        _document_with_dimensions(
+            "process:2",
+            "process",
+            {"name": "螺栓"},
+        ),
+        _document_with_dimensions(
+            "part:1",
+            "part",
+            {"name": "转子", "code": "螺栓"},
+        ),
+        _document_with_dimensions(
+            "part:2",
+            "part",
+            {"name": "螺栓", "code": "转子"},
+        ),
+    ]
+    plans = [
+        _plan(retrieval_modes=["semantic"], candidate_limit=1),
+        RelationshipPlan(
+            source_table="process",
+            target_table="part",
+            relation_type="编码涉及零件",
+            direction="source_to_target",
+            source_dimensions=["name"],
+            target_dimensions=["code"],
+            retrieval_modes=["semantic"],
+            candidate_limit_per_source=1,
+            reason="编码语义",
+        ),
+    ]
+
+    groups = retrieve_candidate_groups(
+        documents=documents,
+        plans=plans,
+        embedding_adapter=embeddings,
+    )
+
+    assert embeddings.query_batches == [["转子", "螺栓"]]
+    assert embeddings.document_batches == [
+        ["转子", "螺栓"],
+        ["螺栓", "转子"],
+    ]
+    assert [
+        [candidate.entity_id for candidate in group.candidates]
+        for group in groups
+    ] == [
+        ["part:1"],
+        ["part:2"],
+        ["part:2"],
+        ["part:1"],
+    ]
+
+
+def test_semantic_targets_are_indexed_in_bounded_batches():
+    embeddings = FakeEmbeddings()
+    documents = [_document("process:1", "process", "source")]
+    documents.extend(
+        _document(f"part:{index}", "part", f"target-{index}")
+        for index in range(7000)
+    )
+
+    groups = retrieve_candidate_groups(
+        documents=documents,
+        plans=[
+            _plan(
+                retrieval_modes=["semantic"],
+                candidate_limit=1,
+            )
+        ],
+        embedding_adapter=embeddings,
+    )
+
+    assert len(groups) == 1
+    assert len(embeddings.document_batches) == 28
+    assert max(map(len, embeddings.document_batches)) <= 256
+    assert sum(map(len, embeddings.document_batches)) == 7000
+
+
+def test_empty_and_invalid_semantic_vectors_are_skipped_with_stable_keys():
+    embeddings = EdgeCaseEmbeddings()
+    documents = [
+        _document("process:empty-text", "process", ""),
+        _document(
+            "process:empty-vector",
+            "process",
+            "empty-vector-source",
+        ),
+        _document(
+            "process:zero-vector",
+            "process",
+            "zero-vector-source",
+        ),
+        _document(
+            "process:wrong-dimension",
+            "process",
+            "wrong-dimension-source",
+        ),
+        _document("process:valid", "process", "valid-source"),
+        _document("part:empty-text", "part", ""),
+        _document(
+            "part:empty-vector",
+            "part",
+            "empty-vector-target",
+        ),
+        _document(
+            "part:zero-vector",
+            "part",
+            "zero-vector-target",
+        ),
+        _document("part:valid", "part", "valid-target"),
+        _document(
+            "part:wrong-dimension",
+            "part",
+            "wrong-dimension-target",
+        ),
+    ]
+
+    groups = retrieve_candidate_groups(
+        documents=documents,
+        plans=[
+            _plan(
+                retrieval_modes=["semantic"],
+                candidate_limit=1,
+            )
+        ],
+        embedding_adapter=embeddings,
+    )
+
+    assert "" not in [
+        text
+        for batch in embeddings.document_batches
+        + embeddings.query_batches
+        for text in batch
+    ]
+    assert [
+        [candidate.entity_id for candidate in group.candidates]
+        for group in groups
+    ] == [
+        [],
+        [],
+        [],
+        [],
+        ["part:valid"],
+    ]
 
 
 def test_retrieval_searches_only_planned_target_table_and_honors_final_limit():

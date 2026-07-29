@@ -6,12 +6,15 @@ from dataclasses import dataclass
 import numpy as np
 from usearch.index import Index
 
+from config import settings
+
 from .interfaces import EmbeddingAdapter
 from .models import CandidateGroup, EntityDocument, RelationshipPlan
 
 
 _ALPHANUMERIC_OR_CJK = re.compile(r"[a-z0-9]+|[\u3400-\u9fff]+")
 _CorpusKey = tuple[str, tuple[str, ...]]
+_SourceKey = tuple[str, tuple[str, ...]]
 
 
 @dataclass
@@ -30,16 +33,25 @@ class _KeywordIndex:
 class _VectorIndex:
     index: Index
     entity_ids_by_key: dict[int, str]
+    ndim: int
 
-    def search(self, query: list[float], count: int) -> list[str]:
+    def search(self, query: np.ndarray, count: int) -> list[str]:
+        vector = _usable_vector(query, expected_ndim=self.ndim)
+        if vector is None:
+            return []
         matches = self.index.search(
-            np.asarray(query, dtype=np.float32),
+            vector,
             count=count,
         )
         return [
             self.entity_ids_by_key[int(key)]
             for key in matches.keys
         ]
+
+
+@dataclass
+class _SourceVectorCache:
+    vectors_by_entity_id: dict[str, np.ndarray]
 
 
 def retrieve_candidate_groups(
@@ -58,6 +70,12 @@ def retrieve_candidate_groups(
     vector_indexes = _build_vector_indexes(
         documents_by_table,
         plans,
+        embedding_adapter,
+    )
+    source_vector_caches = _build_source_vector_caches(
+        documents_by_table,
+        plans,
+        vector_indexes,
         embedding_adapter,
     )
     groups: list[CandidateGroup] = []
@@ -88,18 +106,22 @@ def retrieve_candidate_groups(
                 "semantic" in plan.retrieval_modes
                 and vector_index is not None
             ):
-                query_vector = embedding_adapter.encode_queries(
-                    [source_text]
-                )[0]
-                _extend_unique(
-                    candidate_ids,
-                    seen,
-                    vector_index.search(
-                        query_vector,
-                        plan.candidate_limit_per_source,
-                    ),
-                    plan.candidate_limit_per_source,
+                source_cache = source_vector_caches[
+                    _source_key(plan)
+                ]
+                query_vector = source_cache.vectors_by_entity_id.get(
+                    source.entity_id
                 )
+                if query_vector is not None:
+                    _extend_unique(
+                        candidate_ids,
+                        seen,
+                        vector_index.search(
+                            query_vector,
+                            plan.candidate_limit_per_source,
+                        ),
+                        plan.candidate_limit_per_source,
+                    )
 
             groups.append(
                 CandidateGroup(
@@ -167,37 +189,165 @@ def _build_vector_indexes(
         targets = documents_by_table.get(plan.target_table, [])
         if not targets:
             continue
-        target_vectors = np.asarray(
-            embedding_adapter.encode_documents(
-                [
-                    _dimension_text(target, plan.target_dimensions)
-                    for target in targets
-                ]
-            ),
-            dtype=np.float32,
-        )
-        if target_vectors.ndim != 2 or target_vectors.shape[1] == 0:
+
+        eligible_targets = [
+            (
+                target_index,
+                target,
+                text,
+            )
+            for target_index, target in enumerate(targets)
+            if (text := _dimension_text(
+                target,
+                plan.target_dimensions,
+            ))
+        ]
+        index: Index | None = None
+        ndim: int | None = None
+        entity_ids_by_key: dict[int, str] = {}
+        batch_size = max(1, settings.EMBEDDING_BATCH_SIZE)
+
+        for batch_start in range(
+            0,
+            len(eligible_targets),
+            batch_size,
+        ):
+            batch = eligible_targets[
+                batch_start : batch_start + batch_size
+            ]
+            encoded = embedding_adapter.encode_documents(
+                [text for _, _, text in batch]
+            )
+            valid_keys: list[int] = []
+            valid_vectors: list[np.ndarray] = []
+
+            for (
+                target_index,
+                target,
+                _,
+            ), raw_vector in zip(batch, encoded, strict=True):
+                vector = _usable_vector(
+                    raw_vector,
+                    expected_ndim=ndim,
+                )
+                if vector is None:
+                    continue
+                if ndim is None:
+                    ndim = vector.shape[0]
+                    index = Index(
+                        ndim=ndim,
+                        metric="cos",
+                        dtype="f32",
+                    )
+                valid_keys.append(target_index)
+                valid_vectors.append(vector)
+                entity_ids_by_key[target_index] = target.entity_id
+
+            if index is not None and valid_vectors:
+                index.add(
+                    np.asarray(valid_keys, dtype=np.uint64),
+                    np.stack(valid_vectors).astype(
+                        np.float32,
+                        copy=False,
+                    ),
+                )
+
+        if index is not None and ndim is not None:
+            indexes[key] = _VectorIndex(
+                index=index,
+                entity_ids_by_key=entity_ids_by_key,
+                ndim=ndim,
+            )
+    return indexes
+
+
+def _build_source_vector_caches(
+    documents_by_table: dict[str, list[EntityDocument]],
+    plans: list[RelationshipPlan],
+    vector_indexes: dict[_CorpusKey, _VectorIndex],
+    embedding_adapter: EmbeddingAdapter,
+) -> dict[_SourceKey, _SourceVectorCache]:
+    caches: dict[_SourceKey, _SourceVectorCache] = {}
+    for plan in plans:
+        key = _source_key(plan)
+        if (
+            key in caches
+            or "semantic" not in plan.retrieval_modes
+            or _corpus_key(plan) not in vector_indexes
+        ):
             continue
 
-        index = Index(
-            ndim=target_vectors.shape[1],
-            metric="cos",
-            dtype="f32",
+        sources = documents_by_table.get(plan.source_table, [])
+        eligible_sources = [
+            (
+                source,
+                text,
+            )
+            for source in sources
+            if (text := _dimension_text(
+                source,
+                plan.source_dimensions,
+            ))
+        ]
+        vectors_by_entity_id: dict[str, np.ndarray] = {}
+        batch_size = max(1, settings.EMBEDDING_BATCH_SIZE)
+        for batch_start in range(
+            0,
+            len(eligible_sources),
+            batch_size,
+        ):
+            batch = eligible_sources[
+                batch_start : batch_start + batch_size
+            ]
+            vectors = embedding_adapter.encode_queries(
+                [text for _, text in batch]
+            )
+            for (source, _), raw_vector in zip(
+                batch,
+                vectors,
+                strict=True,
+            ):
+                vector = _usable_vector(raw_vector)
+                if vector is None:
+                    continue
+                vectors_by_entity_id[source.entity_id] = vector
+
+        caches[key] = _SourceVectorCache(
+            vectors_by_entity_id=vectors_by_entity_id,
         )
-        keys = np.arange(len(targets), dtype=np.uint64)
-        index.add(keys, target_vectors)
-        indexes[key] = _VectorIndex(
-            index=index,
-            entity_ids_by_key={
-                int(key): target.entity_id
-                for key, target in zip(keys, targets, strict=True)
-            },
-        )
-    return indexes
+    return caches
 
 
 def _corpus_key(plan: RelationshipPlan) -> _CorpusKey:
     return plan.target_table, tuple(plan.target_dimensions)
+
+
+def _source_key(plan: RelationshipPlan) -> _SourceKey:
+    return plan.source_table, tuple(plan.source_dimensions)
+
+
+def _usable_vector(
+    raw_vector: object,
+    expected_ndim: int | None = None,
+) -> np.ndarray | None:
+    try:
+        vector = np.asarray(raw_vector, dtype=np.float32)
+    except (TypeError, ValueError):
+        return None
+    if (
+        vector.ndim != 1
+        or vector.size == 0
+        or (
+            expected_ndim is not None
+            and vector.shape[0] != expected_ndim
+        )
+        or not np.all(np.isfinite(vector))
+    ):
+        return None
+    norm = np.linalg.norm(vector)
+    if not np.isfinite(norm) or norm == 0:
+        return None
+    return vector
 
 
 def _dimension_text(
