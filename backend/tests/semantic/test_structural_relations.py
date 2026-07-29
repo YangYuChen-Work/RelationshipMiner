@@ -164,18 +164,158 @@ def test_relation_table_uses_business_labels_for_known_manufacturing_pairs():
         documents,
     )
 
-    labels_by_pair = {
-        frozenset((edge.source.split(":", 1)[0], edge.target.split(":", 1)[0])):
-            edge.relations[0].relation_type
+    labels_by_relation_endpoints = {
+        (relation.source, relation.target): relation.relation_type
         for edge in edges
+        for relation in edge.relations
     }
-    assert labels_by_pair == {
-        frozenset(("meprocess", "meoperation")): "包含工序",
-        frozenset(("meoperation", "mestep")): "包含工步",
-        frozenset(("meprocess", "assembly")): "关联物料",
-        frozenset(("meoperation", "assembly")): "关联物料",
-        frozenset(("mestep", "assembly")): "关联物料",
-        frozenset(("custom_source", "custom_target")): "关系表关联",
+    assert labels_by_relation_endpoints == {
+        ("meprocess:1", "meoperation:1"): "包含工序",
+        ("meoperation:1", "mestep:1"): "包含工步",
+        ("meprocess:1", "assembly:1"): "关联物料",
+        ("meoperation:1", "assembly:1"): "关联物料",
+        ("mestep:1", "assembly:1"): "关联物料",
+        ("custom_source:1", "custom_target:1"): "结构关联",
+    }
+
+
+def test_known_reverse_rows_normalize_relation_and_evidence_direction():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    metadata = MetaData()
+    relation_id = Table(
+        "relation_id",
+        metadata,
+        Column("left_id", String),
+        Column("right_id", String),
+        Column("left_class", String),
+        Column("right_class", String),
+    )
+    class_by_table = {
+        "meprocess": "MEProcess",
+        "meoperation": "MEOperation",
+        "mestep": "MEStep",
+        "assembly": "Assembly",
+    }
+    for table_name in class_by_table:
+        Table(table_name, metadata, Column("id", String, primary_key=True))
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            relation_id.insert(),
+            [
+                {
+                    "left_id": "operation-1",
+                    "right_id": "process-1",
+                    "left_class": "MEOperation",
+                    "right_class": "MEProcess",
+                },
+                {
+                    "left_id": "step-1",
+                    "right_id": "operation-1",
+                    "left_class": "MEStep",
+                    "right_class": "MEOperation",
+                },
+                {
+                    "left_id": "assembly-1",
+                    "right_id": "process-1",
+                    "left_class": "Assembly",
+                    "right_class": "MEProcess",
+                },
+                {
+                    "left_id": "assembly-1",
+                    "right_id": "operation-1",
+                    "left_class": "Assembly",
+                    "right_class": "MEOperation",
+                },
+                {
+                    "left_id": "assembly-1",
+                    "right_id": "step-1",
+                    "left_class": "Assembly",
+                    "right_class": "MEStep",
+                },
+            ],
+        )
+
+    records = {
+        "meprocess": [{"id": "process-1"}],
+        "meoperation": [{"id": "operation-1"}],
+        "mestep": [{"id": "step-1"}],
+        "assembly": [{"id": "assembly-1"}],
+    }
+    schema_result = analyze_schema(engine, list(records))
+    documents = [
+        _document(
+            f"{table_name}:{rows[0]['id']}",
+            table_name,
+            class_by_table[table_name],
+        )
+        for table_name, rows in records.items()
+    ]
+
+    edges = build_relation_table_edges(
+        engine,
+        records,
+        schema_result,
+        documents,
+    )
+
+    actual = {}
+    for edge in edges:
+        relation = edge.relations[0]
+        evidence = relation.evidence[0]
+        actual[(relation.source, relation.target)] = (
+            relation.relation_type,
+            relation.direction,
+            evidence.source_field,
+            evidence.source_value,
+            evidence.target_field,
+            evidence.target_value,
+        )
+    assert actual == {
+        ("meprocess:process-1", "meoperation:operation-1"): (
+            "包含工序",
+            "source_to_target",
+            "right_id",
+            "process-1",
+            "left_id",
+            "operation-1",
+        ),
+        ("meoperation:operation-1", "mestep:step-1"): (
+            "包含工步",
+            "source_to_target",
+            "right_id",
+            "operation-1",
+            "left_id",
+            "step-1",
+        ),
+        ("meprocess:process-1", "assembly:assembly-1"): (
+            "关联物料",
+            "source_to_target",
+            "right_id",
+            "process-1",
+            "left_id",
+            "assembly-1",
+        ),
+        ("meoperation:operation-1", "assembly:assembly-1"): (
+            "关联物料",
+            "source_to_target",
+            "right_id",
+            "operation-1",
+            "left_id",
+            "assembly-1",
+        ),
+        ("mestep:step-1", "assembly:assembly-1"): (
+            "关联物料",
+            "source_to_target",
+            "right_id",
+            "step-1",
+            "left_id",
+            "assembly-1",
+        ),
     }
 
 

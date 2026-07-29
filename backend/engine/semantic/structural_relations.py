@@ -25,12 +25,13 @@ _REQUIRED_COLUMNS = {
     "left_class",
     "right_class",
 }
-_RELATION_TYPES = {
-    frozenset(("MEProcess", "MEOperation")): "包含工序",
-    frozenset(("MEOperation", "MEStep")): "包含工步",
+_DIRECTED_RELATION_TYPES = {
+    ("MEProcess", "MEOperation"): "包含工序",
+    ("MEOperation", "MEStep"): "包含工步",
 }
+_MATERIAL_SOURCE_CLASSES = {"MEProcess", "MEOperation", "MEStep"}
 _MATERIAL_RELATION_TYPE = "关联物料"
-_DEFAULT_RELATION_TYPE = "关系表关联"
+_DEFAULT_RELATION_TYPE = "结构关联"
 
 
 class StructuralRelationResolutionError(RuntimeError):
@@ -133,28 +134,40 @@ def _resolve_relation_table_edges(
                     },
                 )
                 for row in rows.mappings():
-                    source = _resolve_endpoint(
+                    left_endpoint = _resolve_endpoint(
                         endpoint_indexes,
                         row["left_class"],
                         row["left_id"],
                     )
-                    target = _resolve_endpoint(
+                    right_endpoint = _resolve_endpoint(
                         endpoint_indexes,
                         row["right_class"],
                         row["right_id"],
                     )
-                    if source is None or target is None:
+                    if left_endpoint is None or right_endpoint is None:
                         continue
 
+                    relation_type, reverse_row = _relation_semantics(
+                        str(left_class),
+                        str(right_class),
+                    )
+                    if reverse_row:
+                        source, target = right_endpoint, left_endpoint
+                        source_field, source_value = "right_id", row["right_id"]
+                        target_field, target_value = "left_id", row["left_id"]
+                    else:
+                        source, target = left_endpoint, right_endpoint
+                        source_field, source_value = "left_id", row["left_id"]
+                        target_field, target_value = "right_id", row["right_id"]
                     key = tuple(sorted((source.entity_id, target.entity_id)))
                     reason = (
                         f"{table_name} records {left_class} to {right_class}"
                     )
                     evidence = RelationEvidence(
-                        source_field="left_id",
-                        source_value=row["left_id"],
-                        target_field="right_id",
-                        target_value=row["right_id"],
+                        source_field=source_field,
+                        source_value=source_value,
+                        target_field=target_field,
+                        target_value=target_value,
                         method="relation_table",
                         reason=reason,
                     )
@@ -164,15 +177,6 @@ def _resolve_relation_table_edges(
                         if evidence not in existing_evidence:
                             existing_evidence.append(evidence)
                         continue
-                    class_pair = frozenset((left_class, right_class))
-                    relation_type = (
-                        _MATERIAL_RELATION_TYPE
-                        if "Assembly" in class_pair
-                        else _RELATION_TYPES.get(
-                            class_pair,
-                            _DEFAULT_RELATION_TYPE,
-                        )
-                    )
                     relation = EntityRelation(
                         source=source.entity_id,
                         target=target.entity_id,
@@ -192,6 +196,30 @@ def _resolve_relation_table_edges(
         _check_deadline(check_deadline, f"读取关系表 {table_name} 后")
 
     return list(edges.values())
+
+
+def _relation_semantics(
+    left_class: str,
+    right_class: str,
+) -> tuple[str, bool]:
+    relation_type = _DIRECTED_RELATION_TYPES.get((left_class, right_class))
+    if relation_type is not None:
+        return relation_type, False
+
+    relation_type = _DIRECTED_RELATION_TYPES.get((right_class, left_class))
+    if relation_type is not None:
+        return relation_type, True
+
+    if right_class == "Assembly":
+        return _MATERIAL_RELATION_TYPE, False
+    if (
+        left_class == "Assembly"
+        and right_class in _MATERIAL_SOURCE_CLASSES
+    ):
+        return _MATERIAL_RELATION_TYPE, True
+    if left_class == "Assembly":
+        return _MATERIAL_RELATION_TYPE, False
+    return _DEFAULT_RELATION_TYPE, False
 
 
 def _discover_relation_tables(engine: Engine) -> list[str]:

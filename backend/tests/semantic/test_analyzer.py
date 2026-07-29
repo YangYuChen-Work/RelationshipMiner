@@ -639,15 +639,95 @@ async def test_analyzer_exposes_known_manufacturing_relation_labels_without_clas
         "Assembly",
     }
     assert {
-        frozenset((edge.source_table, edge.target_table)):
-            edge.relation_types
-        for edge in result.table_edges
+        (relation.source, relation.target): relation.relation_type
+        for edge in result.entity_edges
+        for relation in edge.relations
     } == {
-        frozenset(("meprocess", "meoperation")): ["包含工序"],
-        frozenset(("meoperation", "mestep")): ["包含工步"],
-        frozenset(("meprocess", "assembly")): ["关联物料"],
-        frozenset(("meoperation", "assembly")): ["关联物料"],
-        frozenset(("mestep", "assembly")): ["关联物料"],
+        ("meprocess:process-1", "meoperation:operation-1"): "包含工序",
+        ("meoperation:operation-1", "mestep:step-1"): "包含工步",
+        ("meprocess:process-1", "assembly:assembly-1"): "关联物料",
+        ("meoperation:operation-1", "assembly:assembly-1"): "关联物料",
+        ("mestep:step-1", "assembly:assembly-1"): "关联物料",
+    }
+
+
+@pytest.mark.asyncio
+async def test_analyzer_normalizes_reversed_manufacturing_rows_and_evidence(
+    engine,
+):
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    _install_manufacturing_relation_tables(engine, reverse=True)
+    result = await RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="meprocess", dimensions=["name"]),
+                TableScope(name="meoperation", dimensions=["name"]),
+                TableScope(name="mestep", dimensions=["name"]),
+                TableScope(name="assembly", dimensions=["name"]),
+            ]
+        ),
+    )
+
+    assert result.status == AnalysisStatus.COMPLETE
+    actual = {}
+    for edge in result.entity_edges:
+        relation = edge.relations[0]
+        evidence = relation.evidence[0]
+        actual[(relation.source, relation.target)] = (
+            relation.relation_type,
+            relation.direction,
+            evidence.source_field,
+            evidence.source_value,
+            evidence.target_field,
+            evidence.target_value,
+        )
+    assert actual == {
+        ("meprocess:process-1", "meoperation:operation-1"): (
+            "包含工序",
+            "source_to_target",
+            "right_id",
+            "process-1",
+            "left_id",
+            "operation-1",
+        ),
+        ("meoperation:operation-1", "mestep:step-1"): (
+            "包含工步",
+            "source_to_target",
+            "right_id",
+            "operation-1",
+            "left_id",
+            "step-1",
+        ),
+        ("meprocess:process-1", "assembly:assembly-1"): (
+            "关联物料",
+            "source_to_target",
+            "right_id",
+            "process-1",
+            "left_id",
+            "assembly-1",
+        ),
+        ("meoperation:operation-1", "assembly:assembly-1"): (
+            "关联物料",
+            "source_to_target",
+            "right_id",
+            "operation-1",
+            "left_id",
+            "assembly-1",
+        ),
+        ("mestep:step-1", "assembly:assembly-1"): (
+            "关联物料",
+            "source_to_target",
+            "right_id",
+            "step-1",
+            "left_id",
+            "assembly-1",
+        ),
     }
 
 
@@ -840,7 +920,11 @@ def _install_user_order_relation_table(engine) -> None:
         ))
 
 
-def _install_manufacturing_relation_tables(engine) -> None:
+def _install_manufacturing_relation_tables(
+    engine,
+    *,
+    reverse: bool = False,
+) -> None:
     with engine.begin() as connection:
         for table_name in ("meprocess", "meoperation", "mestep", "assembly"):
             connection.execute(text(
@@ -864,12 +948,31 @@ def _install_manufacturing_relation_tables(engine) -> None:
             "CREATE TABLE relation_id ("
             "left_id TEXT, right_id TEXT, left_class TEXT, right_class TEXT)"
         ))
-        connection.execute(text(
-            "INSERT INTO relation_id "
-            "(left_id, right_id, left_class, right_class) VALUES "
-            "('process-1', 'operation-1', 'MEProcess', 'MEOperation'), "
-            "('operation-1', 'step-1', 'MEOperation', 'MEStep'), "
-            "('process-1', 'assembly-1', 'MEProcess', 'Assembly'), "
-            "('operation-1', 'assembly-1', 'MEOperation', 'Assembly'), "
-            "('step-1', 'assembly-1', 'MEStep', 'Assembly')"
-        ))
+        relation_rows = [
+            ("process-1", "operation-1", "MEProcess", "MEOperation"),
+            ("operation-1", "step-1", "MEOperation", "MEStep"),
+            ("process-1", "assembly-1", "MEProcess", "Assembly"),
+            ("operation-1", "assembly-1", "MEOperation", "Assembly"),
+            ("step-1", "assembly-1", "MEStep", "Assembly"),
+        ]
+        if reverse:
+            relation_rows = [
+                (right_id, left_id, right_class, left_class)
+                for left_id, right_id, left_class, right_class in relation_rows
+            ]
+        connection.execute(
+            text(
+                "INSERT INTO relation_id "
+                "(left_id, right_id, left_class, right_class) VALUES "
+                "(:left_id, :right_id, :left_class, :right_class)"
+            ),
+            [
+                {
+                    "left_id": left_id,
+                    "right_id": right_id,
+                    "left_class": left_class,
+                    "right_class": right_class,
+                }
+                for left_id, right_id, left_class, right_class in relation_rows
+            ],
+        )
