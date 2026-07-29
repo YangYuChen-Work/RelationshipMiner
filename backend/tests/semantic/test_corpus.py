@@ -1,7 +1,9 @@
 import asyncio
 
+import pytest
+
 from engine.schema_analyzer import analyze_schema
-from engine.pipeline import run_analysis_pipeline
+from engine.pipeline import AnalysisTimeoutError, run_analysis_pipeline
 from engine.semantic.corpus import (
     build_entity_documents,
     group_documents_by_signature,
@@ -73,6 +75,55 @@ def test_normalization_preserves_original_evidence_value():
     assert docs[0].normalized_dimensions["model"] == "ab-c01"
 
 
+def test_composite_primary_key_delimiters_do_not_collide():
+    docs = build_entity_documents(
+        {
+            "links": [
+                {"left": "a|b", "right": "c"},
+                {"left": "a", "right": "b|c"},
+            ]
+        },
+        AnalysisScope(
+            tables=[TableScope(name="links", dimensions=[])]
+        ),
+        {"links": ["left", "right"]},
+        {"links": None},
+    )
+
+    assert [document.entity_id for document in docs] == [
+        "links:a%7Cb|c",
+        "links:a|b%7Cc",
+    ]
+
+
+def test_table_name_delimiters_do_not_collide_with_primary_key():
+    docs = build_entity_documents(
+        {
+            "catalog:archive": [{"id": "42"}],
+            "catalog": [{"id": "archive:42"}],
+        },
+        AnalysisScope(
+            tables=[
+                TableScope(name="catalog:archive", dimensions=[]),
+                TableScope(name="catalog", dimensions=[]),
+            ]
+        ),
+        {
+            "catalog:archive": ["id"],
+            "catalog": ["id"],
+        },
+        {
+            "catalog:archive": None,
+            "catalog": None,
+        },
+    )
+
+    assert [document.entity_id for document in docs] == [
+        "catalog%3Aarchive:42",
+        "catalog:archive%3A42",
+    ]
+
+
 def test_identical_normalized_signatures_share_one_inference_group():
     groups = group_documents_by_signature(
         [
@@ -130,3 +181,63 @@ def test_pipeline_does_not_send_system_fields_to_ai(
     columns = captured["table_schemas"][0]["columns"]
     assert [column["name"] for column in columns] == ["name"]
     assert set(captured["sample_values"]["users"][0]) == {"name"}
+
+
+def test_schema_failure_is_attributed_to_schema_progress_phase(
+    engine,
+    monkeypatch,
+):
+    progress_events: list[tuple[int, str]] = []
+
+    def fail_schema_analysis(engine, selected_names):
+        raise RuntimeError("schema unavailable")
+
+    monkeypatch.setattr(
+        "engine.pipeline.analyze_schema",
+        fail_schema_analysis,
+    )
+
+    with pytest.raises(RuntimeError, match="schema unavailable"):
+        asyncio.run(
+            run_analysis_pipeline(
+                engine,
+                [{"name": "users", "fields": ["name"]}],
+                on_progress=lambda phase, message, progress: (
+                    progress_events.append((phase, message))
+                ),
+            )
+        )
+
+    assert progress_events[-1][0] == 1
+    assert "Schema" in progress_events[-1][1]
+
+
+def test_schema_timeout_is_reported_before_schema_completion(
+    engine,
+    monkeypatch,
+):
+    progress_events: list[tuple[int, str]] = []
+    clock_values = iter([0.0, 181.0])
+
+    class FakeEventLoop:
+        def time(self):
+            return next(clock_values)
+
+    async def run_with_fake_clock():
+        monkeypatch.setattr(
+            "engine.pipeline.asyncio.get_event_loop",
+            lambda: FakeEventLoop(),
+        )
+        await run_analysis_pipeline(
+            engine,
+            [{"name": "users", "fields": ["name"]}],
+            timeout_seconds=180.0,
+            on_progress=lambda phase, message, progress: (
+                progress_events.append((phase, message))
+            ),
+        )
+
+    with pytest.raises(AnalysisTimeoutError):
+        asyncio.run(run_with_fake_clock())
+
+    assert progress_events == [(1, "正在分析 Schema...")]

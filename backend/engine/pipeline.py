@@ -89,9 +89,26 @@ async def run_analysis_pipeline(
         if elapsed > timeout_seconds:
             raise AnalysisTimeoutError(elapsed)
 
-    # ── 阶段 1: 数据读取 ─────────────────────────────────
-    await progress(1, "正在读取数据...", 0.05)
+    # ── 阶段 1: Schema 分析 ──────────────────────────────
+    await progress(1, "正在分析 Schema...", 0.05)
     schema_result = analyze_schema(engine, selected_names)
+    check_timeout()
+
+    class_name_fields: dict[str, str | None] = {}
+    for tname, tschema in schema_result.tables.items():
+        cn_cols = [c.name for c in tschema.columns if c.is_class_name]
+        class_name_fields[tname] = cn_cols[0] if cn_cols else None
+
+    await progress(
+        1,
+        f"Schema 分析完成，发现 {len(schema_result.all_foreign_keys)} 个外键约束",
+        0.15,
+    )
+
+    # ── 阶段 2: 数据读取 ─────────────────────────────────
+    check_timeout()
+    await progress(2, "正在读取数据...", 0.20)
+
     table_scopes = []
     for table in tables:
         schema = schema_result.tables[table["name"]]
@@ -120,21 +137,9 @@ async def run_analysis_pipeline(
     records = load_scoped_records(engine, scope, schema_result)
     check_timeout()
 
-    await progress(1, f"数据读取完成，共 {sum(len(r) for r in records.values())} 条记录", 0.15)
-
-    # ── 阶段 2: Schema 分析 ──────────────────────────────
-    check_timeout()
-    await progress(2, "正在分析 Schema...", 0.20)
-
-    # 构建 class_name 字段映射
-    class_name_fields: dict[str, str | None] = {}
-    for tname, tschema in schema_result.tables.items():
-        cn_cols = [c.name for c in tschema.columns if c.is_class_name]
-        class_name_fields[tname] = cn_cols[0] if cn_cols else None
-
     await progress(
         2,
-        f"Schema 分析完成，发现 {len(schema_result.all_foreign_keys)} 个外键约束",
+        f"数据读取完成，共 {sum(len(r) for r in records.values())} 条记录",
         0.30,
     )
 

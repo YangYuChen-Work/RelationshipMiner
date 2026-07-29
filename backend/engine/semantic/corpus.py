@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unicodedata
+from urllib.parse import quote
 
 from sqlalchemy import MetaData, Table, select
 from sqlalchemy.engine import Engine
@@ -154,8 +155,11 @@ def _entity_id(
     row: dict[str, object],
     primary_keys: list[str],
 ) -> str:
-    identity = "|".join(str(row[column]) for column in primary_keys)
-    return f"{table_name}:{identity}"
+    encoded_table = quote(table_name, safe="")
+    identity = "|".join(
+        quote(str(row[column]), safe="") for column in primary_keys
+    )
+    return f"{encoded_table}:{identity}"
 
 
 def _display_name(
