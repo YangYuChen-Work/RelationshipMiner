@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import math
 import time
 from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from config import settings
 
@@ -34,7 +39,7 @@ class _EvidencePayload(BaseModel):
 class _DecisionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    approved: bool
+    approved: StrictBool
     source: str
     target: str
     relation_type: str
@@ -177,60 +182,22 @@ def _build_messages(
             )
             for candidate in group.candidates
         ],
-        "response_example": {
-            "decisions": [
-                {
-                    "approved": True,
-                    "source": group.source.entity_id,
-                    "target": (
-                        group.candidates[0].entity_id
-                        if group.candidates
-                        else "candidate_entity_id"
-                    ),
-                    "relation_type": group.plan.relation_type,
-                    "direction": group.plan.direction,
-                    "strength": "weak",
-                    "confidence": 0.9,
-                    "explanation": (
-                        "Why the selected values support the relation."
-                    ),
-                    "evidence": [
-                        {
-                            "source_field": (
-                                group.plan.source_dimensions[0]
-                                if group.plan.source_dimensions
-                                else "selected_source_field"
-                            ),
-                            "source_value": (
-                                group.source.dimensions.get(
-                                    group.plan.source_dimensions[0]
-                                )
-                                if group.plan.source_dimensions
-                                else None
-                            ),
-                            "target_field": (
-                                group.plan.target_dimensions[0]
-                                if group.plan.target_dimensions
-                                else "selected_target_field"
-                            ),
-                            "target_value": (
-                                group.candidates[0].dimensions.get(
-                                    group.plan.target_dimensions[0]
-                                )
-                                if (
-                                    group.candidates
-                                    and group.plan.target_dimensions
-                                )
-                                else None
-                            ),
-                            "method": "llm_semantic_reasoning",
-                            "reason": (
-                                "Why these selected field values match."
-                            ),
-                        }
-                    ],
-                }
-            ]
+        "response_schema": {
+            "root": "object containing a decisions array",
+            "decision_fields": {
+                "approved": "strict boolean true",
+                "source": "exact supplied source entity_id",
+                "target": "one exact supplied candidate entity_id",
+                "relation_type": "exact planned relation_type",
+                "direction": "exact planned direction",
+                "strength": "weak",
+                "confidence": "number from 0 through 1",
+                "explanation": "non-empty relation explanation",
+                "evidence": (
+                    "non-empty array of selected source/target field "
+                    "values, method llm_semantic_reasoning, and reason"
+                ),
+            },
         },
     }
     return [
@@ -254,7 +221,6 @@ def _build_messages(
             "content": json.dumps(
                 request,
                 ensure_ascii=False,
-                default=str,
             ),
         },
     ]
@@ -268,11 +234,79 @@ def _entity_payload(
         "entity_id": entity.entity_id,
         "table_name": entity.table_name,
         "dimensions": {
-            name: entity.dimensions[name]
+            name: _canonical_json_value(entity.dimensions[name])
             for name in dimensions
             if name in entity.dimensions
         },
     }
+
+
+def _canonical_json_value(value: object) -> object:
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        return {"$type": "float", "value": repr(value)}
+    if isinstance(value, Decimal):
+        return {"$type": "decimal", "value": str(value)}
+    if isinstance(value, datetime):
+        return {"$type": "datetime", "value": value.isoformat()}
+    if isinstance(value, date):
+        return {"$type": "date", "value": value.isoformat()}
+    if isinstance(value, UUID):
+        return {"$type": "uuid", "value": str(value)}
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {
+            "$type": "bytes",
+            "encoding": "base64",
+            "value": base64.b64encode(bytes(value)).decode("ascii"),
+        }
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("JSON object keys must be strings")
+        return {
+            "$type": "json_object",
+            "value": {
+                key: _canonical_json_value(item)
+                for key, item in value.items()
+            },
+        }
+    if isinstance(value, list):
+        return {
+            "$type": "json_array",
+            "value": [_canonical_json_value(item) for item in value],
+        }
+    if isinstance(value, tuple):
+        return {
+            "$type": "tuple",
+            "value": [_canonical_json_value(item) for item in value],
+        }
+    raise TypeError(
+        f"unsupported evidence value type: {type(value).__name__}"
+    )
+
+
+def _same_canonical_value(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return (
+            left.keys() == right.keys()
+            and all(
+                _same_canonical_value(left[key], right[key])
+                for key in left
+            )
+        )
+    if isinstance(left, list):
+        return (
+            len(left) == len(right)
+            and all(
+                _same_canonical_value(left_item, right_item)
+                for left_item, right_item in zip(left, right)
+            )
+        )
+    return left == right
 
 
 def _is_valid_group(group: CandidateGroup) -> bool:
@@ -302,6 +336,10 @@ def _validated_decisions(
         for candidate in group.candidates
     }
     decisions: list[RelationDecision] = []
+    seen: dict[
+        tuple[str, str, str, str],
+        _DecisionPayload,
+    ] = {}
 
     for payload in envelope.decisions:
         if (
@@ -319,12 +357,33 @@ def _validated_decisions(
                 not in group.plan.source_dimensions
                 or evidence.target_field
                 not in group.plan.target_dimensions
-                or evidence.source_value
-                != group.source.dimensions[evidence.source_field]
-                or evidence.target_value
-                != target.dimensions[evidence.target_field]
+                or not _same_canonical_value(
+                    evidence.source_value,
+                    _canonical_json_value(
+                        group.source.dimensions[evidence.source_field]
+                    ),
+                )
+                or not _same_canonical_value(
+                    evidence.target_value,
+                    _canonical_json_value(
+                        target.dimensions[evidence.target_field]
+                    ),
+                )
             ):
                 raise ValueError("judgement evidence is outside its plan")
+
+        key = (
+            payload.source,
+            payload.target,
+            payload.relation_type,
+            payload.direction,
+        )
+        previous = seen.get(key)
+        if previous is not None:
+            if previous != payload:
+                raise ValueError("conflicting duplicate judgement")
+            continue
+        seen[key] = payload
 
         if not payload.approved:
             continue

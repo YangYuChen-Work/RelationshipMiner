@@ -4,6 +4,9 @@ import asyncio
 import json
 import time
 from collections.abc import Callable
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
@@ -61,11 +64,73 @@ def _candidate_group(
     )
 
 
+def _candidate_group_with_database_values() -> CandidateGroup:
+    source_values = {
+        "amount": Decimal("12.30"),
+        "produced_on": date(2026, 7, 29),
+        "observed_at": datetime(
+            2026,
+            7,
+            29,
+            10,
+            11,
+            12,
+            tzinfo=timezone(timedelta(hours=8)),
+        ),
+        "trace_id": UUID("12345678-1234-5678-1234-567812345678"),
+        "payload": b"\x00\xff",
+    }
+    target_values = {
+        "price": Decimal("12.30"),
+        "available_on": date(2026, 7, 30),
+        "observed_at": datetime(2026, 7, 30, 2, 3, 4),
+        "trace_id": UUID("87654321-4321-8765-4321-876543218765"),
+        "payload": b"part",
+    }
+    return CandidateGroup(
+        plan=RelationshipPlan(
+            source_table="process",
+            target_table="part",
+            relation_type="process_uses_part",
+            direction="source_to_target",
+            source_dimensions=list(source_values),
+            target_dimensions=list(target_values),
+            retrieval_modes=["semantic"],
+            candidate_limit_per_source=1,
+            reason="Selected typed values support the relation.",
+        ),
+        source=EntityDocument(
+            entity_id="process:typed",
+            table_name="process",
+            display_name="Typed process",
+            dimensions=source_values,
+            normalized_dimensions={
+                name: str(value)
+                for name, value in source_values.items()
+            },
+            search_text="typed source",
+        ),
+        candidates=[
+            EntityDocument(
+                entity_id="part:typed",
+                table_name="part",
+                display_name="Typed part",
+                dimensions=target_values,
+                normalized_dimensions={
+                    name: str(value)
+                    for name, value in target_values.items()
+                },
+                search_text="typed target",
+            )
+        ],
+    )
+
+
 def _verdict(
     *,
     source: str = "process:1",
     target: str = "part:1",
-    approved: bool = True,
+    approved: object = True,
     relation_type: str = "process_uses_part",
     direction: str = "source_to_target",
     source_field: str = "name",
@@ -176,6 +241,186 @@ async def test_one_source_and_multiple_candidates_are_sent_together():
     assert result.completed_groups == 1
     assert result.failed_groups == 0
     assert result.pending_groups == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approved", ["yes", 1], ids=["string", "integer"])
+async def test_only_strict_boolean_can_explicitly_approve(
+    approved: object,
+):
+    llm = _RecordingLlm(
+        lambda _messages: {
+            "decisions": [_verdict(approved=approved)]
+        }
+    )
+
+    result = await SemanticJudge(llm).judge_groups(
+        [_candidate_group()],
+        deadline=time.monotonic() + 30,
+    )
+
+    assert result.decisions == []
+    assert result.completed_groups == 0
+    assert result.failed_groups == 1
+
+
+@pytest.mark.asyncio
+async def test_identical_approved_verdicts_are_deduplicated():
+    verdict = _verdict()
+    llm = _RecordingLlm(
+        lambda _messages: {
+            "decisions": [verdict, _verdict()]
+        }
+    )
+
+    result = await SemanticJudge(llm).judge_groups(
+        [_candidate_group()],
+        deadline=time.monotonic() + 30,
+    )
+
+    assert [decision.target for decision in result.decisions] == [
+        "part:1"
+    ]
+    assert result.completed_groups == 1
+    assert result.failed_groups == 0
+
+
+@pytest.mark.asyncio
+async def test_conflicting_duplicate_verdicts_fail_the_group():
+    conflicting = _verdict()
+    conflicting["confidence"] = 0.42
+    llm = _RecordingLlm(
+        lambda _messages: {
+            "decisions": [_verdict(), conflicting]
+        }
+    )
+
+    result = await SemanticJudge(llm).judge_groups(
+        [_candidate_group()],
+        deadline=time.monotonic() + 30,
+    )
+
+    assert result.decisions == []
+    assert result.completed_groups == 0
+    assert result.failed_groups == 1
+
+
+@pytest.mark.asyncio
+async def test_canonical_database_values_round_trip_as_evidence():
+    canonical_decimal = {"$type": "decimal", "value": "12.30"}
+    canonical_date = {"$type": "date", "value": "2026-07-30"}
+    llm = _RecordingLlm(
+        lambda _messages: {
+            "decisions": [
+                _verdict(
+                    source="process:typed",
+                    target="part:typed",
+                    source_field="amount",
+                    target_field="available_on",
+                    source_value=canonical_decimal,
+                    target_value=canonical_date,
+                )
+            ]
+        }
+    )
+
+    result = await SemanticJudge(llm).judge_groups(
+        [_candidate_group_with_database_values()],
+        deadline=time.monotonic() + 30,
+    )
+
+    prompt = json.loads(str(llm.calls[0][-1]["content"]))
+    assert prompt["source"]["dimensions"] == {
+        "amount": canonical_decimal,
+        "produced_on": {"$type": "date", "value": "2026-07-29"},
+        "observed_at": {
+            "$type": "datetime",
+            "value": "2026-07-29T10:11:12+08:00",
+        },
+        "trace_id": {
+            "$type": "uuid",
+            "value": "12345678-1234-5678-1234-567812345678",
+        },
+        "payload": {
+            "$type": "bytes",
+            "encoding": "base64",
+            "value": "AP8=",
+        },
+    }
+    assert prompt["candidates"][0]["dimensions"]["price"] == (
+        canonical_decimal
+    )
+    assert prompt["candidates"][0]["dimensions"]["available_on"] == (
+        canonical_date
+    )
+    assert result.completed_groups == 1
+    assert result.failed_groups == 0
+    assert len(result.decisions) == 1
+    assert result.decisions[0].evidence[0].source_value == (
+        canonical_decimal
+    )
+    assert result.decisions[0].evidence[0].target_value == canonical_date
+
+
+@pytest.mark.asyncio
+async def test_prompt_schema_does_not_preapprove_a_real_candidate():
+    llm = _RecordingLlm(
+        lambda _messages: {"decisions": []},
+    )
+
+    result = await SemanticJudge(llm).judge_groups(
+        [_candidate_group()],
+        deadline=time.monotonic() + 30,
+    )
+
+    prompt_text = str(llm.calls[0][-1]["content"])
+    prompt = json.loads(prompt_text)
+    assert "response_example" not in prompt
+    assert prompt["response_schema"]["decision_fields"]["approved"] == (
+        "strict boolean true"
+    )
+    assert prompt_text.count('"part:1"') == 1
+    assert result.completed_groups == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_value",
+    [
+        "12.30",
+        {"$type": "decimal", "value": "99.99"},
+    ],
+    ids=["wrong-type", "forged-value"],
+)
+async def test_noncanonical_or_forged_evidence_value_fails_group(
+    source_value: object,
+):
+    llm = _RecordingLlm(
+        lambda _messages: {
+            "decisions": [
+                _verdict(
+                    source="process:typed",
+                    target="part:typed",
+                    source_field="amount",
+                    target_field="available_on",
+                    source_value=source_value,
+                    target_value={
+                        "$type": "date",
+                        "value": "2026-07-30",
+                    },
+                )
+            ]
+        }
+    )
+
+    result = await SemanticJudge(llm).judge_groups(
+        [_candidate_group_with_database_values()],
+        deadline=time.monotonic() + 30,
+    )
+
+    assert result.decisions == []
+    assert result.completed_groups == 0
+    assert result.failed_groups == 1
 
 
 @pytest.mark.asyncio
