@@ -5,26 +5,6 @@ export interface TableSelection {
   fields: string[];
 }
 
-export interface NodeData {
-  id: string;
-  source_table: string;
-  class_name: string | null;
-  field_values: Record<string, unknown>;
-  degree: number;
-}
-
-export interface EdgeData {
-  source: string;
-  target: string;
-  labels: string[];
-  confidence: number;
-}
-
-export interface GraphData {
-  nodes: NodeData[];
-  edges: EdgeData[];
-}
-
 export type AnalysisStatus = "complete" | "partial" | "failed";
 
 export interface TableNodeData {
@@ -95,6 +75,8 @@ export interface AnalysisDiagnostics {
   candidates_retrieved: number;
   candidates_completed: number;
   candidates_pending: number;
+  /** Present when a producer can distinguish failed judgements from pending work. */
+  candidates_failed?: number;
   strong_edges_created: number;
   weak_edges_created: number;
 }

@@ -1,4 +1,4 @@
-import type { EdgeData } from "../api/analysis";
+import type { EntityEdgeData } from "../api/analysis";
 
 type Point = {
   x: number;
@@ -7,7 +7,7 @@ type Point = {
 
 export function getDirectNeighborIds(
   nodeId: string,
-  edges: EdgeData[],
+  edges: EntityEdgeData[],
 ): Set<string> {
   const neighborIds = new Set<string>([nodeId]);
 
@@ -20,10 +20,14 @@ export function getDirectNeighborIds(
 }
 
 export function getVisibleEdgeCount(
-  edges: EdgeData[],
+  edges: EntityEdgeData[],
   threshold: number,
 ): number {
-  return edges.filter((edge) => edge.confidence >= threshold).length;
+  return edges.filter((edge) =>
+    edge.relations.some(
+      (relation) => relation.strength === "strong" || relation.confidence >= threshold,
+    ),
+  ).length;
 }
 
 export function getRectBoundaryPoint(

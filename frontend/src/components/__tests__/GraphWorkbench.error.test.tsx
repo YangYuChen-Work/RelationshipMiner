@@ -15,16 +15,10 @@ describe("GraphWorkbench canvas containment", () => {
       phase: "done",
       taskId: "task-1",
       graph: {
-        nodes: [
-          {
-            id: "users:1",
-            source_table: "users",
-            class_name: "User",
-            field_values: { id: 1 },
-            degree: 0,
-          },
-        ],
-        edges: [],
+        table_nodes: [{ id: "users", display_name: "Users", entity_count: 1 }],
+        entity_nodes: [{ id: "users:1", table_id: "users", display_name: "User 1", class_name: "User", dimensions: { id: 1 } }],
+        table_edges: [],
+        entity_edges: [],
       },
       confidenceThreshold: 0,
       selectedNodeId: null,
@@ -39,7 +33,7 @@ describe("GraphWorkbench canvas containment", () => {
     expect(
       screen.getByText("图谱画布暂时无法显示"),
     ).toBeVisible();
-    expect(screen.getByText("1 个节点")).toBeInTheDocument();
+    expect(screen.getByText("1 个实体")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "导出 JSON" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "新分析" })).toBeInTheDocument();
   });

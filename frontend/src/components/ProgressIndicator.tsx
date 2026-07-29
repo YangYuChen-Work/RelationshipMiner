@@ -6,12 +6,14 @@
 
 import { useAnalysisStore } from "../store/analysis";
 
-const PHASE_LABELS: Record<number, string> = {
-  1: "数据读取",
-  2: "Schema 分析",
-  3: "AI 决策",
-  4: "关系计算",
-  5: "图谱生成",
+const PHASE_LABELS: Record<string, string> = {
+  schema: "读取表结构",
+  entities: "读取实体",
+  planning: "规划关系",
+  candidates: "检索候选关系",
+  semantic_judging: "语义判断",
+  graph: "组装关系图谱",
+  complete: "分析完成",
 };
 
 export default function ProgressIndicator() {
@@ -22,7 +24,7 @@ export default function ProgressIndicator() {
 
   if (phase !== "analyzing") return null;
 
-  const phaseLabel = PHASE_LABELS[currentPhase] || "";
+  const phaseLabel = PHASE_LABELS[currentPhase] || currentPhase || "正在准备分析";
   const percent = Math.round(progressValue * 100);
 
   return (
@@ -33,7 +35,7 @@ export default function ProgressIndicator() {
           <div className="animate-spin h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full" />
           <div>
             <span className="text-sm font-semibold text-blue-700">
-              阶段 {currentPhase}/5：{phaseLabel}
+              {phaseLabel}
             </span>
           </div>
         </div>
@@ -53,17 +55,9 @@ export default function ProgressIndicator() {
       {/* 阶段描述 */}
       <p className="text-sm text-gray-500">{progressMessage}</p>
 
-      {/* 阶段步骤指示器 */}
-      <div className="flex items-center gap-1.5 justify-center">
-        {[1, 2, 3, 4, 5].map((p) => (
-          <div
-            key={p}
-            className={`h-2 w-8 rounded-full transition-colors duration-300 ${
-              p <= currentPhase ? "bg-blue-500" : "bg-gray-200"
-            }`}
-          />
-        ))}
-      </div>
+      <p className="text-xs text-gray-400" aria-live="polite">
+        状态：分析中
+      </p>
     </div>
   );
 }

@@ -13,8 +13,15 @@ export default function GraphToolbar() {
 
   if (!graph) return null;
 
-  const visibleEdgeCount = graph.edges.filter(
-    (edge) => edge.confidence >= confidenceThreshold,
+  const visibleEntityEdgeCount = graph.entity_edges.filter((edge) =>
+    edge.relations.some(
+      (relation) =>
+        relation.strength === "strong" || relation.confidence >= confidenceThreshold,
+    ),
+  ).length;
+  const visibleTableEdgeCount = graph.table_edges.filter(
+    (edge) =>
+      edge.strong_count > 0 || edge.average_confidence >= confidenceThreshold,
   ).length;
 
   return (
@@ -27,15 +34,20 @@ export default function GraphToolbar() {
       </div>
 
       <div className="hidden items-center gap-3 border-l border-slate-700 pl-4 text-xs text-slate-300 md:flex">
-        <span>{graph.nodes.length} 个节点</span>
+        <span>{graph.table_nodes.length} 张表</span>
         <span className="text-slate-600">/</span>
-        <span>{graph.edges.length} 条关系</span>
+        <span>{graph.entity_nodes.length} 个实体</span>
+        <span className="text-slate-600">/</span>
+        <span>{graph.table_edges.length} 条表关系</span>
+        <span className="text-slate-600">/</span>
+        <span>{graph.entity_edges.length} 条实体关系</span>
         <span className="rounded-full border border-teal-400/25 bg-teal-400/10 px-2 py-0.5 text-teal-200">
-          {visibleEdgeCount} 条可见关系
+          {visibleTableEdgeCount + visibleEntityEdgeCount} 条可见关系
         </span>
-        {graph.edges.length > 0 && (
+        {(graph.table_edges.length > 0 || graph.entity_edges.length > 0) && (
           <span className="sr-only">
-            共 {graph.nodes.length} 个节点，{graph.edges.length} 条关系
+            共 {graph.table_nodes.length} 张表，{graph.entity_nodes.length} 个实体，
+            {graph.table_edges.length} 条表关系，{graph.entity_edges.length} 条实体关系
           </span>
         )}
       </div>

@@ -4,33 +4,20 @@ import GraphToolbar from "../GraphToolbar";
 import { useAnalysisStore } from "../../store/analysis";
 
 const graph = {
-  nodes: [
-    {
-      id: "users|1",
-      source_table: "users",
-      class_name: "com.example.User",
-      field_values: { id: 1 },
-      degree: 2,
-    },
-    {
-      id: "orders|1",
-      source_table: "orders",
-      class_name: "com.example.Order",
-      field_values: { id: 1 },
-      degree: 2,
-    },
-    {
-      id: "payments|1",
-      source_table: "payments",
-      class_name: "com.example.Payment",
-      field_values: { id: 1 },
-      degree: 2,
-    },
+  table_nodes: [
+    { id: "users", display_name: "Users", entity_count: 1 },
+    { id: "orders", display_name: "Orders", entity_count: 1 },
   ],
-  edges: [
-    { source: "users|1", target: "orders|1", labels: ["owns"], confidence: 0.9 },
-    { source: "orders|1", target: "payments|1", labels: ["pays"], confidence: 0.78 },
-    { source: "users|1", target: "payments|1", labels: ["uses"], confidence: 0.42 },
+  entity_nodes: [
+    { id: "users|1", table_id: "users", display_name: "User", class_name: "User", dimensions: {} },
+    { id: "orders|1", table_id: "orders", display_name: "Order", class_name: "Order", dimensions: {} },
+    { id: "payments|1", table_id: "orders", display_name: "Payment", class_name: "Payment", dimensions: {} },
+  ],
+  table_edges: [{ id: "users--orders", source_table: "users", target_table: "orders", relation_types: ["owns"], strong_count: 1, weak_count: 0, entity_edge_count: 2, average_confidence: 0.9, supporting_entity_edges: ["users|1--orders|1"] }],
+  entity_edges: [
+    { id: "users|1--orders|1", source: "users|1", target: "orders|1", relations: [{ source: "users|1", target: "orders|1", relation_type: "owns", direction: "source_to_target" as const, strength: "strong" as const, confidence: 0.9, explanation: "", evidence: [], model_id: null, task_id: null }] },
+    { id: "orders|1--payments|1", source: "orders|1", target: "payments|1", relations: [{ source: "orders|1", target: "payments|1", relation_type: "pays", direction: "source_to_target" as const, strength: "weak" as const, confidence: 0.78, explanation: "", evidence: [], model_id: null, task_id: null }] },
+    { id: "users|1--payments|1", source: "users|1", target: "payments|1", relations: [{ source: "users|1", target: "payments|1", relation_type: "uses", direction: "source_to_target" as const, strength: "weak" as const, confidence: 0.42, explanation: "", evidence: [], model_id: null, task_id: null }] },
   ],
 };
 
@@ -50,9 +37,11 @@ describe("GraphToolbar", () => {
     // This fails if filtering relationship visibility changes the node count or ignores confidence.
     render(<GraphToolbar />);
 
-    expect(screen.getByText("3 个节点")).toBeInTheDocument();
-    expect(screen.getByText("3 条关系")).toBeInTheDocument();
-    expect(screen.getByText("2 条可见关系")).toBeInTheDocument();
+    expect(screen.getByText("2 张表")).toBeInTheDocument();
+    expect(screen.getByText("3 个实体")).toBeInTheDocument();
+    expect(screen.getByText("1 条表关系")).toBeInTheDocument();
+    expect(screen.getByText("3 条实体关系")).toBeInTheDocument();
+    expect(screen.getByText("3 条可见关系")).toBeInTheDocument();
   });
 
   it("exposes graph actions and sends fit and relayout commands", () => {
