@@ -31,38 +31,31 @@ function graphFixture(): SemanticGraphData {
   };
 }
 
-function expectEntitiesContained(
-  layout: ReturnType<typeof computeGroupedLayout>,
-) {
-  for (const entity of layout.entityNodes) {
-    const region = layout.tableRegions.find(
-      (candidate) => candidate.id === entity.tableId,
-    );
-    expect(region).toBeDefined();
-    expect(entity.x).toBeGreaterThanOrEqual(region!.x);
-    expect(entity.x).toBeLessThanOrEqual(region!.x + region!.width);
-    expect(entity.y).toBeGreaterThanOrEqual(region!.y);
-    expect(entity.y).toBeLessThanOrEqual(region!.y + region!.height);
-  }
-}
-
 describe("computeGroupedLayout", () => {
-  it("keeps sorted entities inside their source table regions and separates edge levels", () => {
+  it("places separated table anchors with their entities orbiting instead of emitting table rectangles", () => {
     const layout = computeGroupedLayout(graphFixture(), { width: 1200, height: 800 });
 
-    expect(layout.tableRegions).toHaveLength(2);
-    expectEntitiesContained(layout);
+    expect(layout.tableRegions).toEqual([]);
+    expect(layout.tableNodes).toHaveLength(2);
+    expect(Math.hypot(
+      layout.tableNodes[0].x - layout.tableNodes[1].x,
+      layout.tableNodes[0].y - layout.tableNodes[1].y,
+    )).toBeGreaterThanOrEqual(240);
+    for (const entity of layout.entityNodes) {
+      const anchor = layout.tableNodes.find((table) => table.id === entity.tableId)!;
+      expect(Math.hypot(entity.x - anchor.x, entity.y - anchor.y)).toBeGreaterThan(0);
+    }
     expect(layout.tableEdges).toHaveLength(1);
     expect(layout.entityEdges).toHaveLength(1);
-    const orders = layout.tableRegions.find((region) => region.id === "orders")!;
-    const users = layout.tableRegions.find((region) => region.id === "users")!;
+    const orders = layout.tableNodes.find((node) => node.id === "orders")!;
+    const users = layout.tableNodes.find((node) => node.id === "users")!;
     const order = layout.entityNodes.find((entity) => entity.id === "order-1")!;
     const user = layout.entityNodes.find((entity) => entity.id === "user-1")!;
     expect(layout.tableEdges[0]).toMatchObject({
       source: "orders",
       target: "users",
-      from: orders.header,
-      to: users.header,
+      from: { x: orders.x, y: orders.y },
+      to: { x: users.x, y: users.y },
     });
     expect(layout.entityEdges[0]).toMatchObject({
       source: "order-1",
@@ -70,6 +63,32 @@ describe("computeGroupedLayout", () => {
       from: { x: order.x, y: order.y },
       to: { x: user.x, y: user.y },
     });
+  });
+
+  it("orders known process classes before stable fallback table IDs", () => {
+    const tables = ["zeta", "Assembly", "MEStep", "MEOperation", "MEProcess", "alpha"];
+    const graph: SemanticGraphData = {
+      table_nodes: tables.map((id) => ({
+        id,
+        display_name: id,
+        entity_count: 0,
+      })),
+      entity_nodes: [],
+      table_edges: [],
+      entity_edges: [],
+    };
+
+    expect(
+      computeGroupedLayout(graph, { width: 1800, height: 600 })
+        .tableNodes.map((node) => node.id),
+    ).toEqual([
+      "MEProcess",
+      "MEOperation",
+      "MEStep",
+      "Assembly",
+      "alpha",
+      "zeta",
+    ]);
   });
 
   it("is stable under input reordering", () => {
@@ -86,7 +105,7 @@ describe("computeGroupedLayout", () => {
     );
   });
 
-  it("contains all 7,000 entities in no more than ten selected table regions", () => {
+  it("places all 7,000 entities on finite expanding rings around ten anchors", () => {
     const largeGraph: SemanticGraphData = {
       table_nodes: Array.from({ length: 10 }, (_, index) => ({ id: `table-${index}`, display_name: `Table ${index}`, entity_count: 700 })),
       entity_nodes: Array.from({ length: 7_000 }, (_, index) => ({ id: `entity-${index}`, table_id: `table-${index % 10}`, display_name: `Entity ${index}`, class_name: null, dimensions: {} })),
@@ -94,12 +113,18 @@ describe("computeGroupedLayout", () => {
       entity_edges: [],
     };
     const layout = computeGroupedLayout(largeGraph, { width: 1600, height: 900 });
-    expect(layout.tableRegions).toHaveLength(10);
+    expect(layout.tableRegions).toEqual([]);
+    expect(layout.tableNodes).toHaveLength(10);
     expect(layout.entityNodes).toHaveLength(7_000);
-    expectEntitiesContained(layout);
+    expect(layout.entityNodes.every((node) => Number.isFinite(node.x) && Number.isFinite(node.y))).toBe(true);
+    const firstAnchor = layout.tableNodes.find((node) => node.id === "table-0")!;
+    const radii = layout.entityNodes
+      .filter((node) => node.tableId === firstAnchor.id)
+      .map((node) => Math.hypot(node.x - firstAnchor.x, node.y - firstAnchor.y));
+    expect(Math.max(...radii)).toBeGreaterThan(Math.min(...radii));
   });
 
-  it("sizes a table region for a non-square 701-entity group", () => {
+  it("uses additional rings for a non-square 701-entity cluster", () => {
     const graph: SemanticGraphData = {
       table_nodes: [{ id: "only", display_name: "Only", entity_count: 701 }],
       entity_nodes: Array.from({ length: 701 }, (_, index) => ({
@@ -114,7 +139,12 @@ describe("computeGroupedLayout", () => {
     };
     const layout = computeGroupedLayout(graph, { width: 1, height: 1 });
     expect(layout.entityNodes).toHaveLength(701);
-    expectEntitiesContained(layout);
+    expect(new Set(layout.entityNodes.map((entity) =>
+      Math.round(Math.hypot(
+        entity.x - layout.tableNodes[0].x,
+        entity.y - layout.tableNodes[0].y,
+      )),
+    )).size).toBeGreaterThan(1);
   });
 
   it("returns finite output for empty, unknown-owned, tiny, and zero viewports", () => {

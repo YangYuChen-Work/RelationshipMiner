@@ -5,6 +5,7 @@ import {
   type LayoutClient,
   StaleLayoutRequestError,
 } from "../graph/layoutClient";
+import { projectGraph } from "../graph/projection";
 import { buildScene, type GraphTransform, type RenderScene } from "../graph/scene";
 import { hitTest, type HitTarget } from "../graph/hitTest";
 import { useAnalysisStore } from "../store/analysis";
@@ -12,9 +13,6 @@ import { useAnalysisStore } from "../store/analysis";
 const FALLBACK_WIDTH = 960;
 const FALLBACK_HEIGHT = 600;
 const GRID_SIZE = 24;
-const TABLE_FILL = "#142638";
-const TABLE_STROKE = "#365168";
-const ENTITY = "#7dd3fc";
 const ENTITY_SELECTED = "#2dd4bf";
 const EDGE = "#52677a";
 const TABLE_EDGE = "#8fa0b0";
@@ -42,19 +40,20 @@ function fitTransform(
   layout: Awaited<ReturnType<LayoutClient["layoutGraph"]>>,
   viewport: { width: number; height: number },
 ): d3.ZoomTransform {
-  const regions = layout.tableRegions;
-  if (!regions.length) return d3.zoomIdentity;
-  const minX = Math.min(...regions.map((region) => region.x));
-  const minY = Math.min(...regions.map((region) => region.y));
-  const maxX = Math.max(...regions.map((region) => region.x + region.width));
-  const maxY = Math.max(...regions.map((region) => region.y + region.height));
+  const points = [...layout.tableNodes, ...layout.entityNodes];
+  if (!points.length) return d3.zoomIdentity;
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const maxY = Math.max(...points.map((point) => point.y));
+  const worldPadding = 72;
   const k = Math.max(
     0.25,
     Math.min(
       2,
       Math.min(
-        (viewport.width - 96) / Math.max(1, maxX - minX),
-        (viewport.height - 96) / Math.max(1, maxY - minY),
+        (viewport.width - 96) / Math.max(1, maxX - minX + worldPadding * 2),
+        (viewport.height - 96) / Math.max(1, maxY - minY + worldPadding * 2),
       ),
     ),
   );
@@ -76,8 +75,18 @@ function getSize(element: HTMLElement) {
   };
 }
 
-function graphSummary(entityCount: number, tableCount: number, edgeCount: number) {
-  return `语义关系图：${tableCount} 个表，${entityCount} 个实体，${edgeCount} 条关系。使用详情面板和搜索访问图中实体。`;
+function graphSummary(
+  entityCount: number,
+  tableCount: number,
+  edgeCount: number,
+  fullEntityCount = entityCount,
+  fullEdgeCount = edgeCount,
+) {
+  const fullGraphContext =
+    fullEntityCount !== entityCount || fullEdgeCount !== edgeCount
+      ? `完整图谱：${fullEntityCount} 个实体，${fullEdgeCount} 条关系。`
+      : "";
+  return `语义关系图：${tableCount} 个表，${entityCount} 个实体，${edgeCount} 条关系。${fullGraphContext}使用详情面板和搜索访问图中实体。`;
 }
 
 function pointFromEvent(canvas: HTMLCanvasElement, event: PointerEvent | MouseEvent) {
@@ -96,7 +105,9 @@ function drawLine(
   context.lineTo(edge.to.screen.x, edge.to.screen.y);
   context.strokeStyle = stroke;
   context.lineWidth = width;
+  context.setLineDash?.(edge.lineStyle === "dashed" ? [6, 5] : []);
   context.stroke();
+  context.setLineDash?.([]);
 }
 
 function drawScene(
@@ -126,21 +137,16 @@ function drawScene(
     context.stroke();
   }
 
-  // Regions, aggregate table relations, then entity relations establish the z-order.
-  for (const region of scene.tableRegions) {
-    context.fillStyle = TABLE_FILL;
-    context.strokeStyle = TABLE_STROKE;
-    context.lineWidth = 1;
-    context.fillRect(region.screen.x, region.screen.y, region.screen.width, region.screen.height);
-    context.strokeRect(region.screen.x, region.screen.y, region.screen.width, region.screen.height);
-  }
+  // Aggregate table relations, then entity relations establish the z-order.
   scene.tableEdges.forEach((edge) => drawLine(context, edge, TABLE_EDGE, 1.5));
   scene.entityEdges.forEach((edge) => drawLine(context, edge, EDGE, 1));
 
   for (const entity of scene.entityDots) {
     context.beginPath();
     context.arc(entity.screen.x, entity.screen.y, entity.screenRadius, 0, Math.PI * 2);
-    context.fillStyle = entity.id === selectedNodeId ? ENTITY_SELECTED : ENTITY;
+    context.fillStyle = entity.id === selectedNodeId
+      ? ENTITY_SELECTED
+      : entity.color ?? "#7dd3fc";
     context.fill();
     if (entity.id === hoveredNodeId || entity.id === selectedNodeId) {
       context.strokeStyle = "#f8fafc";
@@ -149,17 +155,30 @@ function drawScene(
     }
   }
 
-  // Table nodes are compact cards drawn above their regions and edges.
+  // Table anchors are circular category hubs rather than enclosing rectangles.
   for (const table of scene.tableNodes) {
-    context.fillStyle = "#1c3043";
-    context.strokeStyle = "#5d7890";
-    context.lineWidth = 1;
-    context.fillRect(table.screen.x - 10, table.screen.y - 12, Math.max(100, table.label.length * 7 + 26), 24);
-    context.strokeRect(table.screen.x - 10, table.screen.y - 12, Math.max(100, table.label.length * 7 + 26), 24);
-    context.fillStyle = "#e2e8f0";
+    context.beginPath();
+    context.arc(table.screen.x, table.screen.y, table.screenRadius, 0, Math.PI * 2);
+    context.fillStyle = "#112438";
+    context.fill();
+    context.strokeStyle = table.color ?? "#38bdf8";
+    context.lineWidth = 3;
+    context.stroke();
+    context.fillStyle = table.color ?? "#38bdf8";
     context.font = "600 12px system-ui, sans-serif";
     context.textBaseline = "middle";
-    context.fillText(table.label, table.screen.x, table.screen.y);
+    context.fillText(
+      table.label,
+      table.screen.x + table.screenRadius + 8,
+      table.screen.y,
+    );
+  }
+
+  context.font = "600 10px system-ui, sans-serif";
+  context.textBaseline = "middle";
+  for (const label of scene.edgeLabels) {
+    context.fillStyle = label.lineStyle === "solid" ? "#dbeafe" : "#94a3b8";
+    context.fillText(label.text, label.screen.x + 5, label.screen.y - 5);
   }
 
   context.fillStyle = "#dbeafe";
@@ -225,6 +244,13 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
 
   const graph = useAnalysisStore((state) => state.graph);
+  const showIsolatedNodes = useAnalysisStore((state) => state.showIsolatedNodes);
+  const projectedGraph = useMemo(
+    () => graph ? projectGraph(graph, showIsolatedNodes) : null,
+    [graph, showIsolatedNodes],
+  );
+  const projectedGraphRef = useRef(projectedGraph);
+  projectedGraphRef.current = projectedGraph;
   const analysisStatus = useAnalysisStore((state) => state.analysisStatus);
   const errorMessage = useAnalysisStore((state) => state.errorMessage);
   const warnings = useAnalysisStore((state) => state.warnings);
@@ -242,10 +268,10 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const selectEntityEdge = useAnalysisStore((state) => state.selectEntityEdge);
   const selectTableEdge = useAnalysisStore((state) => state.selectTableEdge);
   const searchableEntities = useMemo(
-    () => [...(graph?.entity_nodes ?? [])].sort((left, right) =>
+    () => [...(projectedGraph?.entity_nodes ?? [])].sort((left, right) =>
       compareText(left.id, right.id),
     ),
-    [graph],
+    [projectedGraph],
   );
 
   const acquireCanvasContext = useCallback(
@@ -362,8 +388,10 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
 
   useEffect(() => {
     const source = sceneSourceRef.current;
-    if (source?.graph === graph) commitScene(source.graph, source.layout);
-  }, [commitScene, confidenceThreshold, graph]);
+    if (source?.graph === projectedGraph) {
+      commitScene(source.graph, source.layout);
+    }
+  }, [commitScene, confidenceThreshold, projectedGraph]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -395,7 +423,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   }, [acquireCanvasContext, rebuildCurrentScene, viewport]);
 
   useEffect(() => {
-    if (!graph) {
+    if (!projectedGraph) {
       sceneSourceRef.current = null;
       retireScene();
       setLayout(null);
@@ -413,7 +441,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     const client = layoutClientRef.current ?? createLayoutClient();
     layoutClientRef.current = client;
     client.reset();
-    void client.layoutGraph(graph, viewport).then(
+    void client.layoutGraph(projectedGraph, viewport).then(
       (next) => {
         if (active) {
           const initialTransform = fitTransform(next, viewport);
@@ -424,8 +452,8 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
               initialTransform,
             );
           }
-          sceneSourceRef.current = { graph, layout: next };
-          commitScene(graph, next);
+          sceneSourceRef.current = { graph: projectedGraph, layout: next };
+          commitScene(projectedGraph, next);
           setLayout(next);
         }
       },
@@ -438,7 +466,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       active = false;
       client.reset();
     };
-  }, [commitScene, graph, relayoutRequest, retireScene, viewport]);
+  }, [commitScene, projectedGraph, relayoutRequest, retireScene, viewport]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -458,12 +486,12 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   }, [rebuildCurrentScene]);
 
   const fitView = useCallback(() => {
-    if (!layout || !graph || !zoomRef.current || !canvasRef.current) return;
+    if (!layout || !projectedGraph || !zoomRef.current || !canvasRef.current) return;
     d3.select(canvasRef.current).call(
       zoomRef.current.transform,
       fitTransform(layout, viewport),
     );
-  }, [graph, layout, viewport]);
+  }, [layout, projectedGraph, viewport]);
 
   const handledFitViewRequestRef = useRef(fitViewRequest);
   useEffect(() => {
@@ -498,12 +526,12 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   }, [setHoveredNode]);
 
   const keyboardTargets = useCallback((): KeyboardTarget[] => {
-    if (!graph || !layout) return [];
+    if (!projectedGraph || !layout) return [];
     const tableData = new Map(
-      graph.table_nodes.map((table) => [table.id, table]),
+      projectedGraph.table_nodes.map((table) => [table.id, table]),
     );
     const entityData = new Map(
-      graph.entity_nodes.map((entity) => [entity.id, entity]),
+      projectedGraph.entity_nodes.map((entity) => [entity.id, entity]),
     );
     return [
       ...layout.tableNodes.flatMap((node) => {
@@ -527,7 +555,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     ].sort((left, right) =>
       left.y - right.y || left.x - right.x || compareText(left.hit.id, right.hit.id),
     );
-  }, [graph, layout]);
+  }, [layout, projectedGraph]);
 
   const revealKeyboardEntity = useCallback((target: KeyboardTarget) => {
     if (
@@ -616,8 +644,8 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   }, [layout, requestNodeFocus, searchQuery, searchableEntities, setKeyboardTarget]);
 
   const focusSupportingRelations = useCallback((tableEdgeId: string) => {
-    if (!graph || !layout || !zoomRef.current || !canvasRef.current) return;
-    const tableEdge = graph.table_edges.find((edge) => edge.id === tableEdgeId);
+    if (!projectedGraph || !layout || !zoomRef.current || !canvasRef.current) return;
+    const tableEdge = projectedGraph.table_edges.find((edge) => edge.id === tableEdgeId);
     if (!tableEdge || tableEdge.supporting_entity_edges.length === 0) return;
     const supportingIds = new Set(tableEdge.supporting_entity_edges);
     const supportingEdges = layout.entityEdges.filter((edge) =>
@@ -645,7 +673,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       .scale(k)
       .translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
     d3.select(canvasRef.current).call(zoomRef.current.transform, transform);
-  }, [graph, layout, viewport]);
+  }, [layout, projectedGraph, viewport]);
 
   const focusTableNode = useCallback((tableId: string) => {
     if (!layout || !zoomRef.current || !canvasRef.current) return;
@@ -685,16 +713,22 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     }
   }, [focusSupportingRelations, focusTableNode, requestNodeFocus, selectEntityEdge, selectTableEdge, setSelectedNode]);
 
-  const entityCount = graph?.entity_nodes.length ?? 0;
-  const tableCount = graph?.table_nodes.length ?? 0;
-  const edgeCount = graph ? graph.entity_edges.length + graph.table_edges.length : 0;
+  const entityCount = projectedGraph?.entity_nodes.length ?? 0;
+  const tableCount = projectedGraph?.table_nodes.length ?? 0;
+  const edgeCount = projectedGraph
+    ? projectedGraph.entity_edges.length + projectedGraph.table_edges.length
+    : 0;
+  const fullEntityCount = graph?.entity_nodes.length ?? 0;
+  const fullEdgeCount = graph
+    ? graph.entity_edges.length + graph.table_edges.length
+    : 0;
   const notice = layoutError ?? (analysisStatus === "failed" ? errorMessage || "分析失败，以下图谱为可用的部分结果。" : null);
   const currentInputs = sceneInputsRef.current;
   const sceneIsReady =
     readyGeneration === sceneGeneration &&
     drawnGenerationRef.current === sceneGeneration &&
     currentInputs?.generation === sceneGeneration &&
-    currentInputs.graph === graph &&
+    currentInputs.graph === projectedGraph &&
     currentInputs.confidenceThreshold === confidenceThreshold &&
     currentInputs.fitViewRequest === fitViewRequest &&
     currentInputs.relayoutRequest === relayoutRequest &&
@@ -702,21 +736,20 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const interactiveScene = () => {
     const scene = sceneRef.current;
     const inputs = sceneInputsRef.current;
-    const currentAnalysis = useAnalysisStore.getState();
     return scene &&
       inputs?.generation === sceneGenerationRef.current &&
       drawnGenerationRef.current === inputs.generation &&
-      inputs?.graph === currentAnalysis.graph &&
-      inputs.confidenceThreshold === currentAnalysis.confidenceThreshold &&
-      inputs.fitViewRequest === currentAnalysis.fitViewRequest &&
-      inputs.relayoutRequest === currentAnalysis.relayoutRequest &&
+      inputs?.graph === projectedGraphRef.current &&
+      inputs.confidenceThreshold === confidenceThresholdRef.current &&
+      inputs.fitViewRequest === useAnalysisStore.getState().fitViewRequest &&
+      inputs.relayoutRequest === useAnalysisStore.getState().relayoutRequest &&
       sameTransform(inputs.transform, transformRef.current)
       ? scene
       : null;
   };
 
   return (
-    <div ref={containerRef} role="group" aria-label={graphSummary(entityCount, tableCount, edgeCount)} className="relative h-full min-h-[420px] overflow-hidden rounded-xl border border-slate-700/70 bg-[#0d1926]">
+    <div ref={containerRef} role="group" aria-label={graphSummary(entityCount, tableCount, edgeCount, fullEntityCount, fullEdgeCount)} className="relative h-full min-h-[420px] overflow-hidden rounded-xl border border-slate-700/70 bg-[#0d1926]">
       <canvas
         ref={canvasRef}
         role="img"
@@ -725,7 +758,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         data-scene-generation={sceneGeneration}
         data-ready-generation={sceneIsReady ? readyGeneration : ""}
         tabIndex={0}
-        aria-label={graphSummary(entityCount, tableCount, edgeCount)}
+        aria-label={graphSummary(entityCount, tableCount, edgeCount, fullEntityCount, fullEdgeCount)}
         className="block h-full w-full touch-none outline-none focus:ring-2 focus:ring-teal-300"
         onFocus={() => {
           if (interactiveScene() && !keyboardTargetRef.current) {

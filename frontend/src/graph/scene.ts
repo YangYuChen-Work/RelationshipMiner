@@ -5,16 +5,33 @@ import type {
   TableEdgeData,
   TableNodeData,
 } from "../api/analysis";
-import type { GraphLayout, LayoutEdge, LayoutEntityNode, LayoutTableNode, TableRegion } from "./layout";
+import type {
+  GraphLayout,
+  LayoutEdge,
+  LayoutEntityNode,
+  LayoutTableNode,
+  TableRegion,
+} from "./layout";
 import { createHitIndex, type SceneHitIndex } from "./hitTest";
 
 const TABLE_ONLY_ZOOM = 0.65;
+const EDGE_LABEL_ZOOM = 0.9;
 const ENTITY_LABEL_ZOOM = 1.2;
-const TABLE_WORLD_RADIUS = 14;
-const ENTITY_WORLD_RADIUS = 4;
+const TABLE_WORLD_RADIUS = 22;
+const ENTITY_BASE_WORLD_RADIUS = 4;
 const MIN_NODE_HIT_RADIUS = 6;
 const NODE_HIT_PADDING = 4;
 const MAX_NODE_SCREEN_RADIUS = 2_800;
+const TABLE_PALETTE = [
+  "#38bdf8",
+  "#2dd4bf",
+  "#a78bfa",
+  "#fb7185",
+  "#fbbf24",
+  "#60a5fa",
+  "#34d399",
+  "#f472b6",
+] as const;
 
 export interface WorldPoint {
   x: number;
@@ -40,6 +57,7 @@ export interface ScenePoint {
 export interface SceneNode {
   id: string;
   label: string;
+  color?: string;
   world: WorldPoint;
   screen: ScreenPoint;
   screenRadius: number;
@@ -58,10 +76,23 @@ export interface SceneLabel {
   screen: ScreenPoint;
 }
 
+export type SceneEdgeLineStyle = "solid" | "dashed";
+
 export interface SceneEdge {
   id: string;
+  label: string;
+  lineStyle: SceneEdgeLineStyle;
   from: ScenePoint;
   to: ScenePoint;
+}
+
+export interface SceneEdgeLabel {
+  edgeId: string;
+  kind: "table" | "entity";
+  text: string;
+  lineStyle: SceneEdgeLineStyle;
+  world: WorldPoint;
+  screen: ScreenPoint;
 }
 
 export interface SceneTableRegion {
@@ -78,6 +109,7 @@ export interface RenderScene {
   entityDots: SceneEntityNode[];
   entityEdges: SceneEdge[];
   entityLabels: SceneLabel[];
+  edgeLabels: SceneEdgeLabel[];
   hitIndex: SceneHitIndex;
 }
 
@@ -111,9 +143,19 @@ function toScreen(point: WorldPoint, transform: GraphTransform): ScreenPoint {
   };
 }
 
+function tableColor(tableId: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < tableId.length; index += 1) {
+    hash ^= tableId.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return TABLE_PALETTE[(hash >>> 0) % TABLE_PALETTE.length];
+}
+
 function nodeCommand(
   node: LayoutTableNode | LayoutEntityNode,
   label: string,
+  color: string,
   transform: GraphTransform,
   worldRadius: number,
 ): SceneNode | null {
@@ -134,6 +176,7 @@ function nodeCommand(
   return {
     id: node.id,
     label,
+    color,
     world,
     screen,
     screenRadius,
@@ -141,64 +184,49 @@ function nodeCommand(
   };
 }
 
-function edgeCommand(edge: LayoutEdge, transform: GraphTransform): SceneEdge | null {
+function edgeCommand(
+  edge: LayoutEdge,
+  transform: GraphTransform,
+  label: string,
+  lineStyle: SceneEdgeLineStyle,
+): SceneEdge | null {
   if (!validPoint(edge.from) || !validPoint(edge.to)) return null;
   const from = toScreen(edge.from, transform);
   const to = toScreen(edge.to, transform);
   if (!validPoint(from) || !validPoint(to)) return null;
   return {
     id: edge.id,
+    label,
+    lineStyle,
     from: { world: { ...edge.from }, screen: from },
     to: { world: { ...edge.to }, screen: to },
   };
 }
 
-function relationVisible(relation: EntityEdgeData["relations"][number], threshold: number): boolean {
-  return relation.strength === "strong" || (Number.isFinite(relation.confidence) && relation.confidence >= threshold);
+function relationVisible(
+  relation: EntityEdgeData["relations"][number],
+  threshold: number,
+): boolean {
+  return relation.strength === "strong" ||
+    (Number.isFinite(relation.confidence) && relation.confidence >= threshold);
 }
 
-function entityEdgeVisible(edge: EntityEdgeData, threshold: number): boolean {
-  return edge.relations.some((relation) => relationVisible(relation, threshold));
+function visibleRelations(edge: EntityEdgeData, threshold: number) {
+  return edge.relations.filter((relation) => relationVisible(relation, threshold));
 }
 
 function tableEdgeVisible(edge: TableEdgeData, threshold: number): boolean {
-  return edge.strong_count > 0 || (Number.isFinite(edge.average_confidence) && edge.average_confidence >= threshold);
+  return edge.strong_count > 0 ||
+    (Number.isFinite(edge.average_confidence) &&
+      edge.average_confidence >= threshold);
+}
+
+function relationLabel(values: readonly string[]): string {
+  return [...new Set(values.filter(Boolean))].sort().join(" · ");
 }
 
 function byId<T extends { id: string }>(items: readonly T[]): Map<string, T> {
   return new Map(items.map((item) => [item.id, item]));
-}
-
-function tableRegionCommand(region: TableRegion, transform: GraphTransform): SceneTableRegion | null {
-  const world = { x: region.x, y: region.y, width: region.width, height: region.height };
-  if (
-    !Object.values(world).every(Number.isFinite) ||
-    world.width <= 0 ||
-    world.height <= 0
-  ) {
-    return null;
-  }
-  const screen = {
-    x: world.x * transform.k + transform.x,
-    y: world.y * transform.k + transform.y,
-    width: world.width * transform.k,
-    height: world.height * transform.k,
-  };
-  if (
-    !Number.isFinite(screen.x) ||
-    !Number.isFinite(screen.y) ||
-    !Number.isFinite(screen.width) ||
-    !Number.isFinite(screen.height) ||
-    screen.width <= 0 ||
-    screen.height <= 0
-  ) {
-    return null;
-  }
-  return {
-    id: region.id,
-    world,
-    screen,
-  };
 }
 
 function layoutEdgesFor(
@@ -212,6 +240,89 @@ function layoutEdgesFor(
   }));
 }
 
+function degreeByEntity(graph: SemanticGraphData): Map<string, number> {
+  const ids = new Set(graph.entity_nodes.map((node) => node.id));
+  const degrees = new Map(graph.entity_nodes.map((node) => [node.id, 0]));
+  for (const edge of graph.entity_edges) {
+    if (!ids.has(edge.source) || !ids.has(edge.target)) continue;
+    degrees.set(edge.source, (degrees.get(edge.source) ?? 0) + 1);
+    if (edge.target !== edge.source) {
+      degrees.set(edge.target, (degrees.get(edge.target) ?? 0) + 1);
+    }
+  }
+  return degrees;
+}
+
+function entityWorldRadius(degree: number): number {
+  return ENTITY_BASE_WORLD_RADIUS + Math.min(6, Math.sqrt(Math.max(0, degree)) * 1.8);
+}
+
+interface LabelBounds {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+function overlaps(left: LabelBounds, right: LabelBounds): boolean {
+  return left.left < right.right &&
+    left.right > right.left &&
+    left.top < right.bottom &&
+    left.bottom > right.top;
+}
+
+function buildEdgeLabels(
+  tableEdges: readonly SceneEdge[],
+  entityEdges: readonly SceneEdge[],
+  transform: GraphTransform,
+): SceneEdgeLabel[] {
+  if (transform.k < EDGE_LABEL_ZOOM) return [];
+  const occupied: LabelBounds[] = [];
+  const candidates = [
+    ...tableEdges.map((edge) => ({ edge, kind: "table" as const })),
+    ...entityEdges.map((edge) => ({ edge, kind: "entity" as const })),
+  ].filter(({ edge }) => edge.label.length > 0)
+    .sort((left, right) => {
+      const leftStrength = left.edge.lineStyle === "solid" ? 0 : 1;
+      const rightStrength = right.edge.lineStyle === "solid" ? 0 : 1;
+      const leftKind = left.kind === "table" ? 0 : 1;
+      const rightKind = right.kind === "table" ? 0 : 1;
+      return leftStrength - rightStrength ||
+        leftKind - rightKind ||
+        left.edge.id.localeCompare(right.edge.id);
+    });
+  const labels: SceneEdgeLabel[] = [];
+
+  for (const { edge, kind } of candidates) {
+    const world = {
+      x: (edge.from.world.x + edge.to.world.x) / 2,
+      y: (edge.from.world.y + edge.to.world.y) / 2,
+    };
+    const screen = {
+      x: (edge.from.screen.x + edge.to.screen.x) / 2,
+      y: (edge.from.screen.y + edge.to.screen.y) / 2,
+    };
+    const halfWidth = edge.label.length * 3.5 + 8;
+    const bounds = {
+      left: screen.x - halfWidth,
+      right: screen.x + halfWidth,
+      top: screen.y - 10,
+      bottom: screen.y + 10,
+    };
+    if (occupied.some((existing) => overlaps(existing, bounds))) continue;
+    occupied.push(bounds);
+    labels.push({
+      edgeId: edge.id,
+      kind,
+      text: edge.label,
+      lineStyle: edge.lineStyle,
+      world,
+      screen,
+    });
+  }
+  return labels;
+}
+
 export function buildScene(input: BuildSceneInput): RenderScene {
   const transform = normalizedTransform(input.transform);
   const threshold = normalizedThreshold(input.confidenceThreshold);
@@ -219,25 +330,46 @@ export function buildScene(input: BuildSceneInput): RenderScene {
   const entityData = byId<EntityNodeData>(input.graph.entity_nodes);
   const layoutTables = byId(input.layout.tableNodes);
   const layoutEntities = byId(input.layout.entityNodes);
-  const tableLayouts = layoutEdgesFor(input.graph.table_edges, input.layout.tableEdges);
-  const entityLayouts = layoutEdgesFor(input.graph.entity_edges, input.layout.entityEdges);
-  const tableRegions = input.layout.tableRegions
-    .filter((region) => tableData.has(region.id))
-    .flatMap((region) => {
-      const command = tableRegionCommand(region, transform);
-      return command ? [command] : [];
-    });
+  const tableLayouts = layoutEdgesFor(
+    input.graph.table_edges,
+    input.layout.tableEdges,
+  );
+  const entityLayouts = layoutEdgesFor(
+    input.graph.entity_edges,
+    input.layout.entityEdges,
+  );
+  const degrees = degreeByEntity(input.graph);
   const tableNodes = input.layout.tableNodes.flatMap((node) => {
     const data = tableData.get(node.id);
-    const command = data ? nodeCommand(node, data.display_name, transform, TABLE_WORLD_RADIUS) : null;
+    const command = data
+      ? nodeCommand(
+        node,
+        data.display_name,
+        tableColor(node.id),
+        transform,
+        TABLE_WORLD_RADIUS,
+      )
+      : null;
     return command ? [command] : [];
   });
   const tableEdges = input.graph.table_edges.flatMap((edge) => {
     const layoutEdge = tableLayouts.get(edge.id);
     const source = layoutTables.get(edge.source_table);
     const target = layoutTables.get(edge.target_table);
-    if (!layoutEdge || !source || !target || !tableEdgeVisible(edge, threshold)) return [];
-    const command = edgeCommand(layoutEdge, transform);
+    if (
+      !layoutEdge ||
+      !source ||
+      !target ||
+      !tableEdgeVisible(edge, threshold)
+    ) {
+      return [];
+    }
+    const command = edgeCommand(
+      layoutEdge,
+      transform,
+      relationLabel(edge.relation_types),
+      edge.strong_count > 0 ? "solid" : "dashed",
+    );
     return command ? [command] : [];
   });
 
@@ -246,8 +378,20 @@ export function buildScene(input: BuildSceneInput): RenderScene {
     ? input.layout.entityNodes.flatMap((node) => {
       const data = entityData.get(node.id);
       if (!data) return [];
-      const command = nodeCommand(node, data.display_name, transform, ENTITY_WORLD_RADIUS);
-      return command ? [{ ...command, tableId: node.tableId, className: data.class_name }] : [];
+      const command = nodeCommand(
+        node,
+        data.display_name,
+        tableColor(node.tableId),
+        transform,
+        entityWorldRadius(degrees.get(node.id) ?? 0),
+      );
+      return command
+        ? [{
+          ...command,
+          tableId: node.tableId,
+          className: data.class_name,
+        }]
+        : [];
     })
     : [];
   const entityEdges = showEntities
@@ -255,23 +399,41 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       const layoutEdge = entityLayouts.get(edge.id);
       const source = layoutEntities.get(edge.source);
       const target = layoutEntities.get(edge.target);
-      if (!layoutEdge || !source || !target || !entityEdgeVisible(edge, threshold)) return [];
-      const command = edgeCommand(layoutEdge, transform);
+      const relations = visibleRelations(edge, threshold);
+      if (!layoutEdge || !source || !target || relations.length === 0) return [];
+      const command = edgeCommand(
+        layoutEdge,
+        transform,
+        relationLabel(relations.map((relation) => relation.relation_type)),
+        relations.some((relation) => relation.strength === "strong")
+          ? "solid"
+          : "dashed",
+      );
       return command ? [command] : [];
     })
     : [];
   const entityLabels = transform.k >= ENTITY_LABEL_ZOOM
-    ? entityDots.map((node) => ({ nodeId: node.id, text: node.label, world: node.world, screen: node.screen }))
+    ? entityDots.map((node) => ({
+      nodeId: node.id,
+      text: node.label,
+      world: node.world,
+      screen: node.screen,
+    }))
     : [];
+  const edgeLabels = buildEdgeLabels(tableEdges, entityEdges, transform);
 
   const sceneWithoutIndex = {
     transform,
-    tableRegions,
+    tableRegions: [],
     tableNodes,
     tableEdges,
     entityDots,
     entityEdges,
     entityLabels,
+    edgeLabels,
   };
-  return { ...sceneWithoutIndex, hitIndex: createHitIndex(sceneWithoutIndex) };
+  return {
+    ...sceneWithoutIndex,
+    hitIndex: createHitIndex(sceneWithoutIndex),
+  };
 }

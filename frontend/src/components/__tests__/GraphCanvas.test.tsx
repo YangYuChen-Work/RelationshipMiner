@@ -22,7 +22,7 @@ const graph: SemanticGraphData = {
 
 function canvasContext() {
   return {
-    arc: vi.fn(), beginPath: vi.fn(), clearRect: vi.fn(), fill: vi.fn(), fillRect: vi.fn(), fillText: vi.fn(), lineTo: vi.fn(), moveTo: vi.fn(), restore: vi.fn(), save: vi.fn(), setTransform: vi.fn(), stroke: vi.fn(), strokeRect: vi.fn(),
+    arc: vi.fn(), beginPath: vi.fn(), clearRect: vi.fn(), fill: vi.fn(), fillRect: vi.fn(), fillText: vi.fn(), lineTo: vi.fn(), moveTo: vi.fn(), restore: vi.fn(), save: vi.fn(), setLineDash: vi.fn(), setTransform: vi.fn(), stroke: vi.fn(), strokeRect: vi.fn(),
     fillStyle: "", font: "", lineWidth: 1, strokeStyle: "", textBaseline: "alphabetic" as CanvasTextBaseline,
   } as unknown as CanvasRenderingContext2D;
 }
@@ -55,7 +55,7 @@ function setGraph(next: SemanticGraphData | null = graph) {
   useAnalysisStore.setState({
     graph: next, phase: next ? "done" : "select", analysisStatus: next ? "complete" : null,
     warnings: [], errorMessage: null, hoveredNodeId: null, selectedNodeId: null,
-    confidenceThreshold: 0, fitViewRequest: 0, relayoutRequest: 0, focusNodeRequest: null,
+    confidenceThreshold: 0, showIsolatedNodes: false, fitViewRequest: 0, relayoutRequest: 0, focusNodeRequest: null,
     selectedEntityEdgeId: null, selectedTableEdgeId: null,
   });
 }
@@ -317,9 +317,42 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
   });
 
+  it("uses the projected graph for worker layout, counts, search, and readiness identity", async () => {
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    const firstWorker = LayoutWorker.instances[0];
+
+    expect(firstWorker.messages[0].graph.entity_nodes.map((node) => node.id)).toEqual([
+      "a",
+      "invoice",
+    ]);
+    expect(canvas.getAttribute("aria-label")).toContain("2 个实体");
+    const search = screen.getByRole("searchbox", { name: /查找实体/ });
+    fireEvent.change(search, { target: { value: "b" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
+
+    act(() => useAnalysisStore.getState().setShowIsolatedNodes(true));
+    await waitFor(() => expect(firstWorker.messages).toHaveLength(2));
+    await ready();
+
+    expect(firstWorker.messages[1].graph.entity_nodes.map((node) => node.id)).toEqual([
+      "a",
+      "b",
+      "invoice",
+    ]);
+    expect(canvas.getAttribute("aria-label")).toContain("3 个实体");
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("b");
+  });
+
   it("uses one canvas and no per-entity DOM for a 7000 entity graph", async () => {
     const entities = Array.from({ length: 7_000 }, (_, index) => ({ id: `entity-${index}`, table_id: "bulk", display_name: `Entity ${index}`, class_name: null, dimensions: {} }));
-    act(() => setGraph({ table_nodes: [{ id: "bulk", display_name: "Bulk", entity_count: entities.length }], entity_nodes: entities, table_edges: [], entity_edges: [] }));
+    act(() => {
+      setGraph({ table_nodes: [{ id: "bulk", display_name: "Bulk", entity_count: entities.length }], entity_nodes: entities, table_edges: [], entity_edges: [] });
+      useAnalysisStore.getState().setShowIsolatedNodes(true);
+    });
     const { container } = render(<GraphCanvas />);
     await ready();
     expect(container.querySelectorAll("canvas")).toHaveLength(1);

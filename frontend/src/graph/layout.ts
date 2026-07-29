@@ -3,6 +3,7 @@ import type {
   EntityNodeData,
   SemanticGraphData,
   TableEdgeData,
+  TableNodeData,
 } from "../api/analysis";
 
 export interface Viewport {
@@ -15,6 +16,10 @@ export interface LayoutPoint {
   y: number;
 }
 
+/**
+ * Retained as an empty compatibility surface for callers created before the
+ * clustered layout. Clustered graphs never emit table rectangles.
+ */
 export interface TableRegion {
   id: string;
   x: number;
@@ -54,13 +59,17 @@ export type LayoutGraph = Pick<
   "table_nodes" | "entity_nodes" | "table_edges" | "entity_edges"
 >;
 
-const OUTER_MARGIN = 48;
-const REGION_GAP = 48;
-const REGION_PADDING = 28;
-const HEADER_HEIGHT = 42;
-const ENTITY_PITCH = 24;
-const MIN_REGION_WIDTH = 280;
-const MIN_REGION_HEIGHT = 180;
+const PROCESS_CLASS_ORDER = [
+  "MEProcess",
+  "MEOperation",
+  "MEStep",
+  "Assembly",
+] as const;
+const ANCHOR_MARGIN = 120;
+const MIN_ANCHOR_GAP = 280;
+const FIRST_RING_RADIUS = 72;
+const RING_GAP = 32;
+const ENTITY_ARC_PITCH = 24;
 
 function compareIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -79,126 +88,219 @@ function assertUniqueIds(
   }
 }
 
-function sortedEntitiesByTable(
-  entities: readonly EntityNodeData[],
-  tableIds: ReadonlySet<string>,
-): Map<string, EntityNodeData[]> {
-  const byTable = new Map<string, EntityNodeData[]>();
-  for (const entity of entities) {
-    if (!tableIds.has(entity.table_id)) continue;
-    const group = byTable.get(entity.table_id);
-    if (group) group.push(entity);
-    else byTable.set(entity.table_id, [entity]);
-  }
-  for (const group of byTable.values()) {
-    group.sort((left, right) => compareIds(left.id, right.id));
-  }
-  return byTable;
+function processClassIndex(table: TableNodeData): number {
+  const id = table.id.toLowerCase();
+  const displayName = table.display_name.toLowerCase();
+  const index = PROCESS_CLASS_ORDER.findIndex((known) => {
+    const normalized = known.toLowerCase();
+    return id === normalized || displayName === normalized;
+  });
+  return index < 0 ? PROCESS_CLASS_ORDER.length : index;
 }
 
-function gridColumns(count: number): number {
-  return Math.max(1, Math.ceil(Math.sqrt(count)));
+function sortedTables(tables: readonly TableNodeData[]): TableNodeData[] {
+  return [...tables].sort((left, right) => {
+    const leftIndex = processClassIndex(left);
+    const rightIndex = processClassIndex(right);
+    return leftIndex - rightIndex || compareIds(left.id, right.id);
+  });
+}
+
+function entityDegrees(
+  entities: readonly EntityNodeData[],
+  edges: readonly EntityEdgeData[],
+): Map<string, number> {
+  const entityIds = new Set(entities.map((entity) => entity.id));
+  const degrees = new Map(entities.map((entity) => [entity.id, 0]));
+  for (const edge of edges) {
+    if (!entityIds.has(edge.source) || !entityIds.has(edge.target)) continue;
+    degrees.set(edge.source, (degrees.get(edge.source) ?? 0) + 1);
+    if (edge.target !== edge.source) {
+      degrees.set(edge.target, (degrees.get(edge.target) ?? 0) + 1);
+    }
+  }
+  return degrees;
+}
+
+function entitiesByTable(
+  entities: readonly EntityNodeData[],
+  tables: readonly TableNodeData[],
+  degrees: ReadonlyMap<string, number>,
+): Map<string, EntityNodeData[]> {
+  const tableIds = new Set(tables.map((table) => table.id));
+  const groups = new Map<string, EntityNodeData[]>();
+  for (const entity of entities) {
+    if (!tableIds.has(entity.table_id)) continue;
+    const group = groups.get(entity.table_id);
+    if (group) group.push(entity);
+    else groups.set(entity.table_id, [entity]);
+  }
+  for (const group of groups.values()) {
+    group.sort((left, right) =>
+      (degrees.get(right.id) ?? 0) - (degrees.get(left.id) ?? 0) ||
+      compareIds(left.id, right.id),
+    );
+  }
+  return groups;
+}
+
+function ringCapacity(radius: number): number {
+  return Math.max(8, Math.floor((Math.PI * 2 * radius) / ENTITY_ARC_PITCH));
+}
+
+function clusterRadius(entityCount: number): number {
+  if (entityCount <= 0) return FIRST_RING_RADIUS;
+  let remaining = entityCount;
+  let radius = FIRST_RING_RADIUS;
+  while (remaining > ringCapacity(radius)) {
+    remaining -= ringCapacity(radius);
+    radius += RING_GAP;
+  }
+  return radius;
+}
+
+function normalizedViewport(viewport: Viewport): Viewport {
+  return {
+    width: Number.isFinite(viewport.width) && viewport.width > 0
+      ? viewport.width
+      : 1,
+    height: Number.isFinite(viewport.height) && viewport.height > 0
+      ? viewport.height
+      : 1,
+  };
+}
+
+function anchorColumns(tableCount: number, viewport: Viewport): number {
+  if (tableCount === 0) return 1;
+  const aspectRatio = Math.max(0.25, Math.min(4, viewport.width / viewport.height));
+  return Math.max(1, Math.min(
+    tableCount,
+    Math.ceil(Math.sqrt(tableCount * aspectRatio)),
+  ));
+}
+
+function placeEntities(
+  entities: readonly EntityNodeData[],
+  tableId: string,
+  anchor: LayoutPoint,
+): LayoutEntityNode[] {
+  const nodes: LayoutEntityNode[] = [];
+  let offset = 0;
+  let radius = FIRST_RING_RADIUS;
+  while (offset < entities.length) {
+    const capacity = ringCapacity(radius);
+    const count = Math.min(capacity, entities.length - offset);
+    const angleOffset = (radius / RING_GAP % 2) * (Math.PI / capacity);
+    for (let index = 0; index < count; index += 1) {
+      const entity = entities[offset + index];
+      const angle = Math.PI / 2 + angleOffset + (Math.PI * 2 * index) / capacity;
+      nodes.push({
+        id: entity.id,
+        tableId,
+        x: anchor.x + Math.cos(angle) * radius,
+        y: anchor.y + Math.sin(angle) * radius,
+      });
+    }
+    offset += count;
+    radius += RING_GAP;
+  }
+  return nodes;
 }
 
 function routeTableEdges(
   edges: readonly TableEdgeData[],
-  headers: ReadonlyMap<string, LayoutPoint>,
+  anchors: ReadonlyMap<string, LayoutPoint>,
 ): LayoutEdge[] {
   return [...edges]
     .sort((left, right) => compareIds(left.id, right.id))
     .flatMap((edge) => {
-      const from = headers.get(edge.source_table);
-      const to = headers.get(edge.target_table);
-      if (!from || !to) return [];
-      return [{ id: edge.id, source: edge.source_table, target: edge.target_table, from, to }];
+      const from = anchors.get(edge.source_table);
+      const to = anchors.get(edge.target_table);
+      return from && to
+        ? [{
+          id: edge.id,
+          source: edge.source_table,
+          target: edge.target_table,
+          from,
+          to,
+        }]
+        : [];
     });
 }
 
 function routeEntityEdges(
   edges: readonly EntityEdgeData[],
-  entities: ReadonlyMap<string, LayoutPoint>,
+  positions: ReadonlyMap<string, LayoutPoint>,
 ): LayoutEdge[] {
   return [...edges]
     .sort((left, right) => compareIds(left.id, right.id))
     .flatMap((edge) => {
-      const from = entities.get(edge.source);
-      const to = entities.get(edge.target);
-      if (!from || !to) return [];
-      return [{ id: edge.id, source: edge.source, target: edge.target, from, to }];
+      const from = positions.get(edge.source);
+      const to = positions.get(edge.target);
+      return from && to
+        ? [{ id: edge.id, source: edge.source, target: edge.target, from, to }]
+        : [];
     });
 }
 
 /**
- * Builds an order-independent, non-physics layout.  Table regions deliberately
- * use a common size: changing an entity count cannot move another table.
+ * Builds an order-independent clustered network. Work remains deterministic
+ * and non-physics-based so identical projected inputs produce identical worker
+ * output and stable hit targets.
  */
 export function computeGroupedLayout(
   graph: LayoutGraph,
-  _viewport: Viewport,
+  rawViewport: Viewport,
 ): GraphLayout {
   assertUniqueIds(graph.table_nodes, "table node");
   assertUniqueIds(graph.entity_nodes, "entity node");
   assertUniqueIds(graph.table_edges, "table edge");
   assertUniqueIds(graph.entity_edges, "entity edge");
 
-  const tableIds = graph.table_nodes.map((node) => node.id).sort(compareIds);
-  const tableIdSet = new Set(tableIds);
-  const entitiesByTable = sortedEntitiesByTable(graph.entity_nodes, tableIdSet);
-  const largestGroup = Math.max(
-    0,
-    ...tableIds.map((id) => entitiesByTable.get(id)?.length ?? 0),
+  const tables = sortedTables(graph.table_nodes);
+  const degrees = entityDegrees(graph.entity_nodes, graph.entity_edges);
+  const groups = entitiesByTable(graph.entity_nodes, tables, degrees);
+  const viewport = normalizedViewport(rawViewport);
+  const columns = anchorColumns(tables.length, viewport);
+  const largestRadius = Math.max(
+    FIRST_RING_RADIUS,
+    ...tables.map((table) => clusterRadius(groups.get(table.id)?.length ?? 0)),
   );
-  const entityColumns = gridColumns(largestGroup);
-  const entityRows = Math.max(1, Math.ceil(largestGroup / entityColumns));
-  const regionWidth = Math.max(
-    MIN_REGION_WIDTH,
-    REGION_PADDING * 2 + entityColumns * ENTITY_PITCH,
+  const anchorGap = Math.max(MIN_ANCHOR_GAP, largestRadius * 2 + 120);
+  const rows = Math.max(1, Math.ceil(tables.length / columns));
+  const naturalWidth = Math.max(0, (columns - 1) * anchorGap);
+  const naturalHeight = Math.max(0, (rows - 1) * anchorGap);
+  const originX = Math.max(
+    ANCHOR_MARGIN + largestRadius,
+    (viewport.width - naturalWidth) / 2,
   );
-  const regionHeight = Math.max(
-    MIN_REGION_HEIGHT,
-    HEADER_HEIGHT + REGION_PADDING * 2 + entityRows * ENTITY_PITCH,
+  const originY = Math.max(
+    ANCHOR_MARGIN + largestRadius,
+    (viewport.height - naturalHeight) / 2,
   );
-  const columns = gridColumns(tableIds.length);
-  const tableRegions: TableRegion[] = [];
   const tableNodes: LayoutTableNode[] = [];
   const entityNodes: LayoutEntityNode[] = [];
-  const headers = new Map<string, LayoutPoint>();
-  const entityPositions = new Map<string, LayoutPoint>();
+  const anchors = new Map<string, LayoutPoint>();
+  const positions = new Map<string, LayoutPoint>();
 
-  tableIds.forEach((id, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    const x = OUTER_MARGIN + column * (regionWidth + REGION_GAP);
-    const y = OUTER_MARGIN + row * (regionHeight + REGION_GAP);
-    const header = { x: x + REGION_PADDING, y: y + HEADER_HEIGHT / 2 };
-    const region = { id, x, y, width: regionWidth, height: regionHeight, header };
-    tableRegions.push(region);
-    tableNodes.push({ id, ...header });
-    headers.set(id, header);
-
-    const entities = entitiesByTable.get(id) ?? [];
-    entities.forEach((entity, entityIndex) => {
-      const entityColumn = entityIndex % entityColumns;
-      const entityRow = Math.floor(entityIndex / entityColumns);
-      const position = {
-        x: x + REGION_PADDING + ENTITY_PITCH / 2 + entityColumn * ENTITY_PITCH,
-        y:
-          y +
-          HEADER_HEIGHT +
-          REGION_PADDING +
-          ENTITY_PITCH / 2 +
-          entityRow * ENTITY_PITCH,
-      };
-      entityNodes.push({ id: entity.id, tableId: id, ...position });
-      entityPositions.set(entity.id, position);
-    });
+  tables.forEach((table, index) => {
+    const anchor = {
+      x: originX + (index % columns) * anchorGap,
+      y: originY + Math.floor(index / columns) * anchorGap,
+    };
+    tableNodes.push({ id: table.id, ...anchor });
+    anchors.set(table.id, anchor);
+    for (const entity of placeEntities(groups.get(table.id) ?? [], table.id, anchor)) {
+      entityNodes.push(entity);
+      positions.set(entity.id, { x: entity.x, y: entity.y });
+    }
   });
 
   return {
-    tableRegions,
+    tableRegions: [],
     tableNodes,
     entityNodes,
-    tableEdges: routeTableEdges(graph.table_edges, headers),
-    entityEdges: routeEntityEdges(graph.entity_edges, entityPositions),
+    tableEdges: routeTableEdges(graph.table_edges, anchors),
+    entityEdges: routeEntityEdges(graph.entity_edges, positions),
   };
 }

@@ -109,6 +109,72 @@ describe("buildScene", () => {
     expect(scene.tableEdges.map((edge) => edge.id)).toContain("orders-audit");
   });
 
+  it("carries relation labels and solid-versus-dashed semantics on visible edge commands", () => {
+    const scene = buildScene(input(1.2));
+
+    expect(scene.entityEdges.find((edge) => edge.id === "weak-edge")).toMatchObject({
+      label: "owns",
+      lineStyle: "dashed",
+    });
+    expect(scene.entityEdges.find((edge) => edge.id === "strong-edge")).toMatchObject({
+      label: "created",
+      lineStyle: "solid",
+    });
+    expect(scene.tableEdges.find((edge) => edge.id === "orders-users")).toMatchObject({
+      label: "owns",
+      lineStyle: "dashed",
+    });
+    expect(scene.tableEdges.find((edge) => edge.id === "orders-audit")).toMatchObject({
+      label: "logged",
+      lineStyle: "solid",
+    });
+    expect(scene.edgeLabels.map((label) => label.text)).toEqual(
+      expect.arrayContaining(["owns", "created", "logged"]),
+    );
+  });
+
+  it("uses stable table colors and scales connected entity nodes by graph degree", () => {
+    const degreeGraph: SemanticGraphData = {
+      ...graph,
+      entity_edges: [
+        ...graph.entity_edges,
+        {
+          id: "second-order-edge",
+          source: "order-1",
+          target: "user-2",
+          relations: [{
+            ...graph.entity_edges[1].relations[0],
+            source: "order-1",
+            target: "user-2",
+            relation_type: "reviews",
+          }],
+        },
+      ],
+    };
+    const degreeLayout: GraphLayout = {
+      ...layout,
+      entityEdges: [
+        ...layout.entityEdges,
+        {
+          id: "second-order-edge",
+          source: "order-1",
+          target: "user-2",
+          from: { x: 20, y: 80 },
+          to: { x: 140, y: 80 },
+        },
+      ],
+    };
+    const scene = buildScene({ ...input(1.2), graph: degreeGraph, layout: degreeLayout });
+    const orderOne = scene.entityDots.find((node) => node.id === "order-1")!;
+    const orderTwo = scene.entityDots.find((node) => node.id === "order-2")!;
+    const userOne = scene.entityDots.find((node) => node.id === "user-1")!;
+
+    expect(orderOne.screenRadius).toBeGreaterThan(orderTwo.screenRadius);
+    expect(orderOne.color).toBe(orderTwo.color);
+    expect(orderOne.color).not.toBe(userOne.color);
+    expect(scene.tableNodes.find((node) => node.id === "orders")?.color).toBe(orderOne.color);
+  });
+
   it("drops draw commands with missing endpoints or non-finite geometry", () => {
     const brokenLayout: GraphLayout = {
       ...layout,
@@ -185,7 +251,7 @@ describe("buildScene", () => {
     expect(hitTest(scene, { x: 0, y: 0 })).toBeNull();
   });
 
-  it("emits only finite table regions with positive dimensions after transformation", () => {
+  it("never emits table rectangle commands for the clustered network", () => {
     const regionGraph: SemanticGraphData = {
       table_nodes: [
         { id: "valid", display_name: "Valid", entity_count: 0 },
@@ -213,7 +279,7 @@ describe("buildScene", () => {
       layout: regionLayout,
       transform: { k: 2, x: 5, y: 7 },
       confidenceThreshold: 0,
-    }).tableRegions.map((region) => region.id)).toEqual(["valid"]);
+    }).tableRegions).toEqual([]);
 
     const overflowingLayout: GraphLayout = {
       ...regionLayout,
@@ -229,7 +295,7 @@ describe("buildScene", () => {
     }).tableRegions).toHaveLength(0);
   });
 
-  it("keeps finite table regions when normal camera panning makes x and y negative", () => {
+  it("does not resurrect table rectangles when normal camera panning makes x and y negative", () => {
     const pannedGraph: SemanticGraphData = {
       table_nodes: [{ id: "panned", display_name: "Panned", entity_count: 0 }],
       entity_nodes: [],
@@ -258,10 +324,6 @@ describe("buildScene", () => {
       confidenceThreshold: 0,
     });
 
-    expect(scene.tableRegions).toEqual([{
-      id: "panned",
-      world: { x: 10, y: 20, width: 100, height: 50 },
-      screen: { x: -30, y: -30, width: 200, height: 100 },
-    }]);
+    expect(scene.tableRegions).toEqual([]);
   });
 });
