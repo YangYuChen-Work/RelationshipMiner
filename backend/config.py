@@ -31,6 +31,7 @@ class Settings:
     EMBEDDING_BATCH_SIZE: int = int(
         os.getenv("EMBEDDING_BATCH_SIZE", "256")
     )
+    LLM_CONCURRENCY: int = int(os.getenv("LLM_CONCURRENCY", "4"))
 
     @property
     def database_url(self) -> str:
