@@ -10,6 +10,7 @@ from sqlalchemy.engine import Engine
 from engine.schema_analyzer import SchemaAnalysisResult
 
 from .corpus import _entity_id
+from .deadline import DeadlineExceeded
 from .models import EntityDocument, EntityEdge, EntityRelation, RelationEvidence
 
 
@@ -30,6 +31,29 @@ _RELATION_TYPES = {
 _DEFAULT_RELATION_TYPE = "关系表关联"
 
 
+class StructuralRelationResolutionError(RuntimeError):
+    """Expose relation-table edges resolved before an internal failure."""
+
+    def __init__(
+        self,
+        resolved_edges: list[EntityEdge],
+    ) -> None:
+        self.resolved_edges = resolved_edges
+        super().__init__("Structural relation discovery failed.")
+
+
+class StructuralRelationDeadlineExceeded(DeadlineExceeded):
+    """Expose relation-table edges resolved before a deadline."""
+
+    def __init__(
+        self,
+        stage: str,
+        resolved_edges: list[EntityEdge],
+    ) -> None:
+        self.resolved_edges = resolved_edges
+        super().__init__(stage)
+
+
 def build_relation_table_edges(
     engine: Engine,
     records: dict[str, list[dict[str, object]]],
@@ -37,7 +61,36 @@ def build_relation_table_edges(
     documents: list[EntityDocument],
     check_deadline: Callable[[str], None] | None = None,
 ) -> list[EntityEdge]:
-    """Resolve selected entities through supported generic relation tables."""
+    """Resolve relation-table edges and expose any resolved before failure."""
+    edges: dict[tuple[str, str], EntityEdge] = {}
+    try:
+        return _resolve_relation_table_edges(
+            engine,
+            records,
+            schema_result,
+            documents,
+            edges,
+            check_deadline,
+        )
+    except DeadlineExceeded as error:
+        raise StructuralRelationDeadlineExceeded(
+            error.stage,
+            list(edges.values()),
+        ) from error
+    except Exception as error:
+        raise StructuralRelationResolutionError(
+            list(edges.values()),
+        ) from error
+
+
+def _resolve_relation_table_edges(
+    engine: Engine,
+    records: dict[str, list[dict[str, object]]],
+    schema_result: SchemaAnalysisResult,
+    documents: list[EntityDocument],
+    edges: dict[tuple[str, str], EntityEdge],
+    check_deadline: Callable[[str], None] | None,
+) -> list[EntityEdge]:
     _check_deadline(check_deadline, "发现关系表前")
     relation_tables = _discover_relation_tables(engine)
     _check_deadline(check_deadline, "发现关系表后")
@@ -46,7 +99,6 @@ def build_relation_table_edges(
         schema_result,
         documents,
     )
-    edges: dict[tuple[str, str], EntityEdge] = {}
 
     for table_name in relation_tables:
         _check_deadline(check_deadline, f"读取关系表 {table_name} 前")

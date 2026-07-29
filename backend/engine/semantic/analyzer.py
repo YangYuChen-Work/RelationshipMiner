@@ -287,12 +287,22 @@ class RelationshipAnalyzer:
         plans = []
         relation_decisions: list[RelationDecision] = []
 
-        def result_from_graph(
-            table_nodes: list[Any],
-            entity_nodes: list[Any],
-            table_edges: list[Any],
-            entity_edges: list[Any],
+        def finalize_result(
+            graph: tuple[
+                list[Any],
+                list[Any],
+                list[Any],
+                list[Any],
+            ] | None = None,
         ) -> AnalysisResult:
+            """Build missing graph output and construct the one final result."""
+            if graph is None:
+                graph = build_graph(
+                    documents,
+                    deterministic_edges,
+                    relation_decisions,
+                )
+            table_nodes, entity_nodes, table_edges, entity_edges = graph
             diagnostics.strong_edges_created = sum(
                 relation.strength == "strong"
                 for edge in entity_edges
@@ -317,7 +327,9 @@ class RelationshipAnalyzer:
                 or pending_groups > 0
             )
             if no_trustworthy_output and (
-                planner_failed or all_judgement_groups_failed
+                planner_failed
+                or structural_failed
+                or all_judgement_groups_failed
             ):
                 status = AnalysisStatus.FAILED
             elif incomplete:
@@ -339,16 +351,6 @@ class RelationshipAnalyzer:
                 warnings=_safe_warnings(warnings),
             )
 
-        def finalize_available_result() -> AnalysisResult:
-            """Return loaded nodes and trustworthy edges after a timeout."""
-            return result_from_graph(
-                *build_graph(
-                    documents,
-                    deterministic_edges,
-                    relation_decisions,
-                )
-            )
-
         if not timed_out:
             try:
                 async with asyncio.timeout(
@@ -368,17 +370,23 @@ class RelationshipAnalyzer:
                 timed_out = True
                 warnings.append(str(DeadlineExceeded("structural discovery")))
             except DeadlineExceeded as error:
+                deterministic_edges.extend(
+                    getattr(error, "resolved_edges", [])
+                )
                 timed_out = True
                 if str(error) not in warnings:
                     warnings.append(str(error))
-            except Exception:
+            except Exception as error:
+                deterministic_edges.extend(
+                    getattr(error, "resolved_edges", [])
+                )
                 structural_failed = True
                 warnings.append(
                     "Structural relation discovery failed (internal_error)."
                 )
 
         if timed_out:
-            return finalize_available_result()
+            return finalize_result()
 
         if len(effective_scope.tables) > 1:
             if before("关系规划前"):
@@ -415,7 +423,7 @@ class RelationshipAnalyzer:
         diagnostics.plans_created = len(plans)
         await emit("planning", "Relationship planning finished.", 0.35)
         if planner_timed_out:
-            return finalize_available_result()
+            return finalize_result()
 
         deterministic_edges.extend(
             build_unique_identifier_edges(records, schema_result, plans)
@@ -513,9 +521,9 @@ class RelationshipAnalyzer:
             await emit("semantic_judging", "Semantic judgement finished.", 0.76)
 
         if not before("组装图谱前"):
-            return finalize_available_result()
+            return finalize_result()
         try:
-            table_nodes, entity_nodes, table_edges, entity_edges = build_graph(
+            graph = build_graph(
                 documents,
                 deterministic_edges,
                 relation_decisions,
@@ -524,54 +532,10 @@ class RelationshipAnalyzer:
         except DeadlineExceeded as error:
             if str(error) not in warnings:
                 warnings.append(str(error))
-            return finalize_available_result()
+            return finalize_result()
 
-        diagnostics.strong_edges_created = sum(
-            relation.strength == "strong"
-            for edge in entity_edges
-            for relation in edge.relations
-        )
-        diagnostics.weak_edges_created = sum(
-            relation.strength == "weak"
-            for edge in entity_edges
-            for relation in edge.relations
-        )
+        result = finalize_result(graph)
         await emit("graph", "图谱组装完成。", 0.95)
-        no_trustworthy_output = not entity_edges
-        all_judgement_groups_failed = (
-            completed_groups == 0
-            and failed_groups > 0
-            and pending_groups == 0
-        )
-        incomplete = (
-            timed_out
-            or planner_failed
-            or structural_failed
-            or failed_groups > 0
-            or pending_groups > 0
-        )
-        if no_trustworthy_output and (
-            planner_failed or all_judgement_groups_failed
-        ):
-            status = AnalysisStatus.FAILED
-        elif incomplete:
-            status = AnalysisStatus.PARTIAL
-        else:
-            status = AnalysisStatus.COMPLETE
-            if not entity_edges:
-                warnings.append(
-                    "No relationships were found after all planned candidates completed."
-                )
-
-        result = AnalysisResult(
-            status=status,
-            table_nodes=table_nodes,
-            entity_nodes=entity_nodes,
-            table_edges=table_edges,
-            entity_edges=entity_edges,
-            diagnostics=diagnostics,
-            warnings=_safe_warnings(warnings),
-        )
         return result
 
     @staticmethod

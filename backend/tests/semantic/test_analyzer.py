@@ -690,6 +690,99 @@ async def test_structural_discovery_redacts_internal_error(engine, monkeypatch):
     assert "secret" not in str(result.model_dump())
 
 
+@pytest.mark.asyncio
+async def test_internal_structural_deadline_keeps_already_resolved_edges(
+    engine,
+    monkeypatch,
+):
+    from engine.semantic import analyzer, structural_relations
+
+    class Clock:
+        expired = False
+
+        def monotonic(self) -> float:
+            return 2.0 if self.expired else 0.0
+
+    clock = Clock()
+    _install_user_order_relation_table(engine)
+    real_resolve_endpoint = structural_relations._resolve_endpoint
+    resolved_endpoints = 0
+
+    def expire_after_first_resolved_pair(*args, **kwargs):
+        nonlocal resolved_endpoints
+        endpoint = real_resolve_endpoint(*args, **kwargs)
+        resolved_endpoints += 1
+        if resolved_endpoints == 2:
+            clock.expired = True
+        return endpoint
+
+    monkeypatch.setattr(analyzer, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(
+        structural_relations,
+        "_resolve_endpoint",
+        expire_after_first_resolved_pair,
+    )
+    result = await analyzer.RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="orders", dimensions=["amount"]),
+            ],
+            time_budget_seconds=1,
+        ),
+    )
+
+    assert result.status == AnalysisStatus.PARTIAL
+    assert sum(
+        evidence.method == "relation_table"
+        for edge in result.entity_edges
+        for relation in edge.relations
+        for evidence in relation.evidence
+    ) == 2
+    assert result.warnings == ["Analysis timed out."]
+
+
+@pytest.mark.asyncio
+async def test_structural_failure_without_trustworthy_edges_is_failed(
+    engine,
+    monkeypatch,
+):
+    from engine.semantic import analyzer
+
+    def failing_discovery(*args, **kwargs):
+        raise RuntimeError("relation discovery unavailable")
+
+    monkeypatch.setattr(
+        analyzer,
+        "build_relation_table_edges",
+        failing_discovery,
+    )
+    result = await analyzer.RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="products", dimensions=["title"]),
+            ]
+        ),
+    )
+
+    assert result.status == AnalysisStatus.FAILED
+    assert result.entity_edges == []
+    assert result.warnings == [
+        "Structural relation discovery failed (internal_error)."
+    ]
+
+
 def _install_user_order_relation_table(engine) -> None:
     with engine.begin() as connection:
         connection.execute(text(
