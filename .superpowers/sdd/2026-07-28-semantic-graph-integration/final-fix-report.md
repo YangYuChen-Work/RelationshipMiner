@@ -29,6 +29,10 @@ Implemented the Critical and Important items in `final-review-findings.md`.
   peak Python pair buffer 8 and explicit pair count 0.
 - `git diff --check` passed.
 
+## Commits
+
+- `c9a3404 fix: complete semantic graph final review wave`
+
 ## Concerns
 
 - SQLAlchemy reflection/query cancellation depends on the database driver.
