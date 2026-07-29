@@ -114,6 +114,28 @@ describe("GraphCanvas", () => {
     expect(vi.mocked(context.fillText).mock.calls.flat()).toContain(
       visibleEntity.id.replace("entity-", "Entity "),
     );
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    expect(screen.getAllByRole("searchbox")).toHaveLength(1);
+    fireEvent.change(search, { target: { value: "entity-6999" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("entity-6999");
+    const remote = computeGroupedLayout(
+      useAnalysisStore.getState().graph!,
+      { width: 960, height: 600 },
+    ).entityNodes.find((entity) => entity.id === "entity-6999")!;
+    const searchTransform = d3.zoomTransform(canvas);
+    expect(searchTransform.k).toBeGreaterThanOrEqual(1.2);
+    expect(searchTransform.apply([remote.x, remote.y])[0]).toBeCloseTo(480);
+    expect(searchTransform.apply([remote.x, remote.y])[1]).toBeCloseTo(300);
+    expect(container.querySelectorAll("[data-node-id]")).toHaveLength(0);
+    expect(container.querySelectorAll("[aria-live='polite']")).toHaveLength(1);
+    fireEvent.change(search, { target: { value: "missing-entity" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(container.querySelector("[aria-live='polite']")).toHaveTextContent(
+      "未找到实体",
+    );
   });
 
   it("renders empty, complete, partial, and failed analysis states", async () => {
@@ -155,6 +177,28 @@ describe("GraphCanvas", () => {
     expect(container.querySelector("[aria-live='polite']")).toHaveTextContent(
       "Account A",
     );
+    fireEvent.keyDown(canvas, { key: "Enter" });
+
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
+  });
+
+  it("navigates from table-only zoom to an entity and reveals it before selection", async () => {
+    const { container } = render(<GraphCanvas />);
+    await ready();
+    const canvas = container.querySelector("canvas")!;
+    fireEvent.wheel(canvas, {
+      clientX: 480,
+      clientY: 300,
+      deltaY: 5_000,
+    });
+    expect(d3.zoomTransform(canvas).k).toBe(0.25);
+
+    fireEvent.focus(canvas);
+    fireEvent.keyDown(canvas, { key: "ArrowDown" });
+    expect(container.querySelector("[aria-live='polite']")).toHaveTextContent(
+      "Account A",
+    );
+    expect(d3.zoomTransform(canvas).k).toBeGreaterThanOrEqual(1.2);
     fireEvent.keyDown(canvas, { key: "Enter" });
 
     expect(useAnalysisStore.getState().selectedNodeId).toBe("a");

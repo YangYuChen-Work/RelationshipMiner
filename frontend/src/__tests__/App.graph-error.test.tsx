@@ -5,13 +5,6 @@ import type { SemanticGraphData } from "../api/analysis";
 import { computeGroupedLayout } from "../graph/layout";
 import { useAnalysisStore } from "../store/analysis";
 
-vi.mock("../components/GraphToolbar", () => ({
-  default: () => <div data-testid="graph-toolbar" />,
-}));
-vi.mock("../components/NodeDetailPanel", () => ({
-  default: () => <aside data-testid="node-detail" />,
-}));
-
 const graph: SemanticGraphData = {
   table_nodes: [{ id: "users", display_name: "Users", entity_count: 1 }],
   entity_nodes: [
@@ -106,7 +99,12 @@ describe("App graph error result", () => {
         screen.getByRole("img", { name: /语义关系图/ }),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("分析超时");
+    expect(
+      screen.getAllByRole("alert").some((alert) =>
+        alert.textContent?.includes("分析超时") &&
+        alert.textContent.includes("仅显示已完成的关系"),
+      ),
+    ).toBe(true);
     expect(screen.queryByText("重新选择")).not.toBeInTheDocument();
   });
 

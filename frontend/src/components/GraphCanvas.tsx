@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import {
   createLayoutClient,
@@ -26,6 +26,10 @@ interface KeyboardTarget {
   label: string;
   x: number;
   y: number;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function getSize(element: HTMLElement) {
@@ -163,6 +167,7 @@ export default function GraphCanvas() {
   const [layout, setLayout] = useState<Awaited<ReturnType<LayoutClient["layoutGraph"]>> | null>(null);
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const graph = useAnalysisStore((state) => state.graph);
   const analysisStatus = useAnalysisStore((state) => state.analysisStatus);
@@ -179,6 +184,12 @@ export default function GraphCanvas() {
   const requestNodeFocus = useAnalysisStore((state) => state.requestNodeFocus);
   const selectEntityEdge = useAnalysisStore((state) => state.selectEntityEdge);
   const selectTableEdge = useAnalysisStore((state) => state.selectTableEdge);
+  const searchableEntities = useMemo(
+    () => [...(graph?.entity_nodes ?? [])].sort((left, right) =>
+      compareText(left.id, right.id),
+    ),
+    [graph],
+  );
 
   const invalidate = useCallback(() => {
     if (animationFrameRef.current !== null) return;
@@ -327,31 +338,59 @@ export default function GraphCanvas() {
   }, [setHoveredNode]);
 
   const keyboardTargets = useCallback((): KeyboardTarget[] => {
-    const scene = sceneRef.current;
-    if (!scene) return [];
-    return [
-      ...scene.tableNodes.map((node) => ({
-        hit: { kind: "table-node" as const, id: node.id },
-        label: `${node.label}，表`,
-        x: node.screen.x,
-        y: node.screen.y,
-      })),
-      ...scene.entityDots.map((node) => ({
-        hit: { kind: "entity-node" as const, id: node.id },
-        label: `${node.label}，实体`,
-        x: node.screen.x,
-        y: node.screen.y,
-      })),
-    ].sort((left, right) =>
-      left.y - right.y || left.x - right.x || left.hit.id.localeCompare(right.hit.id),
+    if (!graph || !layout) return [];
+    const tableData = new Map(
+      graph.table_nodes.map((table) => [table.id, table]),
     );
-  }, []);
+    const entityData = new Map(
+      graph.entity_nodes.map((entity) => [entity.id, entity]),
+    );
+    return [
+      ...layout.tableNodes.flatMap((node) => {
+        const table = tableData.get(node.id);
+        return table ? [{
+        hit: { kind: "table-node" as const, id: node.id },
+          label: `${table.display_name}，表`,
+          x: node.x,
+          y: node.y,
+        }] : [];
+      }),
+      ...layout.entityNodes.flatMap((node) => {
+        const entity = entityData.get(node.id);
+        return entity ? [{
+        hit: { kind: "entity-node" as const, id: node.id },
+          label: `${entity.display_name}，实体`,
+          x: node.x,
+          y: node.y,
+        }] : [];
+      }),
+    ].sort((left, right) =>
+      left.y - right.y || left.x - right.x || compareText(left.hit.id, right.hit.id),
+    );
+  }, [graph, layout]);
+
+  const revealKeyboardEntity = useCallback((target: KeyboardTarget) => {
+    if (
+      target.hit.kind !== "entity-node" ||
+      !zoomRef.current ||
+      !canvasRef.current
+    ) {
+      return;
+    }
+    const k = Math.max(1.2, d3.zoomTransform(canvasRef.current).k);
+    const transform = d3.zoomIdentity
+      .translate(viewport.width / 2, viewport.height / 2)
+      .scale(k)
+      .translate(-target.x, -target.y);
+    d3.select(canvasRef.current).call(zoomRef.current.transform, transform);
+  }, [viewport]);
 
   const setKeyboardTarget = useCallback((target: KeyboardTarget | null) => {
     keyboardTargetRef.current = target;
     lastHitRef.current = target?.hit ?? null;
     setKeyboardAnnouncement(target ? `当前目标：${target.label}` : "");
-  }, []);
+    if (target) revealKeyboardEntity(target);
+  }, [revealKeyboardEntity]);
 
   const moveKeyboardTarget = useCallback((key: string) => {
     const targets = keyboardTargets();
@@ -373,10 +412,47 @@ export default function GraphCanvas() {
         return leftDistance - rightDistance ||
           left.y - right.y ||
           left.x - right.x ||
-          left.hit.id.localeCompare(right.hit.id);
+          compareText(left.hit.id, right.hit.id);
       })[0];
     setKeyboardTarget(next);
   }, [keyboardTargets, setKeyboardTarget]);
+
+  const locateEntity = useCallback(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query || !layout) {
+      setKeyboardAnnouncement(query ? `未找到实体：${searchQuery.trim()}` : "请输入实体名称或 ID");
+      return;
+    }
+    const rankedMatches = [
+      (entity: (typeof searchableEntities)[number]) =>
+        entity.id.toLowerCase() === query,
+      (entity: (typeof searchableEntities)[number]) =>
+        entity.display_name.toLowerCase() === query,
+      (entity: (typeof searchableEntities)[number]) =>
+        entity.id.toLowerCase().startsWith(query) ||
+        entity.display_name.toLowerCase().startsWith(query),
+      (entity: (typeof searchableEntities)[number]) =>
+        entity.id.toLowerCase().includes(query) ||
+        entity.display_name.toLowerCase().includes(query),
+    ];
+    const entity = rankedMatches
+      .map((matches) => searchableEntities.find(matches))
+      .find((candidate) => candidate !== undefined);
+    const node = entity
+      ? layout.entityNodes.find((candidate) => candidate.id === entity.id)
+      : undefined;
+    if (!entity || !node) {
+      setKeyboardAnnouncement(`未找到实体：${searchQuery.trim()}`);
+      return;
+    }
+    setKeyboardTarget({
+      hit: { kind: "entity-node", id: entity.id },
+      label: `${entity.display_name}，实体`,
+      x: node.x,
+      y: node.y,
+    });
+    requestNodeFocus(entity.id);
+  }, [layout, requestNodeFocus, searchQuery, searchableEntities, setKeyboardTarget]);
 
   const focusSupportingRelations = useCallback((tableEdgeId: string) => {
     if (!graph || !layout || !zoomRef.current || !canvasRef.current) return;
@@ -476,6 +552,36 @@ export default function GraphCanvas() {
         }}
       />
       <span aria-live="polite" className="sr-only">{keyboardAnnouncement}</span>
+      {graph && (
+        <form
+          role="search"
+          className="absolute right-3 top-3 flex gap-1 rounded-md bg-slate-950/85 p-1.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            locateEntity();
+          }}
+        >
+          <input
+            type="search"
+            aria-label="查找实体"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                locateEntity();
+              }
+            }}
+            className="w-44 rounded bg-slate-800 px-2 py-1 text-xs text-slate-100"
+          />
+          <button
+            type="submit"
+            className="rounded bg-teal-400 px-2 py-1 text-xs font-semibold text-slate-950"
+          >
+            定位
+          </button>
+        </form>
+      )}
       {!graph && <p data-empty-warning className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-slate-400">等待分析结果生成语义关系图。</p>}
       {analysisStatus === "partial" && <p role="status" className="absolute left-3 top-3 rounded bg-amber-400/15 px-3 py-2 text-xs text-amber-100">分析部分完成，正在显示可用关系。</p>}
       {notice && <div role="alert" className="absolute bottom-3 left-3 right-3 rounded border border-amber-400/30 bg-slate-950/85 px-3 py-2 text-sm text-amber-100"><p>{notice}</p>{warnings.length > 0 && <ul className="mt-1 list-disc pl-5 text-xs text-amber-200">{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
