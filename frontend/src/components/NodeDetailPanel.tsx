@@ -19,12 +19,30 @@ function confidenceLabel(confidence: number): string {
 
 function shortClassName(className: string | null): string | null {
   if (!className) return null;
-  return className.split(/[.$]/).filter(Boolean).at(-1) ?? className;
+  const trimmed = className.trim();
+  if (!trimmed) return null;
+  return trimmed.split(/[.$]/).filter(Boolean).at(-1)?.trim() || null;
 }
 
-function entityLabel(entity: EntityNodeData): string {
+function comparableLabel(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+function entityLabel(entity: EntityNodeData, graph: SemanticGraphData): string {
+  const tableId = entity.table_id.trim() || entity.table_id;
   const shortName = shortClassName(entity.class_name);
-  return shortName ? `${entity.table_id} · ${shortName}` : entity.table_id;
+  const tableDisplayName = graph.table_nodes.find(
+    (table) => table.id === entity.table_id,
+  )?.display_name;
+  if (
+    !shortName ||
+    comparableLabel(shortName) === comparableLabel(tableId) ||
+    (tableDisplayName &&
+      comparableLabel(shortName) === comparableLabel(tableDisplayName))
+  ) {
+    return tableId;
+  }
+  return `${tableId} · ${shortName}`;
 }
 
 function directionLabel(direction: EntityRelationData["direction"]): string {
@@ -106,9 +124,23 @@ function TableEdgeDetails({ edge, graph }: { edge: TableEdgeData; graph: Semanti
           <ul className="mt-3 space-y-2">
             {edge.supporting_entity_edges.map((edgeId) => {
               const supportingEdge = edges.get(edgeId);
+              if (!supportingEdge) {
+                return (
+                  <li key={edgeId}>
+                    <button
+                      type="button"
+                      disabled
+                      className="w-full cursor-not-allowed rounded border border-slate-800 px-3 py-2 text-left font-mono text-xs text-slate-500"
+                    >
+                      <span className="block">{edgeId}</span>
+                      <span className="mt-1 block font-sans">支撑关系不可用</span>
+                    </button>
+                  </li>
+                );
+              }
               return <li key={edgeId}><button type="button" className="w-full rounded border border-slate-700 px-3 py-2 text-left font-mono text-xs text-teal-200 hover:border-teal-400" onClick={() => {
+                requestNodeFocus(supportingEdge.source);
                 selectEntityEdge(edgeId);
-                if (supportingEdge) requestNodeFocus(supportingEdge.source);
               }}>{edgeId}</button></li>;
             })}
           </ul>
@@ -128,7 +160,7 @@ function NodeDetails({ node, graph }: { node: EntityNodeData; graph: SemanticGra
         <div className="flex items-start justify-between gap-3"><h2 className="text-sm font-semibold text-slate-100">节点概览</h2><button type="button" onClick={() => setSelectedNode(null)} className="rounded p-1 text-slate-400 hover:bg-slate-800 lg:hidden" aria-label="关闭节点详情">×</button></div>
         <dl className="mt-3 space-y-3 text-sm">
           <div><dt className="text-xs text-slate-400">完整 ID</dt><dd className="mt-1 break-all font-mono text-xs text-slate-100">{node.id}</dd></div>
-          <div><dt className="text-xs text-slate-400">实体类型</dt><dd className="mt-1 text-slate-100">{entityLabel(node)}</dd></div>
+          <div><dt className="text-xs text-slate-400">实体类型</dt><dd className="mt-1 text-slate-100">{entityLabel(node, graph)}</dd></div>
           <div><dt className="text-xs text-slate-400">显示名称</dt><dd className="mt-1 text-slate-100">{node.display_name}</dd></div>
         </dl>
       </section>

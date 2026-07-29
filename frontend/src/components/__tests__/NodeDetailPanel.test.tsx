@@ -10,10 +10,10 @@ const graph: SemanticGraphData = {
     { id: "orders", display_name: "Orders", entity_count: 1 },
   ],
   entity_nodes: [
-    { id: "users|1", table_id: "users", display_name: "Alice", class_name: "com.example.User", dimensions: { id: 1, name: "Alice", metadata: { active: true } } },
+    { id: "users|1", table_id: "users", display_name: "Alice", class_name: "  com.example.User  ", dimensions: { id: 1, name: "Alice", metadata: { active: true } } },
     { id: "orders|101", table_id: "orders", display_name: "Order 101", class_name: null, dimensions: { id: 101, user_id: 1 } },
   ],
-  table_edges: [{ id: "users--orders", source_table: "users", target_table: "orders", relation_types: ["places"], strong_count: 1, weak_count: 1, entity_edge_count: 1, average_confidence: 0.85, supporting_entity_edges: ["users|1--orders|101"] }],
+  table_edges: [{ id: "users--orders", source_table: "users", target_table: "orders", relation_types: ["places"], strong_count: 1, weak_count: 1, entity_edge_count: 2, average_confidence: 0.85, supporting_entity_edges: ["users|1--orders|101", "missing-support"] }],
   entity_edges: [{ id: "users|1--orders|101", source: "users|1", target: "orders|101", relations: [
     { source: "users|1", target: "orders|101", relation_type: "places", direction: "source_to_target", strength: "strong", confidence: 0.9, explanation: "The order belongs to the user.", evidence: [{ source_field: "id", source_value: 1, target_field: "user_id", target_value: 1, method: "foreign_key", reason: "orders.user_id references users.id" }], model_id: "model-42", task_id: "task-7" },
     { source: "users|1", target: "orders|101", relation_type: "owns", direction: "target_to_source", strength: "weak", confidence: 0.7, explanation: "Semantic fallback.", evidence: [], model_id: null, task_id: null },
@@ -33,8 +33,36 @@ describe("NodeDetailPanel", () => {
   it("renders table and short class metadata only when a class exists", () => {
     useAnalysisStore.setState({ selectedNodeId: "users|1" });
     render(<NodeDetailPanel />);
-    expect(screen.getByText("users · User")).toBeInTheDocument();
+    expect(screen.getByText("实体类型").nextElementSibling?.textContent).toBe(
+      "users · User",
+    );
     expect(screen.getByText(/"active": true/)).toBeInTheDocument();
+  });
+
+  it("omits blank or table-equivalent class suffixes", () => {
+    useAnalysisStore.setState({
+      graph: {
+        ...graph,
+        entity_nodes: [
+          { ...graph.entity_nodes[0], class_name: "   " },
+          {
+            ...graph.entity_nodes[1],
+            class_name: " com.example.ORDERS ",
+          },
+        ],
+      },
+      selectedNodeId: "users|1",
+    });
+    const { rerender } = render(<NodeDetailPanel />);
+    expect(screen.getByText("实体类型").nextElementSibling?.textContent).toBe(
+      "users",
+    );
+
+    useAnalysisStore.setState({ selectedNodeId: "orders|101" });
+    rerender(<NodeDetailPanel />);
+    expect(screen.getByText("实体类型").nextElementSibling?.textContent).toBe(
+      "orders",
+    );
   });
 
   it("renders every relation and its evidence for a selected entity edge", () => {
@@ -62,5 +90,21 @@ describe("NodeDetailPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "users|1--orders|101" }));
     expect(useAnalysisStore.getState().selectedEntityEdgeId).toBe("users|1--orders|101");
     expect(useAnalysisStore.getState().focusNodeRequest?.nodeId).toBe("users|1");
+  });
+
+  it("keeps the table aggregate selected when a referenced supporting edge is unavailable", () => {
+    useAnalysisStore.setState({ selectedTableEdgeId: "users--orders" });
+    render(<NodeDetailPanel />);
+
+    const unavailable = screen.getByRole("button", {
+      name: /missing-support.*支撑关系不可用/,
+    });
+    expect(unavailable).toBeDisabled();
+
+    fireEvent.click(unavailable);
+
+    expect(screen.getByText("表关系汇总")).toBeInTheDocument();
+    expect(useAnalysisStore.getState().selectedTableEdgeId).toBe("users--orders");
+    expect(useAnalysisStore.getState().selectedEntityEdgeId).toBeNull();
   });
 });

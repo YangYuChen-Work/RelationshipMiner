@@ -73,8 +73,12 @@ describe("App graph error result", () => {
       phase: "error",
       graph,
       analysisStatus: "failed",
+      taskId: "task-failed-with-graph",
       errorMessage: "分析超时",
       warnings: ["仅显示已完成的关系"],
+      selectedNodeId: "user-1",
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
     });
   });
 
@@ -91,7 +95,7 @@ describe("App graph error result", () => {
     });
   });
 
-  it("keeps the real graph canvas mounted with a non-blocking error", async () => {
+  it("keeps the complete real workbench available behind a non-blocking failure banner", async () => {
     render(<App />);
 
     await waitFor(() =>
@@ -105,6 +109,11 @@ describe("App graph error result", () => {
         alert.textContent.includes("仅显示已完成的关系"),
       ),
     ).toBe(true);
+    expect(screen.getByRole("button", { name: "导出 JSON" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "新分析" })).toBeEnabled();
+    expect(screen.getByText("节点概览")).toBeInTheDocument();
+    expect(screen.getByText("user-1")).toBeInTheDocument();
+    expect(screen.getByText("users · User")).toBeInTheDocument();
     expect(screen.queryByText("重新选择")).not.toBeInTheDocument();
   });
 

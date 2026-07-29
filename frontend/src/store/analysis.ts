@@ -481,12 +481,19 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   },
 
   setSelectedNode: (id) => {
-    set({ selectedNodeId: id });
+    set({
+      selectedNodeId: id,
+      ...(id
+        ? { selectedEntityEdgeId: null, selectedTableEdgeId: null }
+        : {}),
+    });
   },
 
   requestNodeFocus: (id) => {
     set((state) => ({
       selectedNodeId: id,
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
       focusNodeRequest: {
         nodeId: id,
         version: (state.focusNodeRequest?.version ?? 0) + 1,
@@ -507,10 +514,18 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   },
 
   selectEntityEdge: (id) => {
-    set({ selectedEntityEdgeId: id, selectedTableEdgeId: null });
+    set({
+      selectedNodeId: null,
+      selectedEntityEdgeId: id,
+      selectedTableEdgeId: null,
+    });
   },
 
   selectTableEdge: (id) => {
-    set({ selectedEntityEdgeId: null, selectedTableEdgeId: id });
+    set({
+      selectedNodeId: null,
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: id,
+    });
   },
 }));

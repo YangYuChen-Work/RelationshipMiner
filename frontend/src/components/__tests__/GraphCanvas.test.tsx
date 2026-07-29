@@ -157,6 +157,10 @@ describe("GraphCanvas", () => {
   });
 
   it("selects an entity through spatial pointer hit testing", async () => {
+    useAnalysisStore.setState({
+      selectedEntityEdgeId: "a--invoice",
+      selectedTableEdgeId: null,
+    });
     render(<GraphCanvas />);
     await ready();
     const canvas = screen.getByRole("img", { name: /语义关系图/ });
@@ -165,6 +169,29 @@ describe("GraphCanvas", () => {
     fireEvent.pointerMove(canvas, { clientX: point[0], clientY: point[1] });
     fireEvent.click(canvas, { clientX: point[0], clientY: point[1] });
     expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
+    expect(useAnalysisStore.getState().selectedEntityEdgeId).toBeNull();
+    expect(useAnalysisStore.getState().selectedTableEdgeId).toBeNull();
+  });
+
+  it("selects an entity edge through the real canvas and clears node selection", async () => {
+    useAnalysisStore.setState({ selectedNodeId: "b" });
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = screen.getByRole("img", { name: /语义关系图/ });
+    const edge = computeGroupedLayout(graph, {
+      width: 960,
+      height: 600,
+    }).entityEdges.find((candidate) => candidate.id === "a--invoice")!;
+    const point = d3.zoomTransform(canvas).apply([
+      (edge.from.x + edge.to.x) / 2,
+      (edge.from.y + edge.to.y) / 2,
+    ]);
+
+    fireEvent.click(canvas, { clientX: point[0], clientY: point[1] });
+
+    expect(useAnalysisStore.getState().selectedEntityEdgeId).toBe("a--invoice");
+    expect(useAnalysisStore.getState().selectedTableEdgeId).toBeNull();
+    expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
   });
 
   it("navigates and selects a visible entity using only the keyboard", async () => {
