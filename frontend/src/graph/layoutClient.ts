@@ -35,6 +35,8 @@ export class LayoutClient {
   private readonly worker: Worker;
   private nextRequestId = 0;
   private disposed = false;
+  private workerTerminated = false;
+  private unavailableError: Error | null = null;
   private readonly pending = new Map<number, PendingLayout>();
 
   constructor(worker?: Worker) {
@@ -45,14 +47,19 @@ export class LayoutClient {
       this.receive(event.data);
     };
     this.worker.onerror = () => {
-      this.rejectAll(new Error("The graph layout worker failed."));
+      this.failWorker(new Error("The graph layout worker failed."));
+    };
+    this.worker.onmessageerror = () => {
+      this.failWorker(
+        new Error("The graph layout worker failed to deserialize a message."),
+      );
     };
   }
 
   layoutGraph(graph: LayoutGraph, viewport: Viewport): Promise<GraphLayout> {
     if (this.disposed) return Promise.reject(new LayoutClientDisposedError());
+    if (this.unavailableError) return Promise.reject(this.unavailableError);
 
-    this.rejectAll(new StaleLayoutRequestError());
     const requestId = ++this.nextRequestId;
     return new Promise<GraphLayout>((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
@@ -60,8 +67,11 @@ export class LayoutClient {
         const request: LayoutWorkerRequest = { requestId, graph, viewport };
         this.worker.postMessage(request);
       } catch (error) {
-        this.pending.delete(requestId);
-        reject(error);
+        this.failWorker(
+          error instanceof Error
+            ? error
+            : new Error("The graph layout worker rejected a request."),
+        );
       }
     });
   }
@@ -75,8 +85,27 @@ export class LayoutClient {
     if (this.disposed) return;
     this.disposed = true;
     this.rejectAll(new LayoutClientDisposedError());
+    this.detachWorker();
+    this.terminateWorker();
+  }
+
+  private failWorker(error: Error) {
+    if (this.disposed || this.unavailableError) return;
+    this.unavailableError = error;
+    this.rejectAll(error);
+    this.detachWorker();
+    this.terminateWorker();
+  }
+
+  private detachWorker() {
     this.worker.onmessage = null;
     this.worker.onerror = null;
+    this.worker.onmessageerror = null;
+  }
+
+  private terminateWorker() {
+    if (this.workerTerminated) return;
+    this.workerTerminated = true;
     this.worker.terminate();
   }
 

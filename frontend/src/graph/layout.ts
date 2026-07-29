@@ -3,7 +3,6 @@ import type {
   EntityNodeData,
   SemanticGraphData,
   TableEdgeData,
-  TableNodeData,
 } from "../api/analysis";
 
 export interface Viewport {
@@ -67,9 +66,17 @@ function compareIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function uniqueSortedIds(nodes: readonly TableNodeData[]): string[] {
-  const sorted = nodes.map((node) => node.id).sort(compareIds);
-  return sorted.filter((id, index) => index === 0 || id !== sorted[index - 1]);
+function assertUniqueIds(
+  collection: readonly { id: string }[],
+  label: string,
+) {
+  const seen = new Set<string>();
+  for (const item of collection) {
+    if (seen.has(item.id)) {
+      throw new Error(`Duplicate ${label} id "${item.id}".`);
+    }
+    seen.add(item.id);
+  }
 }
 
 function sortedEntitiesByTable(
@@ -129,7 +136,12 @@ export function computeGroupedLayout(
   graph: LayoutGraph,
   _viewport: Viewport,
 ): GraphLayout {
-  const tableIds = uniqueSortedIds(graph.table_nodes);
+  assertUniqueIds(graph.table_nodes, "table node");
+  assertUniqueIds(graph.entity_nodes, "entity node");
+  assertUniqueIds(graph.table_edges, "table edge");
+  assertUniqueIds(graph.entity_edges, "entity edge");
+
+  const tableIds = graph.table_nodes.map((node) => node.id).sort(compareIds);
   const tableIdSet = new Set(tableIds);
   const entitiesByTable = sortedEntitiesByTable(graph.entity_nodes, tableIdSet);
   const largestGroup = Math.max(
