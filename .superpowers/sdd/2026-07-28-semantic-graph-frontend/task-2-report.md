@@ -37,3 +37,20 @@ unchecked with `自动用于实体 ID` and `用于节点展示` respectively.
 - `npm --prefix frontend run build` is blocked by the same incomplete Task 1
   graph-view migration (`GraphData` versus `SemanticGraphData`). No fallback
   was added because it is outside Task 2.
+
+## Follow-up hardening
+
+### RED → GREEN
+
+- Added a stale/unknown-field regression: after selecting `email`, toggling
+  PK, class metadata, or a field absent from the current table leaves
+  `selectedFields` unchanged. RED showed `stale_field` being added.
+- Added accessibility assertions that each disabled system-field checkbox has
+  an `aria-describedby` value targeting its visible purpose text. RED showed
+  no association.
+- GREEN: the same three-file focused suite passed 29 tests; focused TypeScript
+  and `git diff --check` passed.
+
+### Commit
+
+- `da0116bc5e430b56638aabb7caa7ac614b33f628` — `fix: guard stale field selections and describe system fields`
