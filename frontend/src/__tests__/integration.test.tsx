@@ -152,6 +152,7 @@ class FakeWebSocket {
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   onclose: (() => void) | null = null;
+  closeCalls = 0;
   static instances: FakeWebSocket[] = [];
 
   constructor(url: string) {
@@ -167,7 +168,16 @@ class FakeWebSocket {
   }
 
   close() {
+    this.closeCalls += 1;
     if (this.onclose) this.onclose();
+  }
+
+  async serverClose() {
+    const callback = this.onclose;
+    await act(async () => {
+      callback?.();
+      await Promise.resolve();
+    });
   }
 }
 
@@ -892,6 +902,51 @@ describe("Integration: full user flow", () => {
 
     expect(container.querySelectorAll("canvas")).toHaveLength(1);
     expect(container.querySelectorAll("[data-node-id]")).toHaveLength(0);
+  });
+
+  it("reports a pure server close after progress and cleans up the active socket", async () => {
+    setupFetchMock();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("users")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("users").closest("label")!);
+    await waitFor(() => {
+      expect(screen.getByText("email")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("开始分析"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+    const socket = FakeWebSocket.instances[0];
+    await socket.sendMessage({
+      phase: "candidates",
+      message: "正在检索候选关系...",
+      progress: 0.6,
+    });
+    await waitFor(() => {
+      expect(screen.getByText("检索候选关系")).toBeInTheDocument();
+      expect(screen.getByText("60%")).toBeInTheDocument();
+    });
+    expect(useAnalysisStore.getState().activeSocket).toBe(socket);
+
+    await socket.serverClose();
+
+    await waitFor(() => {
+      expect(screen.getByText("分析连接意外断开")).toBeInTheDocument();
+    });
+    expect(useAnalysisStore.getState()).toMatchObject({
+      phase: "error",
+      errorMessage: "分析连接意外断开",
+      activeSocket: null,
+    });
+    expect(socket.closeCalls).toBe(1);
+    expect(socket.onmessage).toBeNull();
+    expect(socket.onerror).toBeNull();
+    expect(socket.onclose).toBeNull();
   });
 
   it("handles WebSocket onError connection failure", async () => {

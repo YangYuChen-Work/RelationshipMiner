@@ -20,6 +20,8 @@ const EDGE = "#52677a";
 const TABLE_EDGE = "#8fa0b0";
 const MAX_ENTITY_LABELS = 500;
 const LABEL_VIEWPORT_PADDING = 24;
+const CANVAS_CONTEXT_ERROR =
+  "无法创建 Canvas 2D 上下文，当前浏览器不支持图谱画布。";
 
 interface KeyboardTarget {
   hit: HitTarget;
@@ -216,6 +218,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const [viewport, setViewport] = useState(viewportRef.current);
   const [layout, setLayout] = useState<Awaited<ReturnType<LayoutClient["layoutGraph"]>> | null>(null);
   const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [canvasError, setCanvasError] = useState<string | null>(null);
   const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sceneGeneration, setSceneGeneration] = useState(0);
@@ -245,6 +248,25 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     [graph],
   );
 
+  const acquireCanvasContext = useCallback(
+    (canvas: HTMLCanvasElement): CanvasRenderingContext2D | null => {
+      const context = canvas.getContext("2d");
+      if (!context) {
+        drawnGenerationRef.current = null;
+        lastHitGenerationRef.current = null;
+        setReadyGeneration(null);
+        setCanvasError(CANVAS_CONTEXT_ERROR);
+        return null;
+      }
+
+      const ratio = window.devicePixelRatio || 1;
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      setCanvasError(null);
+      return context;
+    },
+    [],
+  );
+
   const invalidate = useCallback((generation = sceneGenerationRef.current) => {
     if (
       animationFrameRef.current !== null &&
@@ -269,7 +291,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       const scene = sceneRef.current;
       const inputs = sceneInputsRef.current;
       if (!canvas || !scene || inputs?.generation !== generation) return;
-      const context = canvas.getContext("2d");
+      const context = acquireCanvasContext(canvas);
       if (!context) return;
       drawScene(context, scene, viewportRef.current.width, viewportRef.current.height, selectedNodeRef.current, hoveredNodeRef.current);
       drawnGenerationRef.current = generation;
@@ -279,7 +301,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       setReadyGeneration(generation);
     });
     if (animationFrameRef.current === -1) animationFrameRef.current = frame;
-  }, []);
+  }, [acquireCanvasContext]);
 
   useEffect(() => {
     selectedNodeRef.current = selectedNodeId;
@@ -367,10 +389,10 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     canvas.height = Math.round(viewport.height * ratio);
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
-    const context = canvas.getContext("2d");
-    context?.setTransform(ratio, 0, 0, ratio, 0, 0);
+    const context = acquireCanvasContext(canvas);
+    if (!context) return;
     rebuildCurrentScene();
-  }, [rebuildCurrentScene, viewport]);
+  }, [acquireCanvasContext, rebuildCurrentScene, viewport]);
 
   useEffect(() => {
     if (!graph) {
@@ -637,6 +659,13 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     d3.select(canvasRef.current).call(zoomRef.current.transform, transform);
   }, [layout, viewport]);
 
+  const retryCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !sceneSourceRef.current) return;
+    if (!acquireCanvasContext(canvas)) return;
+    rebuildCurrentScene();
+  }, [acquireCanvasContext, rebuildCurrentScene]);
+
   const selectHit = useCallback((target: HitTarget | null) => {
     if (!target) {
       setSelectedNode(null);
@@ -730,6 +759,21 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         }}
       />
       <span aria-live="polite" className="sr-only">{keyboardAnnouncement}</span>
+      {canvasError && (
+        <div
+          role="alert"
+          className="absolute bottom-3 left-3 right-3 z-10 rounded border border-rose-400/30 bg-slate-950/90 px-3 py-2 text-sm text-rose-100"
+        >
+          <p>{canvasError}</p>
+          <button
+            type="button"
+            onClick={retryCanvas}
+            className="mt-2 rounded border border-rose-300/50 px-2 py-1 text-xs font-medium text-rose-100 hover:border-rose-200"
+          >
+            重试画布
+          </button>
+        </div>
+      )}
       {graph && (
         <form
           role="search"

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import type { SemanticGraphData } from "../../api/analysis";
 import GraphWorkbench from "../GraphWorkbench";
 import { useAnalysisStore } from "../../store/analysis";
@@ -8,7 +8,13 @@ const emptyGraph: SemanticGraphData = { table_nodes: [], entity_nodes: [], table
 
 describe("GraphWorkbench analysis status", () => {
   beforeEach(() => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     useAnalysisStore.setState({ phase: "done", taskId: "task-empty", graph: emptyGraph, confidenceThreshold: 0, selectedNodeId: null, selectedEntityEdgeId: null, selectedTableEdgeId: null, warnings: [], diagnostics: null, analysisStatus: "complete" });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
   });
 
   it("distinguishes a complete analysis with no relationships", () => {

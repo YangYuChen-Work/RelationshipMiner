@@ -420,6 +420,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
           if (!ownsRun()) return;
           const state = get();
           set({ activeSocket: null });
+          closeAnalysisSocket(socket);
           if (state.phase === "analyzing") {
             set({
               phase: "error",

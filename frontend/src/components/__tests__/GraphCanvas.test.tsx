@@ -64,6 +64,34 @@ async function ready() {
   await waitFor(() => expect(screen.getByRole("img", { name: /语义关系图/ })).toHaveAttribute("data-scene-ready", "true"));
 }
 
+function controlledFrames() {
+  const callbacks = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  const request = vi.fn((callback: FrameRequestCallback) => {
+    const id = ++nextFrame;
+    callbacks.set(id, callback);
+    return id;
+  });
+  const cancel = vi.fn((id: number) => callbacks.delete(id));
+  vi.stubGlobal("requestAnimationFrame", request);
+  vi.stubGlobal("cancelAnimationFrame", cancel);
+
+  return {
+    callbacks,
+    request,
+    cancel,
+    async flushLatest() {
+      await waitFor(() => expect(callbacks.size).toBe(1));
+      const [id, callback] = [...callbacks.entries()][0];
+      callbacks.delete(id);
+      await act(async () => {
+        callback(16);
+        await Promise.resolve();
+      });
+    },
+  };
+}
+
 describe("GraphCanvas", () => {
   beforeEach(() => {
     LayoutWorker.instances = [];
@@ -82,6 +110,104 @@ describe("GraphCanvas", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     act(() => setGraph(null));
+  });
+
+  it("shows a stable Canvas 2D fallback without marking the scene ready or retrying RAF forever", async () => {
+    const frames = controlledFrames();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(null);
+
+    render(<GraphCanvas />);
+    const canvas = screen.getByRole("img", { name: /语义关系图/ });
+    await waitFor(() =>
+      expect(canvas).not.toHaveAttribute("data-scene-generation", "0"),
+    );
+    await frames.flushLatest();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "无法创建 Canvas 2D",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("浏览器不支持");
+    expect(canvas).toHaveAttribute("data-scene-ready", "false");
+    expect(canvas).toHaveAttribute("data-ready-generation", "");
+
+    const requestsAfterFailure = frames.request.mock.calls.length;
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(frames.request).toHaveBeenCalledTimes(requestsAfterFailure);
+    expect(frames.callbacks.size).toBe(0);
+  });
+
+  it("retries the current scene after a Canvas 2D context becomes available", async () => {
+    const frames = controlledFrames();
+    const context = canvasContext();
+    let availableContext: CanvasRenderingContext2D | null = null;
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockImplementation(
+      () => availableContext,
+    );
+
+    render(<GraphCanvas />);
+    const canvas = screen.getByRole("img", { name: /语义关系图/ });
+    await waitFor(() =>
+      expect(canvas).not.toHaveAttribute("data-scene-generation", "0"),
+    );
+    await frames.flushLatest();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "无法创建 Canvas 2D",
+    );
+
+    const failedGeneration = canvas.getAttribute("data-scene-generation");
+    availableContext = context;
+    fireEvent.click(screen.getByRole("button", { name: "重试画布" }));
+    await waitFor(() =>
+      expect(canvas).not.toHaveAttribute(
+        "data-scene-generation",
+        failedGeneration,
+      ),
+    );
+    await frames.flushLatest();
+
+    await waitFor(() =>
+      expect(canvas).toHaveAttribute("data-scene-ready", "true"),
+    );
+    expect(screen.queryByText(/无法创建 Canvas 2D/)).not.toBeInTheDocument();
+    expect(context.setTransform).toHaveBeenCalled();
+  });
+
+  it("recovers a missing Canvas 2D context through the existing relayout path", async () => {
+    const frames = controlledFrames();
+    const context = canvasContext();
+    let availableContext: CanvasRenderingContext2D | null = null;
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockImplementation(
+      () => availableContext,
+    );
+
+    render(<GraphCanvas />);
+    const canvas = screen.getByRole("img", { name: /语义关系图/ });
+    await waitFor(() =>
+      expect(canvas).not.toHaveAttribute("data-scene-generation", "0"),
+    );
+    await frames.flushLatest();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "无法创建 Canvas 2D",
+    );
+
+    const failedGeneration = canvas.getAttribute("data-scene-generation");
+    availableContext = context;
+    act(() => useAnalysisStore.getState().requestRelayout());
+    await waitFor(() =>
+      expect(canvas).not.toHaveAttribute(
+        "data-scene-generation",
+        failedGeneration,
+      ),
+    );
+    await frames.flushLatest();
+
+    await waitFor(() =>
+      expect(canvas).toHaveAttribute("data-scene-ready", "true"),
+    );
+    expect(screen.queryByText(/无法创建 Canvas 2D/)).not.toBeInTheDocument();
   });
 
   it("does not expose interaction until the committed scene has drawn, then accepts the first click", async () => {
