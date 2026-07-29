@@ -27,7 +27,7 @@ unchecked with `自动用于实体 ID` and `用于节点展示` respectively.
 
 ## Commit
 
-- `PENDING` — `feat: select semantic dimensions independently`
+- `27bff5d551ca8768b9af877946dfe6e5b15c203b` — `feat: select semantic dimensions independently`
 
 ## Known cross-task failures
 
