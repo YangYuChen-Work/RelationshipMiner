@@ -149,9 +149,16 @@ async def test_json_adapter_repairs_non_object_json_once():
         _completion(""),
         _completion('{"plans": [', finish_reason="length"),
         _completion("not json"),
+        _completion("[]"),
         _completion('{"wrong": []}'),
     ],
-    ids=["empty", "truncated", "invalid-json", "pydantic-invalid"],
+    ids=[
+        "empty",
+        "truncated",
+        "invalid-json",
+        "non-object",
+        "pydantic-invalid",
+    ],
 )
 async def test_json_adapter_raises_after_second_invalid_output(
     bad_response: SimpleNamespace,
@@ -174,6 +181,23 @@ async def test_json_adapter_raises_after_second_invalid_output(
         )
 
     assert create.await_count == 2
+
+
+class _TransparentJsonAdapter:
+    def __init__(self, delegate: DeepSeekJsonAdapter):
+        self._delegate = delegate
+
+    async def complete_json(
+        self,
+        messages: list[dict[str, object]],
+        max_tokens: int,
+        response_model: type[BaseModel] | None = None,
+    ) -> dict[str, object]:
+        return await self._delegate.complete_json(
+            messages,
+            max_tokens,
+            response_model=response_model,
+        )
 
 
 def _scope() -> AnalysisScope:
@@ -324,9 +348,14 @@ class _RecordingLlm:
         self,
         messages: list[dict[str, object]],
         max_tokens: int,
+        response_model: type[BaseModel] | None = None,
     ) -> dict[str, object]:
         self.messages = messages
         self.max_tokens = max_tokens
+        if response_model is not None:
+            return response_model.model_validate(
+                self.payload
+            ).model_dump()
         return self.payload
 
 
@@ -441,3 +470,35 @@ async def test_planner_retries_pydantic_invalid_plan_with_validation_errors():
     repair_prompt = create.await_args.kwargs["messages"][-1]["content"]
     assert "source_dimensions" in repair_prompt
     assert "validation" in repair_prompt.lower()
+
+
+@pytest.mark.asyncio
+async def test_transparent_adapter_keeps_planner_to_two_sdk_attempts():
+    invalid_plan = json.dumps(
+        {
+            "plans": [
+                {
+                    "source_table": "process",
+                    "target_table": "part",
+                    "relation_type": "process_uses_part",
+                }
+            ]
+        }
+    )
+    adapter, create = _adapter_with_responses(
+        _completion("not json"),
+        _completion(invalid_plan),
+        _completion("not json"),
+        _completion(invalid_plan),
+    )
+
+    with pytest.raises(LlmBatchError):
+        await RelationshipPlanner(
+            _TransparentJsonAdapter(adapter)
+        ).plan(
+            _scope(),
+            _schemas(),
+            _samples(),
+        )
+
+    assert create.await_count == 2

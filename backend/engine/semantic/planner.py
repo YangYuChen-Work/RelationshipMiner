@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
-from engine.deepseek_client import DeepSeekJsonAdapter, LlmBatchError
 from engine.schema_analyzer import TableSchema
 
 from .interfaces import JsonLlmAdapter
@@ -44,43 +43,12 @@ class RelationshipPlanner:
         self,
         messages: list[dict[str, object]],
     ) -> _PlanEnvelope:
-        if isinstance(self._llm, DeepSeekJsonAdapter):
-            payload = await self._llm.complete_json(
-                messages,
-                max_tokens=4096,
-                response_model=_PlanEnvelope,
-            )
-            return _PlanEnvelope.model_validate(payload)
-
-        attempt_messages = [dict(message) for message in messages]
-        last_error: Exception | None = None
-        for attempt in range(2):
-            payload = await self._llm.complete_json(
-                attempt_messages,
-                max_tokens=4096,
-            )
-            try:
-                return _PlanEnvelope.model_validate(payload)
-            except (ValidationError, TypeError, ValueError) as error:
-                last_error = error
-                if attempt == 1:
-                    break
-                attempt_messages = [
-                    *attempt_messages,
-                    {
-                        "role": "user",
-                        "content": (
-                            "The previous JSON response failed "
-                            f"validation: {error}. Return one corrected "
-                            "JSON object matching the requested example."
-                        ),
-                    },
-                ]
-
-        raise LlmBatchError(
-            "Relationship plan validation failed after two attempts: "
-            f"{last_error}"
-        ) from last_error
+        payload = await self._llm.complete_json(
+            messages,
+            max_tokens=4096,
+            response_model=_PlanEnvelope,
+        )
+        return _PlanEnvelope.model_validate(payload)
 
 
 def _allowed_dimensions(
