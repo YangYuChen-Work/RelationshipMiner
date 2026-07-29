@@ -5,7 +5,15 @@ from sqlalchemy.pool import StaticPool
 from engine.schema_analyzer import analyze_schema
 from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.models import EntityDocument
-from engine.semantic.structural_relations import build_relation_table_edges
+from engine.semantic.structural_relations import (
+    _relation_id_chunk_size,
+    build_relation_table_edges,
+)
+
+
+def test_mysql_relation_id_chunks_use_driver_safe_bulk_size():
+    assert _relation_id_chunk_size("sqlite") == 400
+    assert _relation_id_chunk_size("mysql") == 10_000
 
 
 def test_relation_table_duplicate_rows_merge_to_one_process_operation_edge():

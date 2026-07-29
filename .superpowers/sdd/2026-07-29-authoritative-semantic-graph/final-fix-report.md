@@ -114,3 +114,17 @@ The user-owned `.gitignore` modification and untracked `.playwright-cli/` and
 `output/` trees were neither edited nor staged. The final commit is limited to
 the backend/frontend production changes, their regression tests, and this
 report.
+
+## Live all-column acceptance follow-up
+
+A fresh real-database run exposed a dialect batching regression after the
+review fix: applying SQLite's 400-ID chunk to MySQL repeated relation-table
+queries enough to return only 127 partial edges in 119.05 seconds. A focused
+RED/GREEN follow-up now keeps SQLite at 400 parameters while using a
+MySQL-safe 10,000-ID batch.
+
+The same four real tables with every column selected then completed in
+13.94 seconds with 7,056 entities, 186 unique directed relations, 195
+connected entities, 6,861 isolated entities, five table relationships, and
+zero warnings. Family counts remained 35/87/41/22/1. Full verification after
+the correction passed: backend 240, frontend 160, lint, build, and diff check.

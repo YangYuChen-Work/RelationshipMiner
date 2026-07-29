@@ -31,7 +31,8 @@ _DIRECTED_RELATION_TYPES = {
 }
 _MATERIAL_RELATION_TYPE = "关联物料"
 _DEFAULT_RELATION_TYPE = "结构关联"
-_ID_CHUNK_SIZE = 400
+_SQLITE_ID_CHUNK_SIZE = 400
+_MYSQL_ID_CHUNK_SIZE = 10_000
 _ROW_BATCH_SIZE = 128
 
 
@@ -106,6 +107,7 @@ def _resolve_relation_table_edges(
         schema_result,
         documents,
     )
+    id_chunk_size = _relation_id_chunk_size(engine.dialect.name)
 
     for table_name in relation_tables:
         _check_deadline(check_deadline, f"读取关系表 {table_name} 前")
@@ -117,8 +119,8 @@ def _resolve_relation_table_edges(
         for left_class, right_class in product(endpoint_indexes, repeat=2):
             left_ids = list(endpoint_indexes[left_class])
             right_ids = list(endpoint_indexes[right_class])
-            for left_id_chunk in _chunks(left_ids, _ID_CHUNK_SIZE):
-                for right_id_chunk in _chunks(right_ids, _ID_CHUNK_SIZE):
+            for left_id_chunk in _chunks(left_ids, id_chunk_size):
+                for right_id_chunk in _chunks(right_ids, id_chunk_size):
                     stage = f"读取关系表 {table_name}"
                     _check_deadline(check_deadline, stage)
                     statement = (
@@ -289,6 +291,17 @@ def _chunks(values: list[str], size: int) -> list[list[str]]:
         values[offset : offset + size]
         for offset in range(0, len(values), size)
     ]
+
+
+def _relation_id_chunk_size(dialect_name: str) -> int:
+    """Use bulk MySQL predicates without exceeding its parameter ceiling.
+
+    SQLite keeps the conservative test/runtime size because deployed SQLite
+    builds can retain a much smaller host-parameter limit.
+    """
+    if dialect_name == "mysql":
+        return _MYSQL_ID_CHUNK_SIZE
+    return _SQLITE_ID_CHUNK_SIZE
 
 
 def _relation_semantics(
