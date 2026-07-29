@@ -2,7 +2,11 @@
 
 import { create } from "zustand";
 import type { TableInfo, ColumnInfo } from "../api/tables";
-import type { GraphData } from "../api/analysis";
+import type {
+  AnalysisDiagnostics,
+  AnalysisStatus,
+  SemanticGraphData,
+} from "../api/analysis";
 import { fetchTables, fetchTableColumns } from "../api/tables";
 import { submitAnalysis, createAnalysisSocket } from "../api/analysis";
 
@@ -41,12 +45,15 @@ interface AnalysisState {
   maxTables: number;
 
   // ── 分析进度 ──
-  currentPhase: number;
+  currentPhase: string;
   progressMessage: string;
   progressValue: number;
 
   // ── 图谱数据 ──
-  graph: GraphData | null;
+  graph: SemanticGraphData | null;
+  analysisStatus: AnalysisStatus | null;
+  warnings: string[];
+  diagnostics: AnalysisDiagnostics | null;
   taskId: string | null;
   activeSocket: WebSocket | null;
   analysisGeneration: number;
@@ -58,6 +65,8 @@ interface AnalysisState {
   fitViewRequest: number;
   relayoutRequest: number;
   focusNodeRequest: FocusNodeRequest | null;
+  selectedEntityEdgeId: string | null;
+  selectedTableEdgeId: string | null;
 
   // ── 操作：元数据 ──
   loadTables: () => Promise<void>;
@@ -77,6 +86,8 @@ interface AnalysisState {
   setConfidenceThreshold: (value: number) => void;
   requestFitView: () => void;
   requestRelayout: () => void;
+  selectEntityEdge: (id: string | null) => void;
+  selectTableEdge: (id: string | null) => void;
 }
 
 /** 不可变更新 selectedTables Map：clone → 修改指定表 → set。 */
@@ -119,10 +130,13 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   tableRequestTokens: new Map(),
   tableErrors: new Map(),
   maxTables: 10,
-  currentPhase: 0,
+  currentPhase: "",
   progressMessage: "",
   progressValue: 0,
   graph: null,
+  analysisStatus: null,
+  warnings: [],
+  diagnostics: null,
   taskId: null,
   activeSocket: null,
   analysisGeneration: 0,
@@ -132,6 +146,8 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   fitViewRequest: 0,
   relayoutRequest: 0,
   focusNodeRequest: null,
+  selectedEntityEdgeId: null,
+  selectedTableEdgeId: null,
 
   // ── 元数据操作 ──
 
@@ -307,9 +323,15 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     set({
       phase: "analyzing",
       errorMessage: null,
-      currentPhase: 0,
+      currentPhase: "",
       progressMessage: "正在提交分析任务...",
       progressValue: 0,
+      graph: null,
+      analysisStatus: null,
+      warnings: [],
+      diagnostics: null,
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
       pendingTables: new Set(),
       tableRequestTokens: new Map(),
       activeSocket: null,
@@ -329,10 +351,17 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
         );
       };
       const finishRun = (
-        terminalState: Pick<
+        terminalState: Partial<Pick<
           AnalysisState,
-          "phase" | "errorMessage" | "graph"
-        >
+          | "phase"
+          | "errorMessage"
+          | "graph"
+          | "analysisStatus"
+          | "warnings"
+          | "diagnostics"
+          | "currentPhase"
+          | "progressValue"
+        >>
       ) => {
         if (!ownsRun()) return;
         set({ ...terminalState, activeSocket: null });
@@ -344,23 +373,34 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
         (msg) => {
           if (!ownsRun()) return;
 
-          set({
-            currentPhase: msg.phase,
-            progressMessage: msg.message,
-            progressValue: msg.progress,
-          });
-
-          if (msg.error) {
-            finishRun({
-              phase: "error",
-              errorMessage: msg.error || msg.message,
-              graph: null,
-            });
-          } else if (msg.phase === 5 && msg.graph) {
-            finishRun({
-              phase: "done",
-              errorMessage: null,
-              graph: msg.graph,
+          if ("status" in msg) {
+            const terminalState = {
+              analysisStatus: msg.status,
+              warnings: msg.warnings,
+              diagnostics: msg.diagnostics,
+              currentPhase: msg.phase,
+              progressValue: msg.progress,
+            };
+            if (msg.status === "failed") {
+              finishRun({
+                ...terminalState,
+                phase: "error",
+                errorMessage: msg.warnings[0] || "分析失败",
+                graph: null,
+              });
+            } else {
+              finishRun({
+                ...terminalState,
+                phase: "done",
+                errorMessage: null,
+                graph: msg.graph,
+              });
+            }
+          } else {
+            set({
+              currentPhase: msg.phase,
+              progressMessage: msg.message,
+              progressValue: msg.progress,
             });
           }
         },
@@ -405,10 +445,13 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     set({
       phase: "select",
       errorMessage: null,
-      currentPhase: 0,
+      currentPhase: "",
       progressMessage: "",
       progressValue: 0,
       graph: null,
+      analysisStatus: null,
+      warnings: [],
+      diagnostics: null,
       taskId: null,
       activeSocket: null,
       analysisGeneration: analysisGeneration + 1,
@@ -418,6 +461,8 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       fitViewRequest: 0,
       relayoutRequest: 0,
       focusNodeRequest: null,
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
       pendingTables: new Set(),
       tableRequestTokens: new Map(),
       tableErrors: new Map(),
@@ -454,5 +499,13 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
   requestRelayout: () => {
     set((state) => ({ relayoutRequest: state.relayoutRequest + 1 }));
+  },
+
+  selectEntityEdge: (id) => {
+    set({ selectedEntityEdgeId: id, selectedTableEdgeId: null });
+  },
+
+  selectTableEdge: (id) => {
+    set({ selectedEntityEdgeId: null, selectedTableEdgeId: id });
   },
 }));

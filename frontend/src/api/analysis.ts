@@ -25,13 +25,96 @@ export interface GraphData {
   edges: EdgeData[];
 }
 
-export interface ProgressMessage {
-  phase: number;
+export type AnalysisStatus = "complete" | "partial" | "failed";
+
+export interface TableNodeData {
+  id: string;
+  display_name: string;
+  entity_count: number;
+}
+
+export interface EntityNodeData {
+  id: string;
+  table_id: string;
+  display_name: string;
+  class_name: string | null;
+  dimensions: Record<string, unknown>;
+}
+
+export interface RelationEvidenceData {
+  source_field: string;
+  source_value: unknown;
+  target_field: string;
+  target_value: unknown;
+  method: "foreign_key" | "unique_identifier" | "llm_semantic_reasoning";
+  reason: string;
+}
+
+export interface EntityRelationData {
+  source: string;
+  target: string;
+  relation_type: string;
+  direction: "source_to_target" | "target_to_source" | "undirected";
+  strength: "strong" | "weak";
+  confidence: number;
+  explanation: string;
+  evidence: RelationEvidenceData[];
+  model_id: string | null;
+  task_id: string | null;
+}
+
+export interface EntityEdgeData {
+  id: string;
+  source: string;
+  target: string;
+  relations: EntityRelationData[];
+}
+
+export interface TableEdgeData {
+  id: string;
+  source_table: string;
+  target_table: string;
+  relation_types: string[];
+  strong_count: number;
+  weak_count: number;
+  entity_edge_count: number;
+  average_confidence: number;
+  supporting_entity_edges: string[];
+}
+
+export interface SemanticGraphData {
+  table_nodes: TableNodeData[];
+  entity_nodes: EntityNodeData[];
+  table_edges: TableEdgeData[];
+  entity_edges: EntityEdgeData[];
+}
+
+export interface AnalysisDiagnostics {
+  entities_read: number;
+  plans_created: number;
+  candidates_retrieved: number;
+  candidates_completed: number;
+  candidates_pending: number;
+  strong_edges_created: number;
+  weak_edges_created: number;
+}
+
+export interface AnalysisProgressMessage {
+  phase: string;
   message: string;
   progress: number;
-  graph?: GraphData;
-  error?: string;
 }
+
+export interface AnalysisTerminalMessage {
+  phase: "complete";
+  progress: number;
+  status: AnalysisStatus;
+  graph: SemanticGraphData;
+  diagnostics: AnalysisDiagnostics;
+  warnings: string[];
+}
+
+export type ProgressMessage = AnalysisProgressMessage | AnalysisTerminalMessage;
 
 const BASE = "/api";
 
@@ -72,7 +155,7 @@ export function createAnalysisSocket(
       const msg: ProgressMessage = JSON.parse(event.data);
       onMessage(msg);
     } catch {
-      // Ignore malformed messages
+      onError(new Event("error"));
     }
   };
 

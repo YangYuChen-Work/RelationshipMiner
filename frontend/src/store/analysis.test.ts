@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createAnalysisSocket } from "../api/analysis";
 import { useAnalysisStore } from "./analysis";
 
 const columns = [
@@ -23,6 +24,33 @@ const completedGraph = {
     },
   ],
   edges: [],
+};
+
+const semanticGraph = {
+  table_nodes: [
+    { id: "users", display_name: "Users", entity_count: 1 },
+  ],
+  entity_nodes: [
+    {
+      id: "users:1",
+      table_id: "users",
+      display_name: "Ada",
+      class_name: "example.User",
+      dimensions: { email: "ada@example.test" },
+    },
+  ],
+  table_edges: [],
+  entity_edges: [],
+};
+
+const diagnostics = {
+  entities_read: 1,
+  plans_created: 0,
+  candidates_retrieved: 0,
+  candidates_completed: 0,
+  candidates_pending: 1,
+  strong_edges_created: 0,
+  weak_edges_created: 0,
 };
 
 class ControllableWebSocket {
@@ -294,13 +322,124 @@ describe("analysis socket ownership", () => {
       ]),
       pendingTables: new Set(),
       tableRequestTokens: new Map(),
-      currentPhase: 0,
+      currentPhase: "",
       progressMessage: "",
       progressValue: 0,
       graph: null,
       taskId: null,
       activeSocket: null,
       analysisGeneration: 0,
+    });
+  });
+
+  it("keeps a partial terminal graph and its diagnostics available to the workbench", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ task_id: "task-partial" }),
+    } as Response);
+
+    await useAnalysisStore.getState().startAnalysis();
+    const socket = ControllableWebSocket.instances[0];
+    socket.onmessage?.({
+      data: JSON.stringify({
+        phase: "complete",
+        progress: 1,
+        status: "partial",
+        graph: semanticGraph,
+        diagnostics,
+        warnings: ["Some candidates could not be judged"],
+      }),
+    } as MessageEvent);
+
+    expect(useAnalysisStore.getState()).toMatchObject({
+      phase: "done",
+      analysisStatus: "partial",
+      graph: semanticGraph,
+      diagnostics,
+      warnings: ["Some candidates could not be judged"],
+      activeSocket: null,
+    });
+
+    useAnalysisStore.getState().selectEntityEdge("entity-edge-1");
+    await useAnalysisStore.getState().startAnalysis();
+
+    expect(useAnalysisStore.getState()).toMatchObject({
+      phase: "analyzing",
+      graph: null,
+      analysisStatus: null,
+      warnings: [],
+      diagnostics: null,
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
+    });
+  });
+
+  it("turns a failed terminal result into an error phase", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ task_id: "task-failed" }),
+    } as Response);
+
+    await useAnalysisStore.getState().startAnalysis();
+    const socket = ControllableWebSocket.instances[0];
+    socket.onmessage?.({
+      data: JSON.stringify({
+        phase: "complete",
+        progress: 1,
+        status: "failed",
+        graph: {
+          table_nodes: [],
+          entity_nodes: [],
+          table_edges: [],
+          entity_edges: [],
+        },
+        diagnostics: { ...diagnostics, entities_read: 0 },
+        warnings: ["Planner unavailable"],
+      }),
+    } as MessageEvent);
+
+    expect(useAnalysisStore.getState()).toMatchObject({
+      phase: "error",
+      analysisStatus: "failed",
+      graph: null,
+      warnings: ["Planner unavailable"],
+      errorMessage: "Planner unavailable",
+      activeSocket: null,
+    });
+  });
+
+  it("reports malformed socket JSON through the supplied error callback", () => {
+    const onMessage = vi.fn();
+    const onError = vi.fn();
+    const onClose = vi.fn();
+    const socket = createAnalysisSocket("task-malformed", onMessage, onError, onClose) as unknown as ControllableWebSocket;
+
+    socket.onmessage?.({ data: "not-json" } as MessageEvent);
+
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps entity-edge and table-edge selections mutually exclusive and clears them on reset", () => {
+    useAnalysisStore.getState().selectEntityEdge("entity-edge-1");
+    expect(useAnalysisStore.getState()).toMatchObject({
+      selectedEntityEdgeId: "entity-edge-1",
+      selectedTableEdgeId: null,
+    });
+
+    useAnalysisStore.getState().selectTableEdge("table-edge-1");
+    expect(useAnalysisStore.getState()).toMatchObject({
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: "table-edge-1",
+    });
+
+    useAnalysisStore.getState().resetAnalysis();
+    expect(useAnalysisStore.getState()).toMatchObject({
+      analysisStatus: null,
+      warnings: [],
+      diagnostics: null,
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
     });
   });
 
@@ -372,12 +511,12 @@ describe("analysis socket ownership", () => {
 
     socketB.onmessage?.({
       data: JSON.stringify({
-        phase: 2,
+        phase: "retrieval",
         message: "B 处理中",
         progress: 0.4,
       }),
     } as MessageEvent);
-    expect(useAnalysisStore.getState().currentPhase).toBe(2);
+    expect(useAnalysisStore.getState().currentPhase).toBe("retrieval");
     expect(useAnalysisStore.getState().progressMessage).toBe("B 处理中");
   });
 });
