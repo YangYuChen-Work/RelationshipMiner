@@ -24,6 +24,7 @@ class Settings:
     )
 
     # Semantic retrieval
+    HF_HOME: str = os.getenv("HF_HOME", "")
     EMBEDDING_MODEL: str = os.getenv(
         "EMBEDDING_MODEL",
         "BAAI/bge-small-zh-v1.5",

@@ -73,3 +73,45 @@ legacy fallback.
 - Around 7,000 entities, model loading, embedding, and LLM judgement need
   meaningful CPU/memory/network headroom. Keep dimensions focused, pre-warm
   BGE, and tune `EMBEDDING_BATCH_SIZE` and `LLM_CONCURRENCY` for the host.
+
+### Model and LLM configuration
+
+The production defaults are `EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5`,
+`DEEPSEEK_MODEL=deepseek-v4-flash`, and `LLM_CONCURRENCY=4`. DeepSeek planning
+and judgement always request JSON Output (`response_format=json_object`);
+readiness only checks that the API key and model name are configured and never
+makes a network or paid API call.
+
+```powershell
+$env:HF_HOME = "D:\model-cache\huggingface"
+$env:EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
+$env:DEEPSEEK_API_KEY = "<your-key>"
+$env:DEEPSEEK_MODEL = "deepseek-v4-flash"
+$env:LLM_CONCURRENCY = "4"
+```
+
+On the first analysis, Sentence Transformers downloads the embedding model if
+it is not already cached. With `HF_HOME` set, Hugging Face stores hub files
+under `$env:HF_HOME\hub`; otherwise it uses the platform's default Hugging Face
+cache (normally `~/.cache/huggingface/hub`). Pre-warm that cache before serving
+production traffic:
+
+```powershell
+uv run --directory backend python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5')"
+```
+
+`GET /api/health` reports only `ready`/`degraded` and fixed dependency states.
+It checks the database with `SELECT 1`, checks model files in the local cache
+without importing Torch or downloading anything, and checks only LLM
+configuration. It never returns API keys, database URLs, exception messages,
+prompts, responses, or entity and field values.
+
+### Partial-result troubleshooting
+
+When a terminal WebSocket result is `partial`, inspect its safe `warnings` and
+diagnostic counts to identify failed or pending groups. Confirm `/api/health`
+first, pre-warm the embedding cache if `embedding_model` is `missing`, and
+verify `DEEPSEEK_API_KEY` plus `DEEPSEEK_MODEL` if `llm` is `missing`. For
+service rate limits or deadline exhaustion, keep `LLM_CONCURRENCY=4` initially,
+reduce selected dimensions or tables, and retry; do not treat a partial graph
+as a complete zero-relation result.

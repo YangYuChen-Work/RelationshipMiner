@@ -108,9 +108,16 @@ class TestListFields:
 class TestHealthCheck:
     """GET /api/health — 健康检查端点测试。"""
 
-    def test_returns_ok(self, client: TestClient):
-        """应返回 {status: ok}。"""
+    def test_returns_readiness_contract(self, client: TestClient):
+        """应返回可扩展的依赖就绪状态且始终可诊断。"""
         response = client.get("/api/health")
 
         assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        payload = response.json()
+        assert payload["status"] in {"ready", "degraded"}
+        assert set(payload) >= {
+            "status",
+            "database",
+            "embedding_model",
+            "llm",
+        }

@@ -19,6 +19,160 @@ def _final_message(ws) -> tuple[list[dict], dict]:
             return messages, message
 
 
+class TestHealthReadiness:
+    def test_reports_degraded_when_embedding_cache_is_missing(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ):
+        from config import settings
+        from engine.semantic import readiness
+
+        incomplete_snapshot = (
+            tmp_path
+            / "models--BAAI--bge-small-zh-v1.5"
+            / "snapshots"
+            / "incomplete-revision"
+        )
+        incomplete_snapshot.mkdir(parents=True)
+        (incomplete_snapshot / "config.json").write_text(
+            "{}",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            readiness,
+            "_huggingface_cache_roots",
+            lambda: (tmp_path,),
+        )
+        monkeypatch.setattr(
+            settings,
+            "EMBEDDING_MODEL",
+            "BAAI/bge-small-zh-v1.5",
+        )
+        monkeypatch.setattr(
+            settings,
+            "DEEPSEEK_API_KEY",
+            "sk-health-contract-secret",
+        )
+        monkeypatch.setattr(
+            settings,
+            "DEEPSEEK_MODEL",
+            "deepseek-v4-flash",
+        )
+
+        response = client.get("/api/health")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "degraded",
+            "database": "ready",
+            "embedding_model": "missing",
+            "llm": "configured",
+        }
+
+    def test_reports_ready_when_every_dependency_is_ready(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ):
+        from config import settings
+        from engine.semantic import readiness
+
+        snapshot = (
+            tmp_path
+            / "models--BAAI--bge-small-zh-v1.5"
+            / "snapshots"
+            / "test-revision"
+        )
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        (snapshot / "model.safetensors").write_bytes(b"cached-weights")
+        monkeypatch.setattr(
+            readiness,
+            "_huggingface_cache_roots",
+            lambda: (tmp_path,),
+        )
+        monkeypatch.setattr(
+            settings,
+            "EMBEDDING_MODEL",
+            "BAAI/bge-small-zh-v1.5",
+        )
+        monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "configured-key")
+        monkeypatch.setattr(
+            settings,
+            "DEEPSEEK_MODEL",
+            "deepseek-v4-flash",
+        )
+
+        assert client.get("/api/health").json() == {
+            "status": "ready",
+            "database": "ready",
+            "embedding_model": "ready",
+            "llm": "configured",
+        }
+
+    def test_sanitizes_dependency_errors_and_reports_missing_llm_config(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ):
+        from config import settings
+        from database import get_engine
+        from engine.semantic import readiness
+        from main import app
+
+        sensitive_values = {
+            "sk-never-serialize-this",
+            "mysql+pymysql://secret-user:secret-password@db/private",
+            "private prompt body",
+            "private response body",
+            "entity value 8848",
+            "field value 9900",
+        }
+
+        class FailingEngine:
+            def connect(self):
+                raise RuntimeError(" | ".join(sorted(sensitive_values)))
+
+        app.dependency_overrides[get_engine] = FailingEngine
+        monkeypatch.setattr(
+            readiness,
+            "_huggingface_cache_roots",
+            lambda: (tmp_path,),
+        )
+        monkeypatch.setattr(
+            settings,
+            "EMBEDDING_MODEL",
+            "BAAI/bge-small-zh-v1.5",
+        )
+        monkeypatch.setattr(
+            settings,
+            "DEEPSEEK_API_KEY",
+            "sk-never-serialize-this",
+        )
+        monkeypatch.setattr(settings, "DEEPSEEK_MODEL", "")
+        monkeypatch.setattr(settings, "DB_USER", "secret-user")
+        monkeypatch.setattr(settings, "DB_PASSWORD", "secret-password")
+        monkeypatch.setattr(settings, "DB_HOST", "db")
+        monkeypatch.setattr(settings, "DB_NAME", "private")
+        sensitive_values.add(settings.database_url)
+
+        response = client.get("/api/health")
+        serialized = response.text
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "degraded",
+            "database": "unavailable",
+            "embedding_model": "missing",
+            "llm": "missing",
+        }
+        assert all(value not in serialized for value in sensitive_values)
+
+
 class TestPostAnalyze:
     def test_returns_task_id_on_valid_request(self, client: TestClient):
         response = client.post(

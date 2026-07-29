@@ -1,8 +1,11 @@
 """AI Graph MVP — FastAPI 应用入口。"""
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.engine import Engine
 
+from database import get_engine
+from engine.semantic.readiness import readiness_report
 from routers.tables import router as tables_router
 from routers.analyze import router as analyze_router
 
@@ -26,6 +29,6 @@ app.include_router(analyze_router)
 
 
 @app.get("/api/health")
-def health_check():
+def health_check(engine: Engine = Depends(get_engine)):
     """健康检查端点。"""
-    return {"status": "ok"}
+    return readiness_report(engine)
