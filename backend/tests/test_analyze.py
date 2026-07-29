@@ -20,6 +20,280 @@ def _final_message(ws) -> tuple[list[dict], dict]:
 
 
 class TestHealthReadiness:
+    @staticmethod
+    def _write_complete_model(directory):
+        directory.mkdir(parents=True)
+        (directory / "config.json").write_text("{}", encoding="utf-8")
+        (directory / "model.safetensors").write_bytes(b"cached-weights")
+
+    def test_health_requires_complete_recognized_weight_artifacts(
+        self,
+        tmp_path,
+    ):
+        from engine.semantic import readiness
+
+        def snapshot(name: str):
+            directory = tmp_path / name
+            directory.mkdir()
+            (directory / "config.json").write_text("{}", encoding="utf-8")
+            return directory
+
+        unrelated = snapshot("unrelated")
+        (unrelated / "adapter.safetensors").write_bytes(b"not-the-model")
+
+        empty_single = snapshot("empty-single")
+        (empty_single / "model.safetensors").write_bytes(b"")
+
+        empty_pytorch = snapshot("empty-pytorch")
+        (empty_pytorch / "pytorch_model.bin").write_bytes(b"")
+
+        pytorch_single = snapshot("pytorch-single")
+        (pytorch_single / "pytorch_model.bin").write_bytes(
+            b"nonempty-weights",
+        )
+
+        missing_index = snapshot("missing-index")
+        (missing_index / "model-00001-of-00002.safetensors").write_bytes(
+            b"first-shard",
+        )
+        (missing_index / "model-00002-of-00002.safetensors").write_bytes(
+            b"second-shard",
+        )
+
+        incomplete_shards = snapshot("incomplete-shards")
+        (incomplete_shards / "model-00001-of-00002.safetensors").write_bytes(
+            b"first-shard",
+        )
+        (incomplete_shards / "model.safetensors.index.json").write_text(
+            '{"weight_map":{"a":"model-00001-of-00002.safetensors",'
+            '"b":"model-00002-of-00002.safetensors"}}',
+            encoding="utf-8",
+        )
+
+        complete_shards = snapshot("complete-shards")
+        for shard in (
+            "pytorch_model-00001-of-00002.bin",
+            "pytorch_model-00002-of-00002.bin",
+        ):
+            (complete_shards / shard).write_bytes(b"nonempty-shard")
+        (
+            complete_shards / "pytorch_model.bin.index.json"
+        ).write_text(
+            '{"weight_map":{"a":"pytorch_model-00001-of-00002.bin",'
+            '"b":"pytorch_model-00002-of-00002.bin"}}',
+            encoding="utf-8",
+        )
+
+        complete_safe_shards = snapshot("complete-safe-shards")
+        for shard in (
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+        ):
+            (complete_safe_shards / shard).write_bytes(b"nonempty-shard")
+        (
+            complete_safe_shards / "model.safetensors.index.json"
+        ).write_text(
+            '{"weight_map":{"a":"model-00001-of-00002.safetensors",'
+            '"b":"model-00002-of-00002.safetensors"}}',
+            encoding="utf-8",
+        )
+
+        assert readiness._is_model_snapshot(unrelated) is False
+        assert readiness._is_model_snapshot(empty_single) is False
+        assert readiness._is_model_snapshot(empty_pytorch) is False
+        assert readiness._is_model_snapshot(pytorch_single) is True
+        assert readiness._is_model_snapshot(missing_index) is False
+        assert readiness._is_model_snapshot(incomplete_shards) is False
+        assert readiness._is_model_snapshot(complete_shards) is True
+        assert readiness._is_model_snapshot(complete_safe_shards) is True
+
+    @pytest.mark.parametrize(
+        "unsafe_repo_id",
+        [
+            r"owner\model",
+            "..",
+            "../model",
+            "owner/../model",
+            "/absolute/model",
+            r"C:\absolute\model",
+            "C:drive-relative",
+            "owner//model",
+            "owner/model/extra",
+        ],
+    )
+    def test_health_rejects_unsafe_hf_repo_ids(self, unsafe_repo_id):
+        from engine.semantic import readiness
+
+        assert readiness._is_safe_hf_repo_id(unsafe_repo_id) is False
+
+    def test_health_rejects_windows_backslash_cache_escape(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ):
+        from engine.semantic import readiness
+
+        cache_root = tmp_path / "cache"
+        cache_root.mkdir()
+        self._write_complete_model(tmp_path / "escaped-model")
+        monkeypatch.setattr(
+            readiness,
+            "_huggingface_cache_roots",
+            lambda: (cache_root,),
+        )
+
+        assert (
+            readiness._embedding_model_status(r"..\escaped-model")
+            == "missing"
+        )
+
+    def test_health_treats_only_absolute_paths_as_local_models(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ):
+        from engine.semantic import readiness
+
+        local_model = tmp_path / "local-model"
+        self._write_complete_model(local_model)
+        empty_cache = tmp_path / "cache"
+        empty_cache.mkdir()
+        monkeypatch.setattr(
+            readiness,
+            "_huggingface_cache_roots",
+            lambda: (empty_cache,),
+        )
+        monkeypatch.chdir(tmp_path)
+
+        assert readiness._embedding_model_status(str(local_model)) == "ready"
+        assert readiness._embedding_model_status("local-model") == "missing"
+
+    @pytest.mark.parametrize(
+        ("selected", "unset"),
+        [
+            ("sentence", ()),
+            ("hub", ("sentence",)),
+            ("legacy", ("sentence", "hub")),
+            ("home", ("sentence", "hub", "legacy")),
+            (
+                "default",
+                ("sentence", "hub", "legacy", "home"),
+            ),
+        ],
+    )
+    def test_health_uses_sentence_transformer_cache_priority(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+        selected,
+        unset,
+    ):
+        from engine.semantic import readiness
+
+        roots = {
+            "sentence": tmp_path / "sentence-cache",
+            "hub": tmp_path / "hub-cache",
+            "legacy": tmp_path / "legacy-cache",
+            "home": tmp_path / "hf-home",
+            "default": tmp_path / "xdg" / "huggingface" / "hub",
+        }
+        environment = {
+            "sentence": ("SENTENCE_TRANSFORMERS_HOME", roots["sentence"]),
+            "hub": ("HF_HUB_CACHE", roots["hub"]),
+            "legacy": ("HUGGINGFACE_HUB_CACHE", roots["legacy"]),
+            "home": ("HF_HOME", roots["home"]),
+        }
+        for _, (name, value) in environment.items():
+            monkeypatch.setenv(name, str(value))
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+        for level in unset:
+            monkeypatch.delenv(environment[level][0], raising=False)
+
+        expected = (
+            roots[selected] / "hub"
+            if selected == "home"
+            else roots[selected]
+        ).resolve()
+
+        assert readiness._huggingface_cache_roots() == (expected,)
+
+    @pytest.mark.parametrize(
+        "empty_variable",
+        ["SENTENCE_TRANSFORMERS_HOME", "HF_HUB_CACHE"],
+    )
+    def test_health_explicit_empty_cache_root_does_not_fall_back(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+        empty_variable,
+    ):
+        from engine.semantic import readiness
+
+        current_directory = tmp_path / "working-directory"
+        current_directory.mkdir()
+        fallback = tmp_path / "fallback"
+        self._write_complete_model(
+            fallback
+            / "models--BAAI--bge-small-zh-v1.5"
+            / "snapshots"
+            / "complete",
+        )
+        monkeypatch.chdir(current_directory)
+        monkeypatch.delenv(
+            "SENTENCE_TRANSFORMERS_HOME",
+            raising=False,
+        )
+        monkeypatch.setenv("HF_HUB_CACHE", str(fallback))
+        monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+        monkeypatch.setenv(empty_variable, "")
+
+        assert (
+            readiness._embedding_model_status(
+                "BAAI/bge-small-zh-v1.5",
+            )
+            == "missing"
+        )
+        assert readiness._huggingface_cache_roots() == (
+            current_directory.resolve(),
+        )
+
+    @pytest.mark.parametrize(
+        "placeholder",
+        [
+            "",
+            "   ",
+            "<your-key>",
+            " YOUR-KEY ",
+            "changeme",
+            "Change_Me",
+            "example",
+            "EXAMPLE-KEY",
+            "<API_KEY>",
+            "replace-with-your-key",
+            "placeholder",
+            "dummy",
+            "test-key",
+        ],
+    )
+    def test_health_rejects_placeholder_llm_keys(self, placeholder):
+        from engine.semantic import readiness
+
+        assert (
+            readiness._llm_status(placeholder, "deepseek-v4-flash")
+            == "missing"
+        )
+
+    def test_health_accepts_nonplaceholder_llm_key(self):
+        from engine.semantic import readiness
+
+        assert (
+            readiness._llm_status(
+                "sk-production-account-4f29",
+                "deepseek-v4-flash",
+            )
+            == "configured"
+        )
+
     def test_reports_degraded_when_embedding_cache_is_missing(
         self,
         client: TestClient,

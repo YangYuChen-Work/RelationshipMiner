@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -16,6 +18,22 @@ class ReadinessReport(TypedDict):
     database: Literal["ready", "unavailable"]
     embedding_model: Literal["ready", "missing"]
     llm: Literal["configured", "missing"]
+
+
+_PLACEHOLDER_LLM_KEYS = frozenset(
+    {
+        "apikey",
+        "changeme",
+        "dummy",
+        "example",
+        "examplekey",
+        "placeholder",
+        "replacewithyourkey",
+        "testkey",
+        "yourkey",
+        "yourkeyhere",
+    }
+)
 
 
 def readiness_report(
@@ -62,7 +80,13 @@ def _llm_status(
     model: str,
 ) -> Literal["configured", "missing"]:
     try:
-        if api_key.strip() and model.strip():
+        key = api_key.strip()
+        normalized_key = re.sub(r"[^a-z0-9]", "", key.casefold())
+        if (
+            key
+            and normalized_key not in _PLACEHOLDER_LLM_KEYS
+            and model.strip()
+        ):
             return "configured"
     except Exception:
         pass
@@ -78,20 +102,53 @@ def _embedding_model_status(
             return "missing"
 
         configured_path = Path(name).expanduser()
-        if _contains_model_files(configured_path):
-            return "ready"
+        if configured_path.is_absolute():
+            return (
+                "ready"
+                if _contains_model_files(configured_path.resolve())
+                else "missing"
+            )
+        if not _is_safe_hf_repo_id(name):
+            return "missing"
 
         hub_directory = f"models--{name.replace('/', '--')}"
-        legacy_directory = name.replace("/", "_")
         for cache_root in _huggingface_cache_roots():
-            if (
-                _contains_model_files(cache_root / hub_directory)
-                or _contains_model_files(cache_root / legacy_directory)
-            ):
+            root = cache_root.expanduser().resolve()
+            model_cache = (root / hub_directory).resolve()
+            if not _is_within(model_cache, root):
+                return "missing"
+            if _contains_model_files(model_cache):
                 return "ready"
     except Exception:
         return "missing"
     return "missing"
+
+
+def _is_safe_hf_repo_id(repo_id: str) -> bool:
+    if "\\" in repo_id or len(repo_id) > 96:
+        return False
+    segments = repo_id.split("/")
+    if len(segments) not in (1, 2):
+        return False
+    if ".." in repo_id or "--" in repo_id:
+        return False
+    return all(
+        re.fullmatch(
+            r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?",
+            segment,
+        )
+        is not None
+        and not segment.endswith(".git")
+        for segment in segments
+    )
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _contains_model_files(directory: Path) -> bool:
@@ -113,36 +170,84 @@ def _contains_model_files(directory: Path) -> bool:
 def _is_model_snapshot(directory: Path) -> bool:
     if not (directory / "config.json").is_file():
         return False
-    return (
-        any(directory.glob("*.safetensors"))
-        or any(directory.glob("pytorch_model*.bin"))
+    if any(
+        _is_nonempty_file(directory / name)
+        for name in ("model.safetensors", "pytorch_model.bin")
+    ):
+        return True
+    return any(
+        _has_complete_shards(directory, index_name, pattern)
+        for index_name, pattern in (
+            (
+                "model.safetensors.index.json",
+                re.compile(
+                    r"model-(?P<number>\d{5})-of-"
+                    r"(?P<total>\d{5})\.safetensors",
+                ),
+            ),
+            (
+                "pytorch_model.bin.index.json",
+                re.compile(
+                    r"pytorch_model-(?P<number>\d{5})-of-"
+                    r"(?P<total>\d{5})\.bin",
+                ),
+            ),
+        )
     )
 
 
+def _has_complete_shards(
+    directory: Path,
+    index_name: str,
+    shard_pattern: re.Pattern[str],
+) -> bool:
+    index_path = directory / index_name
+    if not _is_nonempty_file(index_path):
+        return False
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        weight_map = payload["weight_map"]
+        filenames = set(weight_map.values())
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
+    if not filenames or not all(isinstance(name, str) for name in filenames):
+        return False
+
+    matches = [shard_pattern.fullmatch(name) for name in filenames]
+    if any(match is None for match in matches):
+        return False
+    totals = {int(match["total"]) for match in matches if match is not None}
+    numbers = {int(match["number"]) for match in matches if match is not None}
+    if len(totals) != 1:
+        return False
+    total = totals.pop()
+    if total < 1 or numbers != set(range(1, total + 1)):
+        return False
+    return all(_is_nonempty_file(directory / name) for name in filenames)
+
+
+def _is_nonempty_file(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size > 0
+
+
 def _huggingface_cache_roots() -> tuple[Path, ...]:
-    """Resolve cache roots without importing huggingface_hub or Torch."""
-    roots: list[Path] = []
-    hub_cache = os.getenv("HF_HUB_CACHE", "").strip()
-    if hub_cache:
-        roots.append(Path(hub_cache).expanduser())
-
-    hf_home = settings.HF_HOME.strip()
-    if hf_home:
-        roots.append(Path(hf_home).expanduser() / "hub")
-    else:
-        xdg_cache = os.getenv("XDG_CACHE_HOME", "").strip()
-        cache_home = (
-            Path(xdg_cache).expanduser()
-            if xdg_cache
-            else Path.home() / ".cache"
-        )
-        roots.append(cache_home / "huggingface" / "hub")
-
-    sentence_transformers_home = os.getenv(
+    """Resolve the one cache root Sentence Transformers will actually use."""
+    for variable in (
         "SENTENCE_TRANSFORMERS_HOME",
-        "",
-    ).strip()
-    if sentence_transformers_home:
-        roots.append(Path(sentence_transformers_home).expanduser())
+        "HF_HUB_CACHE",
+        "HUGGINGFACE_HUB_CACHE",
+    ):
+        if variable in os.environ:
+            return (_expanded_path(os.environ[variable]),)
 
-    return tuple(dict.fromkeys(roots))
+    if "HF_HOME" in os.environ:
+        return (_expanded_path(os.environ["HF_HOME"]) / "hub",)
+    if "XDG_CACHE_HOME" in os.environ:
+        cache_home = _expanded_path(os.environ["XDG_CACHE_HOME"])
+    else:
+        cache_home = Path.home() / ".cache"
+    return ((cache_home / "huggingface" / "hub").resolve(),)
+
+
+def _expanded_path(value: str) -> Path:
+    return Path(os.path.expandvars(value)).expanduser().resolve()

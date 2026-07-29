@@ -85,10 +85,13 @@ makes a network or paid API call.
 ```powershell
 $env:HF_HOME = "D:\model-cache\huggingface"
 $env:EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
-$env:DEEPSEEK_API_KEY = "<your-key>"
+$env:DEEPSEEK_API_KEY = Read-Host "Enter DeepSeek API key"
 $env:DEEPSEEK_MODEL = "deepseek-v4-flash"
 $env:LLM_CONCURRENCY = "4"
 ```
+
+Placeholder values such as `your-key`, `changeme`, and `example` are reported
+as `llm=missing`; use an actual DeepSeek credential.
 
 On the first analysis, Sentence Transformers downloads the embedding model if
 it is not already cached. With `HF_HOME` set, Hugging Face stores hub files
@@ -99,6 +102,12 @@ production traffic:
 ```powershell
 uv run --directory backend python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5')"
 ```
+
+Readiness follows Sentence Transformers 5.6's single-cache precedence:
+`SENTENCE_TRANSFORMERS_HOME`, then `HF_HUB_CACHE` (or the legacy
+`HUGGINGFACE_HUB_CACHE`), then `HF_HOME\hub`, then the platform default. An
+explicit primary cache value, including an empty value, is never masked by a
+model left in a lower-priority cache.
 
 `GET /api/health` reports only `ready`/`degraded` and fixed dependency states.
 It checks the database with `SELECT 1`, checks model files in the local cache
