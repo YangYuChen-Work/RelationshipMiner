@@ -15,7 +15,6 @@ import logging
 from collections.abc import Callable, Awaitable
 from dataclasses import asdict
 from sqlalchemy.engine import Engine
-from sqlalchemy import Table, MetaData
 
 from engine.schema_analyzer import analyze_schema
 from engine.relationship_computer import compute_relationships
@@ -23,6 +22,8 @@ from engine.ai_decision_maker import (
     decide_matches,
     FieldMatchDecision,
 )
+from engine.semantic.corpus import load_scoped_records
+from engine.semantic.models import AnalysisScope, TableScope
 
 logger = logging.getLogger(__name__)
 
@@ -90,38 +91,40 @@ async def run_analysis_pipeline(
 
     # ── 阶段 1: 数据读取 ─────────────────────────────────
     await progress(1, "正在读取数据...", 0.05)
-    records: dict[str, list[dict]] = {}
-
-    for table_cfg in tables:
-        check_timeout()
-        tname = table_cfg["name"]
-        fields = table_cfg["fields"]
-        metadata = MetaData()
-        table = Table(tname, metadata, autoload_with=engine)
-        required_fields = list(fields)
-        for pk_column in table.primary_key.columns:
-            if pk_column.name not in required_fields:
-                required_fields.append(pk_column.name)
-        for foreign_key in table.foreign_keys:
-            if foreign_key.parent.name not in required_fields:
-                required_fields.append(foreign_key.parent.name)
-        columns = [table.c[f] for f in required_fields]
-        from sqlalchemy import select as sa_select
-
-        with engine.connect() as conn:
-            result = conn.execute(sa_select(*columns))
-            rows = []
-            for row in result:
-                rows.append(dict(row._mapping))
-            records[tname] = rows
+    schema_result = analyze_schema(engine, selected_names)
+    table_scopes = []
+    for table in tables:
+        schema = schema_result.tables[table["name"]]
+        system_fields = set(schema.primary_keys)
+        for foreign_key in schema.foreign_keys:
+            system_fields.update(foreign_key.source_columns)
+        system_fields.update(
+            column.name
+            for column in schema.columns
+            if column.is_class_name
+        )
+        table_scopes.append(
+            TableScope(
+                name=table["name"],
+                dimensions=[
+                    field
+                    for field in table["fields"]
+                    if field not in system_fields
+                ],
+            )
+        )
+    scope = AnalysisScope(tables=table_scopes)
+    dimensions_by_table = {
+        table.name: set(table.dimensions) for table in scope.tables
+    }
+    records = load_scoped_records(engine, scope, schema_result)
+    check_timeout()
 
     await progress(1, f"数据读取完成，共 {sum(len(r) for r in records.values())} 条记录", 0.15)
 
     # ── 阶段 2: Schema 分析 ──────────────────────────────
     check_timeout()
     await progress(2, "正在分析 Schema...", 0.20)
-
-    schema_result = analyze_schema(engine, selected_names)
 
     # 构建 class_name 字段映射
     class_name_fields: dict[str, str | None] = {}
@@ -146,7 +149,9 @@ async def run_analysis_pipeline(
         if tschema is None:
             continue
         columns = [
-            {"name": c.name, "type": c.type} for c in tschema.columns
+            {"name": c.name, "type": c.type}
+            for c in tschema.columns
+            if c.name in dimensions_by_table[tname]
         ]
         table_schemas_for_ai.append({"name": tname, "columns": columns})
 
@@ -155,7 +160,13 @@ async def run_analysis_pipeline(
     for tname in selected_names:
         rows = records.get(tname, [])
         if rows:
-            sample_values[tname] = [rows[0]]
+            sample_values[tname] = [
+                {
+                    name: value
+                    for name, value in rows[0].items()
+                    if name in dimensions_by_table[tname]
+                }
+            ]
 
     try:
         ai_decision_objects = decide_matches(
