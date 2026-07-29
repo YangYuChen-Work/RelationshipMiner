@@ -678,7 +678,41 @@ async def test_judge_observes_a_bounded_live_group_peak():
 
     assert result.completed_groups == 100
     assert result.peak_live_tasks == 2
-    assert result.peak_live_groups <= 4
+    assert result.peak_live_groups <= 5
+
+
+@pytest.mark.asyncio
+async def test_judge_peak_includes_a_group_held_by_the_blocked_producer():
+    class BlockingLlm:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def complete_json(
+            self,
+            messages: list[dict[str, object]],
+            max_tokens: int,
+            response_model: type[BaseModel] | None = None,
+        ) -> dict[str, object]:
+            self.started.set()
+            await self.release.wait()
+            payload: dict[str, object] = {"decisions": []}
+            return response_model.model_validate(payload).model_dump()
+
+    llm = BlockingLlm()
+    batch = asyncio.create_task(
+        SemanticJudge(llm, concurrency=1).judge_groups(
+            [_candidate_group(f"process:{index}") for index in range(3)],
+            deadline=time.monotonic() + 30,
+        )
+    )
+    await asyncio.wait_for(llm.started.wait(), timeout=1)
+    await asyncio.sleep(0.01)
+    llm.release.set()
+    result = await batch
+
+    assert result.completed_groups == 3
+    assert result.peak_live_groups == 3
 
 
 @pytest.mark.asyncio

@@ -127,7 +127,9 @@ class SemanticJudge:
             nonlocal peak_live_groups
             peak_live_groups = max(
                 peak_live_groups,
-                queue.qsize() + len(active),
+                queue.qsize()
+                + len(active)
+                + int(producer_current is not None),
             )
 
         def record(
@@ -160,6 +162,7 @@ class SemanticJudge:
                 item = (sequence, group)
                 sequence += 1
                 producer_current = item
+                observe_live_groups()
                 try:
                     async with asyncio.timeout_at(deadline):
                         await queue.put(item)

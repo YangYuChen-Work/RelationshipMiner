@@ -220,7 +220,7 @@ class _FailedJudge:
 
 class _SlowPlanner:
     async def plan(self, *args: object, **kwargs: object) -> list[RelationshipPlan]:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
         return [_product_plan()]
 
 
@@ -519,7 +519,7 @@ async def test_planner_uses_remaining_deadline_and_returns_failed_warning(engine
                 TableScope(name="users", dimensions=["name"]),
                 TableScope(name="products", dimensions=["title"]),
             ],
-            time_budget_seconds=0.02,
+            time_budget_seconds=0.1,
         ),
     )
 

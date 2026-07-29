@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sys
 from collections import Counter
 from pathlib import Path
-from time import perf_counter
+from time import monotonic, perf_counter
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from engine.semantic.corpus import build_entity_documents  # noqa: E402
+from engine.semantic.judge import SemanticJudge  # noqa: E402
 from engine.semantic.models import (  # noqa: E402
     AnalysisScope,
     RelationshipPlan,
@@ -25,6 +27,8 @@ TABLE_COUNT = 7
 PLANS_COUNT = 10
 TOP_K = 8
 EMBEDDING_DIMENSIONS = 16
+JUDGE_CONCURRENCY = 4
+BENCHMARK_BUDGET_SECONDS = 180
 
 
 class DeterministicFakeEmbeddings:
@@ -44,6 +48,26 @@ class DeterministicFakeEmbeddings:
 
     def encode_queries(self, texts: list[str]) -> list[list[float]]:
         return [self._vector(text) for text in texts]
+
+
+class DeterministicJudgeLlm:
+    """No-network judge adapter that approves no semantic relationships."""
+
+    def __init__(self) -> None:
+        self.active_calls = 0
+
+    async def complete_json(
+        self,
+        messages: list[dict[str, object]],
+        max_tokens: int,
+        response_model: object = None,
+    ) -> dict[str, object]:
+        self.active_calls += 1
+        try:
+            await asyncio.sleep(0)
+            return {"decisions": []}
+        finally:
+            self.active_calls -= 1
 
 
 def _synthetic_input() -> tuple[
@@ -111,7 +135,26 @@ def _relationship_plans() -> list[RelationshipPlan]:
     ]
 
 
+async def _judge_groups(groups, deadline: float):
+    llm = DeterministicJudgeLlm()
+    judge = SemanticJudge(
+        llm,
+        concurrency=JUDGE_CONCURRENCY,
+    )
+    result = await judge.judge_groups(groups, deadline)
+    leftover_tasks = [
+        task
+        for task in asyncio.all_tasks()
+        if task is not asyncio.current_task() and not task.done()
+    ]
+    assert not leftover_tasks
+    assert llm.active_calls == 0
+    return result
+
+
 def main() -> None:
+    benchmark_started = perf_counter()
+    deadline = monotonic() + BENCHMARK_BUDGET_SECONDS
     records, scope, primary_keys, class_name_fields = _synthetic_input()
 
     started = perf_counter()
@@ -146,24 +189,33 @@ def main() -> None:
     groups = retrieval.iter_candidate_groups(
         documents, plans, embeddings, diagnostics=diagnostics,
     )
-    candidates = 0
-    group_count = 0
-    for group in groups:
-        candidates += len(group.candidates)
-        group_count += 1
+    judge_started = perf_counter()
+    judgement = asyncio.run(_judge_groups(groups, deadline))
+    judge_seconds = perf_counter() - judge_started
     end_to_end_retrieval_seconds = perf_counter() - started
+    total_seconds = perf_counter() - benchmark_started
+    group_count = len(judgement.outcomes)
+    candidates = sum(
+        outcome.candidate_count for outcome in judgement.outcomes
+    )
     plans_per_source = Counter(plan.source_table for plan in plans)
     max_plans_per_source = max(plans_per_source.values())
     explicit_pair_count = diagnostics.explicit_pair_count
+    judge_live_group_upper_bound = (JUDGE_CONCURRENCY * 2) + 1
 
     assert len(documents) == ENTITY_COUNT
     assert len(plans) == PLANS_COUNT
     assert candidates <= ENTITY_COUNT * max_plans_per_source * TOP_K
     assert diagnostics.peak_materialized_pair_buffer <= TOP_K
     assert explicit_pair_count == 0
-    assert end_to_end_retrieval_seconds <= 180
+    assert end_to_end_retrieval_seconds <= BENCHMARK_BUDGET_SECONDS
+    assert total_seconds <= BENCHMARK_BUDGET_SECONDS
     assert diagnostics.peak_groups_buffered <= 1
     assert diagnostics.keyword_postings_examined <= candidates * 2
+    assert judgement.completed_groups == group_count
+    assert judgement.failed_groups == 0
+    assert judgement.pending_groups == 0
+    assert judgement.peak_live_groups <= judge_live_group_upper_bound
 
     print(
         json.dumps(
@@ -188,6 +240,14 @@ def main() -> None:
                     end_to_end_retrieval_seconds,
                     6,
                 ),
+                "judge_completed_groups": judgement.completed_groups,
+                "judge_failed_groups": judgement.failed_groups,
+                "judge_live_group_upper_bound": judge_live_group_upper_bound,
+                "judge_peak_live_groups": judgement.peak_live_groups,
+                "judge_peak_live_tasks": judgement.peak_live_tasks,
+                "judge_pending_groups": judgement.pending_groups,
+                "judge_seconds": round(judge_seconds, 6),
+                "total_seconds": round(total_seconds, 6),
             },
             sort_keys=True,
         )
