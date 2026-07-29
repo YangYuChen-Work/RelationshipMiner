@@ -1,3 +1,5 @@
+import pytest
+
 from engine.semantic.graph_builder import build_graph
 from engine.semantic.models import (
     EntityDocument,
@@ -91,11 +93,7 @@ def test_three_same_type_weak_relations_create_a_table_edge():
     assert edge.weak_count == 3
     assert edge.entity_edge_count == 3
     assert edge.average_confidence == 0.8
-    assert edge.supporting_entity_edges == [
-        "orders:1->products:1",
-        "orders:1->products:2",
-        "orders:1->products:3",
-    ]
+    assert edge.supporting_entity_edges == [item.id for item in entity_edges]
 
 
 def test_two_same_type_weak_relations_do_not_create_a_table_edge():
@@ -124,7 +122,7 @@ def test_one_strong_relation_creates_a_table_edge():
         _document("products:1", "products"),
     ]
 
-    _, _, table_edges, _ = build_graph(
+    _, _, table_edges, entity_edges = build_graph(
         documents,
         [],
         [
@@ -145,7 +143,7 @@ def test_one_strong_relation_creates_a_table_edge():
     assert edge.weak_count == 0
     assert edge.entity_edge_count == 1
     assert edge.average_confidence == 1.0
-    assert edge.supporting_entity_edges == ["orders:1->products:1"]
+    assert edge.supporting_entity_edges == [entity_edges[0].id]
 
 
 def test_weak_relations_of_different_types_do_not_combine_for_threshold():
@@ -217,7 +215,7 @@ def test_relations_for_one_entity_pair_merge_without_losing_direction_or_evidenc
     assert entity_nodes[0].class_name == "example.Order"
     assert len(entity_edges) == 1
     entity_edge = entity_edges[0]
-    assert entity_edge.id == "orders:1->products:1"
+    assert entity_edge.id.startswith("entity:")
     relations_by_type = {
         relation.relation_type: relation for relation in entity_edge.relations
     }
@@ -267,3 +265,114 @@ def test_graph_output_is_stable_when_relation_input_order_changes():
         [item.model_dump() for item in graph_part]
         for graph_part in graph_from_reversed_order
     ]
+
+
+def test_public_edge_ids_are_injective_for_delimiters_percent_and_unicode():
+    unicode_segment = chr(0x4E2D)
+    first_source = f"a%{unicode_segment}"
+    first_target = "b->c"
+    second_source = f"{first_source}->b"
+    second_target = "c"
+    documents = [
+        _document(first_source, first_source),
+        _document(first_target, first_target),
+        _document(second_source, second_source),
+        _document(second_target, second_target),
+    ]
+
+    _, _, table_edges, entity_edges = build_graph(
+        documents,
+        [],
+        [
+            _relation(first_source, first_target, strength="strong"),
+            _relation(second_source, second_target, strength="strong"),
+        ],
+    )
+
+    assert len(entity_edges) == 2
+    assert len({edge.id for edge in entity_edges}) == 2
+    assert len(table_edges) == 2
+    assert len({edge.id for edge in table_edges}) == 2
+    entity_edge_ids = {
+        (edge.source, edge.target): edge.id for edge in entity_edges
+    }
+    assert {
+        (edge.source_table, edge.target_table): edge.supporting_entity_edges
+        for edge in table_edges
+    } == {
+        (first_source, first_target): [
+            entity_edge_ids[(first_source, first_target)]
+        ],
+        (second_source, second_target): [
+            entity_edge_ids[(second_source, second_target)]
+        ],
+    }
+
+
+def test_empty_input_builds_an_explicit_empty_graph():
+    assert build_graph([], [], []) == ([], [], [], [])
+
+
+def test_identical_relation_decisions_remain_independent_entries():
+    documents = [
+        _document("orders:1", "orders"),
+        _document("products:1", "products"),
+    ]
+    decision = _weak_relation("orders:1", "products:1")
+
+    _, _, table_edges, entity_edges = build_graph(
+        documents,
+        [],
+        [decision, decision.model_copy(deep=True)],
+    )
+
+    assert len(entity_edges) == 1
+    assert len(entity_edges[0].relations) == 2
+    expected_relation = EntityRelation(**decision.model_dump()).model_dump()
+    assert [relation.model_dump() for relation in entity_edges[0].relations] == [
+        expected_relation,
+        expected_relation,
+    ]
+    assert table_edges == []
+
+
+def test_conflicting_duplicate_entity_documents_are_rejected():
+    document = _document("orders:1", "orders")
+    conflicting_document = document.model_copy(
+        update={"display_name": "different order"}
+    )
+
+    with pytest.raises(ValueError, match="Conflicting entity documents"):
+        build_graph([document, conflicting_document], [], [])
+
+
+def test_identical_duplicate_entity_documents_are_deduplicated():
+    document = _document("orders:1", "orders")
+
+    table_nodes, entity_nodes, table_edges, entity_edges = build_graph(
+        [document, document.model_copy(deep=True)], [], []
+    )
+
+    assert [(node.id, node.entity_count) for node in table_nodes] == [
+        ("orders", 1)
+    ]
+    assert [node.id for node in entity_nodes] == ["orders:1"]
+    assert table_edges == []
+    assert entity_edges == []
+
+
+def test_same_table_entity_relation_is_retained_without_a_table_self_loop():
+    documents = [
+        _document("orders:1", "orders"),
+        _document("orders:2", "orders"),
+    ]
+
+    _, _, table_edges, entity_edges = build_graph(
+        documents,
+        [],
+        [_relation("orders:1", "orders:2", strength="strong")],
+    )
+
+    assert len(entity_edges) == 1
+    assert len(entity_edges[0].relations) == 1
+    assert table_edges == []

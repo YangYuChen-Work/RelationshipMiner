@@ -25,9 +25,7 @@ def build_graph(
     list[EntityEdge],
 ]:
     """Build display nodes and evidence-preserving relationship edges."""
-    documents_by_id = {
-        document.entity_id: document for document in entity_documents
-    }
+    documents_by_id = _index_documents(entity_documents)
     entity_nodes = [
         EntityNode(
             id=document.entity_id,
@@ -64,6 +62,22 @@ def _build_table_nodes(entity_nodes: list[EntityNode]) -> list[TableNode]:
     ]
 
 
+def _index_documents(
+    entity_documents: list[EntityDocument],
+) -> dict[str, EntityDocument]:
+    documents_by_id: dict[str, EntityDocument] = {}
+    for document in entity_documents:
+        existing_document = documents_by_id.get(document.entity_id)
+        if existing_document is None:
+            documents_by_id[document.entity_id] = document
+        elif existing_document != document:
+            raise ValueError(
+                "Conflicting entity documents for ID: "
+                f"{document.entity_id}"
+            )
+    return documents_by_id
+
+
 def _merge_entity_edges(
     deterministic_edges: list[EntityEdge],
     relation_decisions: list[RelationDecision],
@@ -87,7 +101,7 @@ def _merge_entity_edges(
 
     return [
         EntityEdge(
-            id=f"{source}->{target}",
+            id=_edge_id("entity", source, target),
             source=source,
             target=target,
             relations=sorted(
@@ -131,7 +145,7 @@ def _build_table_edges(
         relations = [relation for _, relation in supporting_relations]
         table_edges.append(
             TableEdge(
-                id=f"{source_table}->{target_table}",
+                id=_edge_id("table", source_table, target_table),
                 source_table=source_table,
                 target_table=target_table,
                 relation_types=relation_types,
@@ -170,6 +184,10 @@ def _should_show_table_edge(
 def _canonical_pair(source: str, target: str) -> tuple[str, str]:
     first, second = sorted((source, target))
     return first, second
+
+
+def _edge_id(kind: str, source: str, target: str) -> str:
+    return f"{kind}:{len(source)}:{source}{len(target)}:{target}"
 
 
 def _relation_sort_key(relation: EntityRelation) -> str:
