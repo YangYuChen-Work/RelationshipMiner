@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from engine.relationship_computer import FKConstraint
-from engine.schema_analyzer import SchemaAnalysisResult, TableSchema
+from engine.schema_analyzer import FKConstraint, SchemaAnalysisResult, TableSchema
 
 from .corpus import _entity_id, _normalize_value
 from .models import (

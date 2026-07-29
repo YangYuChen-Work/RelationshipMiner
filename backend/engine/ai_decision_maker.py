@@ -9,6 +9,10 @@
 """
 
 import json
+
+__deprecated__ = (
+    "Non-production compatibility module; use RelationshipAnalyzer instead."
+)
 import logging
 import re
 from dataclasses import dataclass

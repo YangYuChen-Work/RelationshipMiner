@@ -48,3 +48,28 @@ uv run --directory backend pytest
 cd frontend
 npm test
 ```
+
+## Semantic relationship analysis prerequisites
+
+HTTP/WebSocket analysis has one supported production path:
+`RelationshipAnalyzer`. The old `decide_matches` and `compute_relationships`
+helpers are deprecated, non-production pure-function compatibility code only.
+Routers and the production pipeline do not call them, so there is no silent
+legacy fallback.
+
+- Semantic retrieval uses `BAAI/bge-small-zh-v1.5` by default. The first run
+  downloads the model into the Hugging Face cache (set `HF_HOME` to choose its
+  location), and Torch model loading has a cold-start cost. Pre-warm this cache
+  in production.
+- Planning and judgement use DeepSeek `deepseek-v4-flash` with JSON Output.
+  Set `DEEPSEEK_API_KEY`; `DEEPSEEK_MODEL` and `DEEPSEEK_BASE_URL` can override
+  the default model and endpoint.
+- A complete analysis has a single 180-second budget and returns `complete`,
+  `partial`, or `failed`. Timeouts and recoverable stage failures are explicit
+  in the terminal WebSocket `warnings`; analysis never falls back silently.
+- `class_name` metadata is optional. Select only semantic-analysis fields in
+  `dimensions`; the service adds primary/foreign keys internally for identity
+  and deterministic evidence.
+- Around 7,000 entities, model loading, embedding, and LLM judgement need
+  meaningful CPU/memory/network headroom. Keep dimensions focused, pre-warm
+  BGE, and tune `EMBEDDING_BATCH_SIZE` and `LLM_CONCURRENCY` for the host.

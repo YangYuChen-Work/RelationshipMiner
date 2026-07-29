@@ -51,6 +51,80 @@ class TestPostAnalyze:
 
 
 class TestAnalyzeWebSocket:
+    def test_semantic_analyzer_only_over_http_and_websocket(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The public API completes without entering either legacy path."""
+        import engine.ai_decision_maker as legacy_decider
+        import engine.pipeline as pipeline
+        import engine.relationship_computer as legacy_computer
+        from engine.semantic.analyzer import RelationshipAnalyzer
+
+        class EmptyPlanner:
+            async def plan(self, *args: object, **kwargs: object) -> list[object]:
+                return []
+
+        class UnusedEmbeddings:
+            def encode_documents(self, texts: list[str]) -> list[list[float]]:
+                raise AssertionError("no semantic retrieval is planned")
+
+            def encode_queries(self, texts: list[str]) -> list[list[float]]:
+                raise AssertionError("no semantic retrieval is planned")
+
+        class UnusedJudge:
+            async def judge_groups(
+                self,
+                groups: list[object],
+                deadline: float,
+            ) -> object:
+                raise AssertionError("no semantic candidates are planned")
+
+        def legacy_path_must_not_run(*args: object, **kwargs: object) -> object:
+            raise AssertionError("the legacy relationship path was invoked")
+
+        analyzer = RelationshipAnalyzer(
+            planner=EmptyPlanner(),
+            embedding_adapter=UnusedEmbeddings(),
+            judge=UnusedJudge(),
+        )
+        constructed: list[RelationshipAnalyzer] = []
+
+        def semantic_analyzer_factory() -> RelationshipAnalyzer:
+            constructed.append(analyzer)
+            return analyzer
+
+        monkeypatch.setattr(
+            legacy_decider,
+            "decide_matches",
+            legacy_path_must_not_run,
+        )
+        monkeypatch.setattr(
+            legacy_computer,
+            "compute_relationships",
+            legacy_path_must_not_run,
+        )
+        monkeypatch.setattr(
+            pipeline,
+            "RelationshipAnalyzer",
+            semantic_analyzer_factory,
+        )
+
+        task_id = client.post(
+            "/api/analyze",
+            json={"tables": [
+                {"name": "users", "dimensions": ["name"]},
+                {"name": "orders", "dimensions": ["amount"]},
+            ]},
+        ).json()["task_id"]
+        with client.websocket_connect(f"/api/ws/analyze/{task_id}") as ws:
+            _, final = _final_message(ws)
+
+        assert constructed == [analyzer]
+        assert final["status"] == "complete"
+        assert final["graph"]["entity_edges"]
+
     def test_analysis_adds_primary_key_when_not_selected(self, client: TestClient):
         task_id = client.post(
             "/api/analyze",

@@ -12,12 +12,18 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from engine.schema_analyzer import FKConstraint as SemanticFKConstraint
+
+__deprecated__ = (
+    "Non-production compatibility module; use RelationshipAnalyzer instead."
+)
+
 
 # ── 数据结构 ──────────────────────────────────────────────────
 
 
 @dataclass
-class FKConstraint:
+class _LegacyFKConstraint:
     """外键约束元数据。"""
 
     source_table: str
@@ -96,6 +102,10 @@ def _convert_value(val: Any) -> Any:
 
 
 # ── 主函数 ────────────────────────────────────────────────────
+
+
+# Deprecated compatibility export. Production FK metadata lives with schema.
+FKConstraint = SemanticFKConstraint
 
 
 def compute_relationships(

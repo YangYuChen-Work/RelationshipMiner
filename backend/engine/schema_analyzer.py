@@ -14,7 +14,16 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy import inspect
 
-from engine.relationship_computer import FKConstraint
+
+@dataclass
+class FKConstraint:
+    """Foreign-key metadata owned by the production schema boundary."""
+
+    source_table: str
+    source_columns: list[str]
+    target_table: str
+    target_columns: list[str]
+
 
 
 # ── 数据结构 ──────────────────────────────────────────────────
