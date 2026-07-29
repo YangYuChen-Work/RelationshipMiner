@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SemanticGraphData } from "../api/analysis";
 import { computeGroupedLayout } from "./layout";
 import {
+  createLayoutClient,
   LayoutClient,
   LayoutClientDisposedError,
   StaleLayoutRequestError,
@@ -210,6 +211,23 @@ class FakeWorker {
 }
 
 describe("LayoutClient", () => {
+  it("creates isolated clients whose disposal does not terminate a sibling", async () => {
+    const firstWorker = new FakeWorker();
+    const secondWorker = new FakeWorker();
+    const first = createLayoutClient(firstWorker as unknown as Worker);
+    const second = createLayoutClient(secondWorker as unknown as Worker);
+    const pending = second.layoutGraph(graphFixture(), { width: 800, height: 600 });
+
+    first.dispose();
+    expect(firstWorker.terminateCount).toBe(1);
+    expect(secondWorker.terminateCount).toBe(0);
+
+    const request = secondWorker.messages[0] as { requestId: number };
+    const layout = computeGroupedLayout(graphFixture(), { width: 800, height: 600 });
+    secondWorker.reply({ requestId: request.requestId, layout });
+    await expect(pending).resolves.toBe(layout);
+  });
+
   it("settles concurrent requests by increasing ID even when replies are out of order", async () => {
     const worker = new FakeWorker();
     const client = new LayoutClient(worker as unknown as Worker);

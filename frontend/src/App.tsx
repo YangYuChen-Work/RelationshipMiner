@@ -9,7 +9,7 @@ function App() {
   const graph = useAnalysisStore((s) => s.graph);
   const resetAnalysis = useAnalysisStore((s) => s.resetAnalysis);
 
-  if (phase === "done" && graph) {
+  if ((phase === "done" || phase === "error") && graph) {
     return <GraphWorkbench />;
   }
 

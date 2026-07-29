@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { StaleLayoutRequestError, disposeLayoutGraph, layoutGraph, resetLayoutGraph } from "../graph/layoutClient";
+import {
+  createLayoutClient,
+  type LayoutClient,
+  StaleLayoutRequestError,
+} from "../graph/layoutClient";
 import { buildScene, type GraphTransform, type RenderScene } from "../graph/scene";
 import { hitTest, type HitTarget } from "../graph/hitTest";
 import { useAnalysisStore } from "../store/analysis";
@@ -14,6 +18,15 @@ const ENTITY = "#7dd3fc";
 const ENTITY_SELECTED = "#2dd4bf";
 const EDGE = "#52677a";
 const TABLE_EDGE = "#8fa0b0";
+const MAX_ENTITY_LABELS = 500;
+const LABEL_VIEWPORT_PADDING = 24;
+
+interface KeyboardTarget {
+  hit: HitTarget;
+  label: string;
+  x: number;
+  y: number;
+}
 
 function getSize(element: HTMLElement) {
   const rect = element.getBoundingClientRect();
@@ -112,7 +125,24 @@ function drawScene(
   context.fillStyle = "#dbeafe";
   context.font = "11px system-ui, sans-serif";
   context.textBaseline = "bottom";
-  scene.entityLabels.forEach((label) => context.fillText(label.text, label.screen.x + 6, label.screen.y - 5));
+  scene.entityLabels
+    .filter((label) =>
+      label.screen.x >= -LABEL_VIEWPORT_PADDING &&
+      label.screen.x <= width + LABEL_VIEWPORT_PADDING &&
+      label.screen.y >= -LABEL_VIEWPORT_PADDING &&
+      label.screen.y <= height + LABEL_VIEWPORT_PADDING,
+    )
+    .sort((left, right) => {
+      const leftPriority =
+        left.nodeId === selectedNodeId ? 0 : left.nodeId === hoveredNodeId ? 1 : 2;
+      const rightPriority =
+        right.nodeId === selectedNodeId ? 0 : right.nodeId === hoveredNodeId ? 1 : 2;
+      return leftPriority - rightPriority || left.nodeId.localeCompare(right.nodeId);
+    })
+    .slice(0, MAX_ENTITY_LABELS)
+    .forEach((label) =>
+      context.fillText(label.text, label.screen.x + 6, label.screen.y - 5),
+    );
   context.restore();
 }
 
@@ -125,11 +155,14 @@ export default function GraphCanvas() {
   const lastHitRef = useRef<HitTarget | null>(null);
   const selectedNodeRef = useRef<string | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
+  const keyboardTargetRef = useRef<KeyboardTarget | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<HTMLCanvasElement, unknown> | null>(null);
+  const layoutClientRef = useRef<LayoutClient | null>(null);
   const viewportRef = useRef({ width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT });
   const [viewport, setViewport] = useState(viewportRef.current);
-  const [layout, setLayout] = useState<Awaited<ReturnType<typeof layoutGraph>> | null>(null);
+  const [layout, setLayout] = useState<Awaited<ReturnType<LayoutClient["layoutGraph"]>> | null>(null);
   const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
 
   const graph = useAnalysisStore((state) => state.graph);
   const analysisStatus = useAnalysisStore((state) => state.analysisStatus);
@@ -223,8 +256,10 @@ export default function GraphCanvas() {
     if (relayoutRequest > 0 && zoomRef.current && canvasRef.current) {
       d3.select(canvasRef.current).call(zoomRef.current.transform, d3.zoomIdentity);
     }
-    resetLayoutGraph();
-    void layoutGraph(graph, viewport).then(
+    const client = layoutClientRef.current ?? createLayoutClient();
+    layoutClientRef.current = client;
+    client.reset();
+    void client.layoutGraph(graph, viewport).then(
       (next) => {
         if (active) setLayout(next);
       },
@@ -235,7 +270,7 @@ export default function GraphCanvas() {
     );
     return () => {
       active = false;
-      resetLayoutGraph();
+      client.reset();
     };
   }, [graph, relayoutRequest, viewport]);
 
@@ -282,13 +317,110 @@ export default function GraphCanvas() {
 
   useEffect(() => () => {
     if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
-    disposeLayoutGraph();
+    layoutClientRef.current?.dispose();
+    layoutClientRef.current = null;
   }, []);
 
   const applyHit = useCallback((target: HitTarget | null) => {
     lastHitRef.current = target;
     setHoveredNode(target?.kind === "entity-node" ? target.id : null);
   }, [setHoveredNode]);
+
+  const keyboardTargets = useCallback((): KeyboardTarget[] => {
+    const scene = sceneRef.current;
+    if (!scene) return [];
+    return [
+      ...scene.tableNodes.map((node) => ({
+        hit: { kind: "table-node" as const, id: node.id },
+        label: `${node.label}，表`,
+        x: node.screen.x,
+        y: node.screen.y,
+      })),
+      ...scene.entityDots.map((node) => ({
+        hit: { kind: "entity-node" as const, id: node.id },
+        label: `${node.label}，实体`,
+        x: node.screen.x,
+        y: node.screen.y,
+      })),
+    ].sort((left, right) =>
+      left.y - right.y || left.x - right.x || left.hit.id.localeCompare(right.hit.id),
+    );
+  }, []);
+
+  const setKeyboardTarget = useCallback((target: KeyboardTarget | null) => {
+    keyboardTargetRef.current = target;
+    lastHitRef.current = target?.hit ?? null;
+    setKeyboardAnnouncement(target ? `当前目标：${target.label}` : "");
+  }, []);
+
+  const moveKeyboardTarget = useCallback((key: string) => {
+    const targets = keyboardTargets();
+    if (targets.length === 0) return;
+    const current = keyboardTargetRef.current ?? targets[0];
+    const candidates = targets.filter((target) => {
+      if (target.hit.kind === current.hit.kind && target.hit.id === current.hit.id) {
+        return false;
+      }
+      if (key === "ArrowLeft") return target.x < current.x;
+      if (key === "ArrowRight") return target.x > current.x;
+      if (key === "ArrowUp") return target.y < current.y;
+      return target.y > current.y;
+    });
+    const next = (candidates.length > 0 ? candidates : targets)
+      .sort((left, right) => {
+        const leftDistance = Math.hypot(left.x - current.x, left.y - current.y);
+        const rightDistance = Math.hypot(right.x - current.x, right.y - current.y);
+        return leftDistance - rightDistance ||
+          left.y - right.y ||
+          left.x - right.x ||
+          left.hit.id.localeCompare(right.hit.id);
+      })[0];
+    setKeyboardTarget(next);
+  }, [keyboardTargets, setKeyboardTarget]);
+
+  const focusSupportingRelations = useCallback((tableEdgeId: string) => {
+    if (!graph || !layout || !zoomRef.current || !canvasRef.current) return;
+    const tableEdge = graph.table_edges.find((edge) => edge.id === tableEdgeId);
+    if (!tableEdge || tableEdge.supporting_entity_edges.length === 0) return;
+    const supportingIds = new Set(tableEdge.supporting_entity_edges);
+    const supportingEdges = layout.entityEdges.filter((edge) =>
+      supportingIds.has(edge.id),
+    );
+    if (supportingEdges.length === 0) return;
+    const points = supportingEdges.flatMap((edge) => [edge.from, edge.to]);
+    const minX = Math.min(...points.map((point) => point.x));
+    const maxX = Math.max(...points.map((point) => point.x));
+    const minY = Math.min(...points.map((point) => point.y));
+    const maxY = Math.max(...points.map((point) => point.y));
+    const padding = 120;
+    const k = Math.max(
+      0.25,
+      Math.min(
+        2.5,
+        Math.min(
+          (viewport.width - padding * 2) / Math.max(1, maxX - minX),
+          (viewport.height - padding * 2) / Math.max(1, maxY - minY),
+        ),
+      ),
+    );
+    const transform = d3.zoomIdentity
+      .translate(viewport.width / 2, viewport.height / 2)
+      .scale(k)
+      .translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
+    d3.select(canvasRef.current).call(zoomRef.current.transform, transform);
+  }, [graph, layout, viewport]);
+
+  const focusTableNode = useCallback((tableId: string) => {
+    if (!layout || !zoomRef.current || !canvasRef.current) return;
+    const table = layout.tableNodes.find((node) => node.id === tableId);
+    if (!table) return;
+    const k = d3.zoomTransform(canvasRef.current).k;
+    const transform = d3.zoomIdentity
+      .translate(viewport.width / 2, viewport.height / 2)
+      .scale(k)
+      .translate(-table.x, -table.y);
+    d3.select(canvasRef.current).call(zoomRef.current.transform, transform);
+  }, [layout, viewport]);
 
   const selectHit = useCallback((target: HitTarget | null) => {
     if (!target) {
@@ -298,13 +430,16 @@ export default function GraphCanvas() {
     }
     if (target.kind === "entity-node") {
       requestNodeFocus(target.id);
+    } else if (target.kind === "table-node") {
+      focusTableNode(target.id);
     } else if (target.kind === "entity-edge") {
       selectEntityEdge(target.id);
     } else if (target.kind === "table-edge") {
       // The table edge is the aggregate focus for its supporting entity relations.
       selectTableEdge(target.id);
+      focusSupportingRelations(target.id);
     }
-  }, [requestNodeFocus, selectEntityEdge, selectTableEdge, setSelectedNode]);
+  }, [focusSupportingRelations, focusTableNode, requestNodeFocus, selectEntityEdge, selectTableEdge, setSelectedNode]);
 
   const entityCount = graph?.entity_nodes.length ?? 0;
   const tableCount = graph?.table_nodes.length ?? 0;
@@ -320,16 +455,27 @@ export default function GraphCanvas() {
         tabIndex={0}
         aria-label={graphSummary(entityCount, tableCount, edgeCount)}
         className="block h-full w-full touch-none outline-none focus:ring-2 focus:ring-teal-300"
+        onFocus={() => {
+          if (!keyboardTargetRef.current) {
+            setKeyboardTarget(keyboardTargets()[0] ?? null);
+          }
+        }}
         onPointerMove={(event) => applyHit(sceneRef.current ? hitTest(sceneRef.current, pointFromEvent(event.currentTarget, event.nativeEvent)) : null)}
         onPointerLeave={() => applyHit(null)}
         onClick={(event) => selectHit(sceneRef.current ? hitTest(sceneRef.current, pointFromEvent(event.currentTarget, event.nativeEvent)) : null)}
         onKeyDown={(event) => {
+          if (event.key.startsWith("Arrow")) {
+            event.preventDefault();
+            moveKeyboardTarget(event.key);
+            return;
+          }
           if ((event.key === "Enter" || event.key === " ") && lastHitRef.current) {
             event.preventDefault();
             selectHit(lastHitRef.current);
           }
         }}
       />
+      <span aria-live="polite" className="sr-only">{keyboardAnnouncement}</span>
       {!graph && <p data-empty-warning className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-slate-400">等待分析结果生成语义关系图。</p>}
       {analysisStatus === "partial" && <p role="status" className="absolute left-3 top-3 rounded bg-amber-400/15 px-3 py-2 text-xs text-amber-100">分析部分完成，正在显示可用关系。</p>}
       {notice && <div role="alert" className="absolute bottom-3 left-3 right-3 rounded border border-amber-400/30 bg-slate-950/85 px-3 py-2 text-sm text-amber-100"><p>{notice}</p>{warnings.length > 0 && <ul className="mt-1 list-disc pl-5 text-xs text-amber-200">{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}

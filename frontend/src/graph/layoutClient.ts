@@ -130,6 +130,10 @@ export class LayoutClient {
   }
 }
 
+export function createLayoutClient(worker?: Worker): LayoutClient {
+  return new LayoutClient(worker);
+}
+
 let sharedClient: LayoutClient | null = null;
 
 export function layoutGraph(graph: LayoutGraph, viewport: Viewport) {
