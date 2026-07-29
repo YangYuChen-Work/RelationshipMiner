@@ -7,6 +7,7 @@ import {
   render,
   screen,
   fireEvent,
+  within,
   waitFor,
 } from "@testing-library/react";
 import * as d3 from "d3";
@@ -110,6 +111,332 @@ const MOCK_GRAPH: SemanticGraphData = {
       ],
     },
   ],
+};
+
+const BUSINESS_SELECTION = [
+  {
+    name: "requirements",
+    fields: ["title", "creator_name", "creator_employee_no"],
+  },
+  {
+    name: "operations",
+    fields: ["action", "operator_name", "operator_employee_no"],
+  },
+  {
+    name: "processes",
+    fields: ["process_name", "description"],
+  },
+  {
+    name: "parts",
+    fields: ["part_name", "part_code", "description"],
+  },
+];
+
+const BUSINESS_TABLES = BUSINESS_SELECTION.map(({ name }) => ({ name }));
+const BUSINESS_COLUMNS = {
+  requirements: {
+    table_name: "requirements",
+    columns: [
+      { name: "id", type: "int", is_class_name: false, is_primary_key: true },
+      { name: "title", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "creator_name", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "creator_employee_no", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "private_note", type: "varchar", is_class_name: false, is_primary_key: false },
+    ],
+  },
+  operations: {
+    table_name: "operations",
+    columns: [
+      { name: "id", type: "int", is_class_name: false, is_primary_key: true },
+      { name: "action", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "operator_name", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "operator_employee_no", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "private_note", type: "varchar", is_class_name: false, is_primary_key: false },
+    ],
+  },
+  processes: {
+    table_name: "processes",
+    columns: [
+      { name: "id", type: "int", is_class_name: false, is_primary_key: true },
+      { name: "process_name", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "description", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "private_note", type: "varchar", is_class_name: false, is_primary_key: false },
+    ],
+  },
+  parts: {
+    table_name: "parts",
+    columns: [
+      { name: "id", type: "int", is_class_name: false, is_primary_key: true },
+      { name: "part_name", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "part_code", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "description", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "private_note", type: "varchar", is_class_name: false, is_primary_key: false },
+    ],
+  },
+};
+
+const PROCESS_DESCRIPTION =
+  "依次安装转轴、轴承与转子铁芯，并完成动平衡检查。";
+const PROCESS_TABLE_EDGE_ID = "table:5:parts9:processes";
+const PROCESS_SUPPORTING_EDGE_IDS = [
+  "entity:9:parts:20112:processes:10",
+  "entity:9:parts:20212:processes:10",
+  "entity:9:parts:20312:processes:10",
+];
+
+function personnelEdge(
+  operationId: string,
+  action: string,
+): SemanticGraphData["entity_edges"][number] {
+  return {
+    id: `entity:14:operations:${operationId}14:requirements:1`,
+    source: `operations:${operationId}`,
+    target: "requirements:1",
+    relations: [
+      {
+        source: "requirements:1",
+        target: `operations:${operationId}`,
+        relation_type: "人员行为",
+        direction: "source_to_target",
+        strength: "weak",
+        confidence: 0.97,
+        explanation:
+          `需求创建人张三（工号 EMP-001）与“${action}”的操作人姓名、工号均一致，` +
+          "确认属于同一人员的业务行为。",
+        evidence: [
+          {
+            source_field: "creator_name",
+            source_value: "张三",
+            target_field: "operator_name",
+            target_value: "张三",
+            method: "llm_semantic_reasoning",
+            reason: "创建人与操作人的姓名一致。",
+          },
+          {
+            source_field: "creator_employee_no",
+            source_value: "EMP-001",
+            target_field: "operator_employee_no",
+            target_value: "EMP-001",
+            method: "llm_semantic_reasoning",
+            reason: "姓名相同且员工工号一致，可排除同名人员。",
+          },
+        ],
+        model_id: "fixture-semantic-model-v1",
+        task_id: "integration-task-1",
+      },
+    ],
+  };
+}
+
+function processPartEdge(
+  partId: string,
+  partName: string,
+  partCode: string,
+): SemanticGraphData["entity_edges"][number] {
+  return {
+    id: `entity:9:parts:${partId}12:processes:10`,
+    source: `parts:${partId}`,
+    target: "processes:10",
+    relations: [
+      {
+        source: "processes:10",
+        target: `parts:${partId}`,
+        relation_type: "工艺涉及零件",
+        direction: "source_to_target",
+        strength: "weak",
+        confidence: 0.94,
+        explanation:
+          `转子装配工艺说明明确包含${partName}，` +
+          "该记录是实际装配零件而不是名称相似的工艺文件。",
+        evidence: [
+          {
+            source_field: "description",
+            source_value: PROCESS_DESCRIPTION,
+            target_field: "part_name",
+            target_value: partName,
+            method: "llm_semantic_reasoning",
+            reason: "工艺描述明确列出该零件名称。",
+          },
+          {
+            source_field: "process_name",
+            source_value: "转子装配工艺",
+            target_field: "part_code",
+            target_value: partCode,
+            method: "llm_semantic_reasoning",
+            reason: "零件编码属于转子装配零件系列。",
+          },
+        ],
+        model_id: "fixture-semantic-model-v1",
+        task_id: "integration-task-1",
+      },
+    ],
+  };
+}
+
+const BUSINESS_GRAPH: SemanticGraphData = {
+  table_nodes: [
+    { id: "operations", display_name: "operations", entity_count: 4 },
+    { id: "parts", display_name: "parts", entity_count: 4 },
+    { id: "processes", display_name: "processes", entity_count: 1 },
+    { id: "requirements", display_name: "requirements", entity_count: 1 },
+  ],
+  entity_nodes: [
+    {
+      id: "operations:101",
+      table_id: "operations",
+      display_name: "创建转子装配工单",
+      class_name: null,
+      dimensions: {
+        action: "创建转子装配工单",
+        operator_name: "张三",
+        operator_employee_no: "EMP-001",
+      },
+    },
+    {
+      id: "operations:102",
+      table_id: "operations",
+      display_name: "复核转子装配工艺",
+      class_name: null,
+      dimensions: {
+        action: "复核转子装配工艺",
+        operator_name: "张三",
+        operator_employee_no: "EMP-001",
+      },
+    },
+    {
+      id: "operations:103",
+      table_id: "operations",
+      display_name: "批准转子装配放行",
+      class_name: null,
+      dimensions: {
+        action: "批准转子装配放行",
+        operator_name: "张三",
+        operator_employee_no: "EMP-001",
+      },
+    },
+    {
+      id: "operations:104",
+      table_id: "operations",
+      display_name: "查看转子装配工单",
+      class_name: null,
+      dimensions: {
+        action: "查看转子装配工单",
+        operator_name: "张三",
+        operator_employee_no: "EMP-999",
+      },
+    },
+    {
+      id: "parts:201",
+      table_id: "parts",
+      display_name: "转轴",
+      class_name: null,
+      dimensions: {
+        part_name: "转轴",
+        part_code: "RTR-SHAFT-01",
+        description: "转子装配使用的传动转轴。",
+      },
+    },
+    {
+      id: "parts:202",
+      table_id: "parts",
+      display_name: "轴承",
+      class_name: null,
+      dimensions: {
+        part_name: "轴承",
+        part_code: "RTR-BEARING-02",
+        description: "转子装配使用的支撑轴承。",
+      },
+    },
+    {
+      id: "parts:203",
+      table_id: "parts",
+      display_name: "转子铁芯",
+      class_name: null,
+      dimensions: {
+        part_name: "转子铁芯",
+        part_code: "RTR-CORE-03",
+        description: "转子装配使用的叠片铁芯。",
+      },
+    },
+    {
+      id: "parts:204",
+      table_id: "parts",
+      display_name: "转子装配工艺卡片",
+      class_name: null,
+      dimensions: {
+        part_name: "转子装配工艺卡片",
+        part_code: "DOC-ROTOR-99",
+        description: "记录转子装配工艺的纸质文件，不是装配零件。",
+      },
+    },
+    {
+      id: "processes:10",
+      table_id: "processes",
+      display_name: "转子装配工艺",
+      class_name: null,
+      dimensions: {
+        process_name: "转子装配工艺",
+        description: PROCESS_DESCRIPTION,
+      },
+    },
+    {
+      id: "requirements:1",
+      table_id: "requirements",
+      display_name: "转子装配质量需求",
+      class_name: null,
+      dimensions: {
+        title: "转子装配质量需求",
+        creator_name: "张三",
+        creator_employee_no: "EMP-001",
+      },
+    },
+  ],
+  table_edges: [
+    {
+      id: "table:10:operations12:requirements",
+      source_table: "operations",
+      target_table: "requirements",
+      relation_types: ["人员行为"],
+      strong_count: 0,
+      weak_count: 3,
+      entity_edge_count: 3,
+      average_confidence: 0.97,
+      supporting_entity_edges: [
+        "entity:14:operations:10114:requirements:1",
+        "entity:14:operations:10214:requirements:1",
+        "entity:14:operations:10314:requirements:1",
+      ],
+    },
+    {
+      id: PROCESS_TABLE_EDGE_ID,
+      source_table: "parts",
+      target_table: "processes",
+      relation_types: ["工艺涉及零件"],
+      strong_count: 0,
+      weak_count: 3,
+      entity_edge_count: 3,
+      average_confidence: 0.94,
+      supporting_entity_edges: PROCESS_SUPPORTING_EDGE_IDS,
+    },
+  ],
+  entity_edges: [
+    personnelEdge("101", "创建转子装配工单"),
+    personnelEdge("102", "复核转子装配工艺"),
+    personnelEdge("103", "批准转子装配放行"),
+    processPartEdge("201", "转轴", "RTR-SHAFT-01"),
+    processPartEdge("202", "轴承", "RTR-BEARING-02"),
+    processPartEdge("203", "转子铁芯", "RTR-CORE-03"),
+  ],
+};
+
+const BUSINESS_DIAGNOSTICS: AnalysisDiagnostics = {
+  entities_read: 10,
+  plans_created: 2,
+  candidates_retrieved: 8,
+  candidates_completed: 8,
+  candidates_pending: 0,
+  strong_edges_created: 0,
+  weak_edges_created: 6,
 };
 
 const EMPTY_GRAPH: SemanticGraphData = {
@@ -264,6 +591,38 @@ function setupFetchMock() {
   );
 
   return fetchMock;
+}
+
+function setupBusinessFetchMock() {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : input.toString();
+
+    if (url === "/api/tables") {
+      return {
+        ok: true,
+        json: () => Promise.resolve(BUSINESS_TABLES),
+      } as Response;
+    }
+
+    const fieldsMatch = url.match(/^\/api\/tables\/([^/]+)\/fields$/);
+    if (fieldsMatch) {
+      const tableName = fieldsMatch[1] as keyof typeof BUSINESS_COLUMNS;
+      const fields = BUSINESS_COLUMNS[tableName];
+      return {
+        ok: Boolean(fields),
+        json: () => Promise.resolve(fields ?? {}),
+      } as Response;
+    }
+
+    if (url === "/api/analyze") {
+      return {
+        ok: true,
+        json: () => Promise.resolve({ task_id: "test-task-1" }),
+      } as Response;
+    }
+
+    return { ok: false, json: () => Promise.resolve({}) } as Response;
+  });
 }
 
 describe("Integration: full user flow", () => {
@@ -573,6 +932,128 @@ describe("Integration: full user flow", () => {
     expect(screen.getByText("semantic-model-v1")).toBeInTheDocument();
     expect(screen.getByText("test-task-1")).toBeInTheDocument();
 
+  });
+
+  it("renders representative semantic results and exposes process evidence", async () => {
+    const fetchMock = setupBusinessFetchMock();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("requirements")).toBeInTheDocument();
+    });
+
+    for (const selection of BUSINESS_SELECTION) {
+      const tableCheckbox = screen.getByRole("checkbox", {
+        name: `选择表 ${selection.name}`,
+      });
+      const tableCard = tableCheckbox.closest("article")!;
+      fireEvent.click(tableCheckbox);
+      await waitFor(() => {
+        expect(
+          within(tableCard).getByRole("checkbox", {
+            name: `字段 ${selection.fields[0]}`,
+          }),
+        ).toBeInTheDocument();
+      });
+      for (const field of selection.fields) {
+        fireEvent.click(
+          within(tableCard).getByRole("checkbox", {
+            name: `字段 ${field}`,
+          }),
+        );
+      }
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "开始分析" }));
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const analyzeCall = fetchMock.mock.calls.find(([input]) => {
+      const url = typeof input === "string" ? input : input.toString();
+      return url === "/api/analyze";
+    });
+    expect(JSON.parse(String(analyzeCall?.[1]?.body))).toEqual({
+      tables: BUSINESS_SELECTION,
+    });
+
+    await FakeWebSocket.instances[0].sendMessage(
+      terminalMessage(
+        "complete",
+        BUSINESS_GRAPH,
+        [],
+        BUSINESS_DIAGNOSTICS,
+      ),
+    );
+
+    const canvas = await screen.findByRole("img", {
+      name: /10 个实体，8 条关系/,
+    });
+    await waitFor(() => {
+      expect(canvas).toHaveAttribute("data-scene-ready", "true");
+    });
+    expect(screen.getByText("2 条表关系")).toBeInTheDocument();
+    expect(screen.getByText("6 条实体关系")).toBeInTheDocument();
+
+    const layout = computeGroupedLayout(BUSINESS_GRAPH, {
+      width: 960,
+      height: 600,
+    });
+    const processTableEdge = layout.tableEdges.find(
+      (edge) => edge.id === PROCESS_TABLE_EDGE_ID,
+    )!;
+    const transform = d3.zoomTransform(canvas);
+    const from = transform.apply([
+      processTableEdge.from.x,
+      processTableEdge.from.y,
+    ]);
+    const to = transform.apply([
+      processTableEdge.to.x,
+      processTableEdge.to.y,
+    ]);
+    fireEvent.click(canvas, {
+      clientX: (from[0] + to[0]) / 2,
+      clientY: (from[1] + to[1]) / 2,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("表关系汇总")).toBeInTheDocument();
+      expect(screen.getByText("工艺涉及零件")).toBeInTheDocument();
+      expect(useAnalysisStore.getState().selectedTableEdgeId).toBe(
+        PROCESS_TABLE_EDGE_ID,
+      );
+    });
+    for (const edgeId of PROCESS_SUPPORTING_EDGE_IDS) {
+      expect(
+        screen.getByRole("button", { name: edgeId }),
+      ).toBeInTheDocument();
+    }
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: PROCESS_SUPPORTING_EDGE_IDS[0],
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText("实体关系详情")).toBeInTheDocument();
+    });
+    expect(screen.getByText("weak")).toBeInTheDocument();
+    expect(screen.getByText("94%")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "转子装配工艺说明明确包含转轴，该记录是实际装配零件而不是名称相似的工艺文件。",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "description = 依次安装转轴、轴承与转子铁芯，并完成动平衡检查。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("part_name = 转轴")).toBeInTheDocument();
+    expect(screen.getByText("fixture-semantic-model-v1")).toBeInTheDocument();
+    expect(screen.getByText("integration-task-1")).toBeInTheDocument();
   });
 
   it("handles analysis error from WebSocket", async () => {
