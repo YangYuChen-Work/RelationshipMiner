@@ -132,6 +132,15 @@ describe("buildScene", () => {
     );
   });
 
+  it("keeps table relation labels at overview zoom while suppressing entity labels", () => {
+    const scene = buildScene(input(0.5));
+
+    expect(scene.entityDots).toHaveLength(0);
+    expect(scene.edgeLabels.length).toBeGreaterThan(0);
+    expect(scene.edgeLabels.every((label) => label.kind === "table")).toBe(true);
+    expect(scene.edgeLabels.map((label) => label.text)).toContain("created");
+  });
+
   it("derives mixed table-edge labels and style only from relations visible at the threshold", () => {
     const mixedGraph: SemanticGraphData = {
       ...graph,
@@ -421,6 +430,48 @@ describe("buildScene", () => {
     expect(orderOne.color).toBe(orderTwo.color);
     expect(orderOne.color).not.toBe(userOne.color);
     expect(scene.tableNodes.find((node) => node.id === "orders")?.color).toBe(orderOne.color);
+  });
+
+  it("assigns distinct stable palette colors to the four known manufacturing tables", () => {
+    const tableNodes = [
+      { id: "meprocess", display_name: "MEProcess", entity_count: 0 },
+      { id: "MEOperation", display_name: "MEOperation", entity_count: 0 },
+      { id: "mestep", display_name: "MEStep", entity_count: 0 },
+      { id: "Assembly", display_name: "Assembly", entity_count: 0 },
+    ];
+    const knownGraph: SemanticGraphData = {
+      table_nodes: tableNodes,
+      entity_nodes: [],
+      table_edges: [],
+      entity_edges: [],
+    };
+    const knownLayout: GraphLayout = {
+      tableNodes: tableNodes.map((node, index) => ({
+        id: node.id,
+        x: index * 100,
+        y: 0,
+      })),
+      entityNodes: [],
+      tableEdges: [],
+      entityEdges: [],
+    };
+
+    const colors = Object.fromEntries(
+      buildScene({
+        graph: knownGraph,
+        layout: knownLayout,
+        transform: { k: 1, x: 0, y: 0 },
+        confidenceThreshold: 0,
+      }).tableNodes.map((node) => [node.id, node.color]),
+    );
+
+    expect(colors).toEqual({
+      meprocess: "#fbbf24",
+      MEOperation: "#2dd4bf",
+      mestep: "#38bdf8",
+      Assembly: "#fb7185",
+    });
+    expect(new Set(Object.values(colors))).toHaveLength(4);
   });
 
   it("drops draw commands with missing endpoints or non-finite geometry", () => {

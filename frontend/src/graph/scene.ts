@@ -18,7 +18,8 @@ import {
 } from "./semantics";
 
 const TABLE_ONLY_ZOOM = 0.65;
-const EDGE_LABEL_ZOOM = 0.9;
+const TABLE_EDGE_LABEL_ZOOM = 0.02;
+const ENTITY_EDGE_LABEL_ZOOM = 0.9;
 const ENTITY_LABEL_ZOOM = 1.2;
 const TABLE_WORLD_RADIUS = 22;
 const ENTITY_BASE_WORLD_RADIUS = 4;
@@ -41,6 +42,12 @@ const TABLE_PALETTE = [
   "#34d399",
   "#f472b6",
 ] as const;
+const KNOWN_TABLE_COLORS: Readonly<Record<string, string>> = {
+  meprocess: "#fbbf24",
+  meoperation: "#2dd4bf",
+  mestep: "#38bdf8",
+  assembly: "#fb7185",
+};
 
 export interface WorldPoint {
   x: number;
@@ -147,6 +154,8 @@ function toScreen(point: WorldPoint, transform: GraphTransform): ScreenPoint {
 }
 
 function tableColor(tableId: string): string {
+  const knownColor = KNOWN_TABLE_COLORS[tableId.toLowerCase()];
+  if (knownColor) return knownColor;
   let hash = 2166136261;
   for (let index = 0; index < tableId.length; index += 1) {
     hash ^= tableId.charCodeAt(index);
@@ -279,11 +288,14 @@ function buildEdgeLabels(
   entityEdges: readonly SceneEdge[],
   transform: GraphTransform,
 ): SceneEdgeLabel[] {
-  if (transform.k < EDGE_LABEL_ZOOM) return [];
   const occupiedByBucket = new Map<string, LabelBounds[]>();
   const candidates = [
-    ...tableEdges.map((edge) => ({ edge, kind: "table" as const })),
-    ...entityEdges.map((edge) => ({ edge, kind: "entity" as const })),
+    ...(transform.k >= TABLE_EDGE_LABEL_ZOOM
+      ? tableEdges.map((edge) => ({ edge, kind: "table" as const }))
+      : []),
+    ...(transform.k >= ENTITY_EDGE_LABEL_ZOOM
+      ? entityEdges.map((edge) => ({ edge, kind: "entity" as const }))
+      : []),
   ].filter(({ edge }) => edge.label.length > 0)
     .sort((left, right) => {
       const leftStrength = left.edge.lineStyle === "solid" ? 0 : 1;

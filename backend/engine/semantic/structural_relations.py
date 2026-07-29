@@ -26,8 +26,10 @@ _REQUIRED_COLUMNS = {
     "right_class",
 }
 _RELATION_TYPES = {
-    ("MEProcess", "MEOperation"): "包含工序",
+    frozenset(("MEProcess", "MEOperation")): "包含工序",
+    frozenset(("MEOperation", "MEStep")): "包含工步",
 }
+_MATERIAL_RELATION_TYPE = "关联物料"
 _DEFAULT_RELATION_TYPE = "关系表关联"
 
 
@@ -162,9 +164,14 @@ def _resolve_relation_table_edges(
                         if evidence not in existing_evidence:
                             existing_evidence.append(evidence)
                         continue
-                    relation_type = _RELATION_TYPES.get(
-                        (left_class, right_class),
-                        _DEFAULT_RELATION_TYPE,
+                    class_pair = frozenset((left_class, right_class))
+                    relation_type = (
+                        _MATERIAL_RELATION_TYPE
+                        if "Assembly" in class_pair
+                        else _RELATION_TYPES.get(
+                            class_pair,
+                            _DEFAULT_RELATION_TYPE,
+                        )
                     )
                     relation = EntityRelation(
                         source=source.entity_id,

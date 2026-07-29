@@ -380,6 +380,24 @@ describe("GraphCanvas", () => {
     ]);
   });
 
+  it("draws aggregate table relation labels at fitted overview zoom", async () => {
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    const context = canvas.getContext("2d")!;
+    vi.mocked(context.fillText).mockClear();
+
+    fireEvent.wheel(canvas, {
+      clientX: 480,
+      clientY: 300,
+      deltaY: 5_000,
+    });
+
+    expect(d3.zoomTransform(canvas).k).toBe(0.02);
+    expect(vi.mocked(context.fillText).mock.calls.flat()).toContain("owns");
+    expect(vi.mocked(context.fillText).mock.calls.flat()).not.toContain("Account A");
+  });
+
   it("fits every opted-in entity in a 7000-node radial layout inside the viewport", async () => {
     const entities = Array.from({ length: 7_000 }, (_, index) => ({
       id: `entity-${index}`,

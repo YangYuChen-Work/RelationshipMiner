@@ -16,6 +16,11 @@ from .models import (
 from .public_json import public_json_value
 
 
+_GENERIC_SEMANTIC_RELATION_TYPES = {
+    "business_relationship": "语义关联",
+}
+
+
 def build_graph(
     entity_documents: list[EntityDocument],
     deterministic_edges: list[EntityEdge],
@@ -116,7 +121,12 @@ def _merge_entity_edges(
             decision.source, decision.target, documents_by_id
         )
         pair = _canonical_pair(decision.source, decision.target)
-        relations_by_pair[pair].append(EntityRelation(**decision.model_dump()))
+        relation_data = decision.model_dump()
+        relation_data["relation_type"] = _GENERIC_SEMANTIC_RELATION_TYPES.get(
+            decision.relation_type,
+            decision.relation_type,
+        )
+        relations_by_pair[pair].append(EntityRelation(**relation_data))
 
     entity_edges: list[EntityEdge] = []
     for source, target in sorted(relations_by_pair):

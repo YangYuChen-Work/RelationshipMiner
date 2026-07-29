@@ -609,6 +609,49 @@ async def test_empty_plan_keeps_relation_table_edge_without_selecting_class_name
 
 
 @pytest.mark.asyncio
+async def test_analyzer_exposes_known_manufacturing_relation_labels_without_class_selection(
+    engine,
+):
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    _install_manufacturing_relation_tables(engine)
+    result = await RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="meprocess", dimensions=["name"]),
+                TableScope(name="meoperation", dimensions=["name"]),
+                TableScope(name="mestep", dimensions=["name"]),
+                TableScope(name="assembly", dimensions=["name"]),
+            ]
+        ),
+    )
+
+    assert result.status == AnalysisStatus.COMPLETE
+    assert {node.class_name for node in result.entity_nodes} == {
+        "MEProcess",
+        "MEOperation",
+        "MEStep",
+        "Assembly",
+    }
+    assert {
+        frozenset((edge.source_table, edge.target_table)):
+            edge.relation_types
+        for edge in result.table_edges
+    } == {
+        frozenset(("meprocess", "meoperation")): ["包含工序"],
+        frozenset(("meoperation", "mestep")): ["包含工步"],
+        frozenset(("meprocess", "assembly")): ["关联物料"],
+        frozenset(("meoperation", "assembly")): ["关联物料"],
+        frozenset(("mestep", "assembly")): ["关联物料"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_deadline_after_structural_discovery_finalizes_loaded_graph(
     engine,
     monkeypatch,
@@ -794,4 +837,39 @@ def _install_user_order_relation_table(engine) -> None:
             "(left_id, right_id, left_class, right_class) VALUES "
             "('1', '1', 'com.example.User', 'com.example.Order'), "
             "('2', '2', 'com.example.Admin', 'com.example.Order')"
+        ))
+
+
+def _install_manufacturing_relation_tables(engine) -> None:
+    with engine.begin() as connection:
+        for table_name in ("meprocess", "meoperation", "mestep", "assembly"):
+            connection.execute(text(
+                f"CREATE TABLE {table_name} ("
+                "id TEXT PRIMARY KEY, name TEXT, class_name TEXT)"
+            ))
+        connection.execute(text(
+            "INSERT INTO meprocess VALUES ('process-1', 'Process', 'MEProcess')"
+        ))
+        connection.execute(text(
+            "INSERT INTO meoperation VALUES "
+            "('operation-1', 'Operation', 'MEOperation')"
+        ))
+        connection.execute(text(
+            "INSERT INTO mestep VALUES ('step-1', 'Step', 'MEStep')"
+        ))
+        connection.execute(text(
+            "INSERT INTO assembly VALUES ('assembly-1', 'Material', 'Assembly')"
+        ))
+        connection.execute(text(
+            "CREATE TABLE relation_id ("
+            "left_id TEXT, right_id TEXT, left_class TEXT, right_class TEXT)"
+        ))
+        connection.execute(text(
+            "INSERT INTO relation_id "
+            "(left_id, right_id, left_class, right_class) VALUES "
+            "('process-1', 'operation-1', 'MEProcess', 'MEOperation'), "
+            "('operation-1', 'step-1', 'MEOperation', 'MEStep'), "
+            "('process-1', 'assembly-1', 'MEProcess', 'Assembly'), "
+            "('operation-1', 'assembly-1', 'MEOperation', 'Assembly'), "
+            "('step-1', 'assembly-1', 'MEStep', 'Assembly')"
         ))

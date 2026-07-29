@@ -99,6 +99,86 @@ def test_relation_table_duplicate_rows_merge_to_one_process_operation_edge():
     }
 
 
+def test_relation_table_uses_business_labels_for_known_manufacturing_pairs():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    metadata = MetaData()
+    relation_id = Table(
+        "relation_id",
+        metadata,
+        Column("left_id", String),
+        Column("right_id", String),
+        Column("left_class", String),
+        Column("right_class", String),
+    )
+    class_by_table = {
+        "meprocess": "MEProcess",
+        "meoperation": "MEOperation",
+        "mestep": "MEStep",
+        "assembly": "Assembly",
+        "custom_source": "CustomSource",
+        "custom_target": "CustomTarget",
+    }
+    for table_name in class_by_table:
+        Table(table_name, metadata, Column("id", String, primary_key=True))
+    metadata.create_all(engine)
+    relation_rows = [
+        ("MEProcess", "MEOperation"),
+        ("MEOperation", "MEStep"),
+        ("MEProcess", "Assembly"),
+        ("MEOperation", "Assembly"),
+        ("MEStep", "Assembly"),
+        ("CustomSource", "CustomTarget"),
+    ]
+    with engine.begin() as connection:
+        connection.execute(
+            relation_id.insert(),
+            [
+                {
+                    "left_id": "1",
+                    "right_id": "1",
+                    "left_class": left_class,
+                    "right_class": right_class,
+                }
+                for left_class, right_class in relation_rows
+            ],
+        )
+
+    records = {
+        table_name: [{"id": "1"}]
+        for table_name in class_by_table
+    }
+    schema_result = analyze_schema(engine, list(records))
+    documents = [
+        _document(f"{table_name}:1", table_name, class_name)
+        for table_name, class_name in class_by_table.items()
+    ]
+
+    edges = build_relation_table_edges(
+        engine,
+        records,
+        schema_result,
+        documents,
+    )
+
+    labels_by_pair = {
+        frozenset((edge.source.split(":", 1)[0], edge.target.split(":", 1)[0])):
+            edge.relations[0].relation_type
+        for edge in edges
+    }
+    assert labels_by_pair == {
+        frozenset(("meprocess", "meoperation")): "包含工序",
+        frozenset(("meoperation", "mestep")): "包含工步",
+        frozenset(("meprocess", "assembly")): "关联物料",
+        frozenset(("meoperation", "assembly")): "关联物料",
+        frozenset(("mestep", "assembly")): "关联物料",
+        frozenset(("custom_source", "custom_target")): "关系表关联",
+    }
+
+
 def test_relation_table_deadline_exposes_edges_resolved_before_failure():
     engine, records, schema_result, documents = _relation_table_fixture()
     deadline_checks = 0

@@ -26,8 +26,14 @@
 - `MEProcess → MEOperation`：35 条；
 - `MEOperation → MEStep`：87 条；
 - `MEProcess → Assembly`：41 条；
-- `MEOperation → Assembly`：18 条；
+- `MEOperation → Assembly`：22 条；
 - `MEStep → Assembly`：1 条。
+
+其中 `MEOperation → Assembly` 的 22 条是三个真实关系源的去重并集：
+`metargetrl` 与 `relation_id` 记录相同的 18 个实体对，`bom_temp_view_data`
+另有 4 个仅该来源命中的实体对。`bom_temp_view_data` 的 19 行在来源内折叠为
+4 个实体对（15 行重复），因此权威计数是 `18 + 4 = 22`，而不是单一来源的
+18 条。
 
 纯大模型路径在 180 秒内仅完成 20/400 个候选判断。超时分支又返回空节点和
 空边，因此造成“没有关系”和空白图。

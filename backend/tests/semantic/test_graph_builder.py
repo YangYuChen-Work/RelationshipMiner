@@ -147,6 +147,46 @@ def test_one_strong_relation_creates_a_table_edge():
     assert edge.supporting_entity_edges == [entity_edges[0].id]
 
 
+def test_generic_semantic_placeholder_is_normalized_without_losing_specific_types():
+    documents = [
+        _document("orders:1", "orders"),
+        _document("products:1", "products"),
+        _document("products:2", "products"),
+        _document("products:3", "products"),
+    ]
+    decisions = [
+        _relation(
+            "orders:1",
+            f"products:{index}",
+            relation_type="business_relationship",
+        )
+        for index in range(1, 4)
+    ]
+    decisions.append(
+        _relation(
+            "orders:1",
+            "products:1",
+            relation_type="specific_usage",
+        )
+    )
+
+    _, _, table_edges, entity_edges = build_graph(
+        documents,
+        [],
+        decisions,
+    )
+
+    relation_types = [
+        relation.relation_type
+        for edge in entity_edges
+        for relation in edge.relations
+    ]
+    assert relation_types.count("语义关联") == 3
+    assert "specific_usage" in relation_types
+    assert "business_relationship" not in relation_types
+    assert table_edges[0].relation_types == ["specific_usage", "语义关联"]
+
+
 def test_weak_relations_of_different_types_do_not_combine_for_threshold():
     documents = [
         _document("orders:1", "orders"),
