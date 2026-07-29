@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+from collections import defaultdict
+import json
+
+from .models import (
+    EntityDocument,
+    EntityEdge,
+    EntityNode,
+    EntityRelation,
+    RelationDecision,
+    TableEdge,
+    TableNode,
+)
+
+
+def build_graph(
+    entity_documents: list[EntityDocument],
+    deterministic_edges: list[EntityEdge],
+    relation_decisions: list[RelationDecision],
+) -> tuple[
+    list[TableNode],
+    list[EntityNode],
+    list[TableEdge],
+    list[EntityEdge],
+]:
+    """Build display nodes and evidence-preserving relationship edges."""
+    documents_by_id = {
+        document.entity_id: document for document in entity_documents
+    }
+    entity_nodes = [
+        EntityNode(
+            id=document.entity_id,
+            table_id=document.table_name,
+            display_name=document.display_name,
+            class_name=document.class_name,
+            dimensions=document.dimensions,
+        )
+        for document in sorted(
+            documents_by_id.values(), key=lambda document: document.entity_id
+        )
+    ]
+    table_nodes = _build_table_nodes(entity_nodes)
+    entity_edges = _merge_entity_edges(
+        deterministic_edges,
+        relation_decisions,
+        documents_by_id,
+    )
+    table_edges = _build_table_edges(entity_edges, documents_by_id)
+    return table_nodes, entity_nodes, table_edges, entity_edges
+
+
+def _build_table_nodes(entity_nodes: list[EntityNode]) -> list[TableNode]:
+    entity_counts: dict[str, int] = defaultdict(int)
+    for node in entity_nodes:
+        entity_counts[node.table_id] += 1
+    return [
+        TableNode(
+            id=table_id,
+            display_name=table_id,
+            entity_count=entity_counts[table_id],
+        )
+        for table_id in sorted(entity_counts)
+    ]
+
+
+def _merge_entity_edges(
+    deterministic_edges: list[EntityEdge],
+    relation_decisions: list[RelationDecision],
+    documents_by_id: dict[str, EntityDocument],
+) -> list[EntityEdge]:
+    relations_by_pair: dict[tuple[str, str], list[EntityRelation]] = (
+        defaultdict(list)
+    )
+
+    for edge in deterministic_edges:
+        _validate_relation_entities(edge.source, edge.target, documents_by_id)
+        pair = _canonical_pair(edge.source, edge.target)
+        relations_by_pair[pair].extend(edge.relations)
+
+    for decision in relation_decisions:
+        _validate_relation_entities(
+            decision.source, decision.target, documents_by_id
+        )
+        pair = _canonical_pair(decision.source, decision.target)
+        relations_by_pair[pair].append(EntityRelation(**decision.model_dump()))
+
+    return [
+        EntityEdge(
+            id=f"{source}->{target}",
+            source=source,
+            target=target,
+            relations=sorted(
+                relations_by_pair[(source, target)],
+                key=_relation_sort_key,
+            ),
+        )
+        for source, target in sorted(relations_by_pair)
+    ]
+
+
+def _build_table_edges(
+    entity_edges: list[EntityEdge],
+    documents_by_id: dict[str, EntityDocument],
+) -> list[TableEdge]:
+    relations_by_tables: dict[
+        tuple[str, str], list[tuple[str, EntityRelation]]
+    ] = defaultdict(list)
+    for entity_edge in entity_edges:
+        source_table = documents_by_id[entity_edge.source].table_name
+        target_table = documents_by_id[entity_edge.target].table_name
+        if source_table == target_table:
+            continue
+        table_pair = _canonical_pair(source_table, target_table)
+        relations_by_tables[table_pair].extend(
+            (entity_edge.id, relation) for relation in entity_edge.relations
+        )
+
+    table_edges: list[TableEdge] = []
+    for (source_table, target_table), supporting_relations in sorted(
+        relations_by_tables.items()
+    ):
+        if not _should_show_table_edge(supporting_relations):
+            continue
+        relation_types = sorted(
+            {relation.relation_type for _, relation in supporting_relations}
+        )
+        supporting_entity_edges = sorted(
+            {entity_edge_id for entity_edge_id, _ in supporting_relations}
+        )
+        relations = [relation for _, relation in supporting_relations]
+        table_edges.append(
+            TableEdge(
+                id=f"{source_table}->{target_table}",
+                source_table=source_table,
+                target_table=target_table,
+                relation_types=relation_types,
+                strong_count=sum(
+                    relation.strength == "strong" for relation in relations
+                ),
+                weak_count=sum(
+                    relation.strength == "weak" for relation in relations
+                ),
+                entity_edge_count=len(supporting_entity_edges),
+                average_confidence=round(
+                    sum(relation.confidence for relation in relations)
+                    / len(relations),
+                    12,
+                ),
+                supporting_entity_edges=supporting_entity_edges,
+            )
+        )
+    return table_edges
+
+
+def _should_show_table_edge(
+    supporting_relations: list[tuple[str, EntityRelation]],
+) -> bool:
+    if any(
+        relation.strength == "strong" for _, relation in supporting_relations
+    ):
+        return True
+    weak_counts_by_type: dict[str, int] = defaultdict(int)
+    for _, relation in supporting_relations:
+        if relation.strength == "weak":
+            weak_counts_by_type[relation.relation_type] += 1
+    return any(count >= 3 for count in weak_counts_by_type.values())
+
+
+def _canonical_pair(source: str, target: str) -> tuple[str, str]:
+    first, second = sorted((source, target))
+    return first, second
+
+
+def _relation_sort_key(relation: EntityRelation) -> str:
+    return json.dumps(
+        relation.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _validate_relation_entities(
+    source: str,
+    target: str,
+    documents_by_id: dict[str, EntityDocument],
+) -> None:
+    missing_entities = [
+        entity_id
+        for entity_id in (source, target)
+        if entity_id not in documents_by_id
+    ]
+    if missing_entities:
+        raise ValueError(
+            "Relationships must reference supplied entity documents: "
+            + ", ".join(missing_entities)
+        )

@@ -1,0 +1,269 @@
+from engine.semantic.graph_builder import build_graph
+from engine.semantic.models import (
+    EntityDocument,
+    EntityEdge,
+    EntityRelation,
+    RelationDecision,
+    RelationEvidence,
+)
+
+
+def _document(entity_id: str, table_name: str) -> EntityDocument:
+    return EntityDocument(
+        entity_id=entity_id,
+        table_name=table_name,
+        display_name=entity_id,
+        dimensions={"name": entity_id},
+        normalized_dimensions={"name": entity_id},
+        search_text=entity_id,
+    )
+
+
+def _relation(
+    source: str,
+    target: str,
+    *,
+    relation_type: str = "uses",
+    direction: str = "source_to_target",
+    strength: str = "weak",
+    confidence: float = 0.8,
+) -> RelationDecision:
+    return RelationDecision(
+        source=source,
+        target=target,
+        relation_type=relation_type,
+        direction=direction,
+        strength=strength,
+        confidence=confidence,
+        explanation="The source uses the target.",
+        evidence=[
+            RelationEvidence(
+                source_field="name",
+                source_value=source,
+                target_field="name",
+                target_value=target,
+                method="llm_semantic_reasoning",
+                reason="matching business meaning",
+            )
+        ],
+    )
+
+
+def _weak_relation(source: str, target: str) -> RelationDecision:
+    return _relation(source, target)
+
+
+def test_three_same_type_weak_relations_create_a_table_edge():
+    documents = [
+        _document("orders:1", "orders"),
+        _document("products:1", "products"),
+        _document("products:2", "products"),
+        _document("products:3", "products"),
+    ]
+
+    table_nodes, entity_nodes, table_edges, entity_edges = build_graph(
+        documents,
+        [],
+        [
+            _weak_relation("orders:1", "products:1"),
+            _weak_relation("orders:1", "products:2"),
+            _weak_relation("orders:1", "products:3"),
+        ],
+    )
+
+    assert [(node.id, node.entity_count) for node in table_nodes] == [
+        ("orders", 1),
+        ("products", 3),
+    ]
+    assert [node.id for node in entity_nodes] == [
+        "orders:1",
+        "products:1",
+        "products:2",
+        "products:3",
+    ]
+    assert len(entity_edges) == 3
+    assert len(table_edges) == 1
+    edge = table_edges[0]
+    assert edge.source_table == "orders"
+    assert edge.target_table == "products"
+    assert edge.relation_types == ["uses"]
+    assert edge.strong_count == 0
+    assert edge.weak_count == 3
+    assert edge.entity_edge_count == 3
+    assert edge.average_confidence == 0.8
+    assert edge.supporting_entity_edges == [
+        "orders:1->products:1",
+        "orders:1->products:2",
+        "orders:1->products:3",
+    ]
+
+
+def test_two_same_type_weak_relations_do_not_create_a_table_edge():
+    documents = [
+        _document("orders:1", "orders"),
+        _document("products:1", "products"),
+        _document("products:2", "products"),
+    ]
+
+    _, _, table_edges, entity_edges = build_graph(
+        documents,
+        [],
+        [
+            _weak_relation("orders:1", "products:1"),
+            _weak_relation("orders:1", "products:2"),
+        ],
+    )
+
+    assert len(entity_edges) == 2
+    assert table_edges == []
+
+
+def test_one_strong_relation_creates_a_table_edge():
+    documents = [
+        _document("orders:1", "orders"),
+        _document("products:1", "products"),
+    ]
+
+    _, _, table_edges, _ = build_graph(
+        documents,
+        [],
+        [
+            _relation(
+                "orders:1",
+                "products:1",
+                relation_type="foreign_key",
+                strength="strong",
+                confidence=1.0,
+            )
+        ],
+    )
+
+    assert len(table_edges) == 1
+    edge = table_edges[0]
+    assert edge.relation_types == ["foreign_key"]
+    assert edge.strong_count == 1
+    assert edge.weak_count == 0
+    assert edge.entity_edge_count == 1
+    assert edge.average_confidence == 1.0
+    assert edge.supporting_entity_edges == ["orders:1->products:1"]
+
+
+def test_weak_relations_of_different_types_do_not_combine_for_threshold():
+    documents = [
+        _document("orders:1", "orders"),
+        _document("products:1", "products"),
+        _document("products:2", "products"),
+        _document("products:3", "products"),
+        _document("products:4", "products"),
+    ]
+
+    _, _, table_edges, _ = build_graph(
+        documents,
+        [],
+        [
+            _relation("orders:1", "products:1", relation_type="uses"),
+            _relation("orders:1", "products:2", relation_type="uses"),
+            _relation("orders:1", "products:3", relation_type="contains"),
+            _relation("orders:1", "products:4", relation_type="contains"),
+        ],
+    )
+
+    assert table_edges == []
+
+
+def test_relations_for_one_entity_pair_merge_without_losing_direction_or_evidence():
+    documents = [
+        EntityDocument(
+            entity_id="orders:1",
+            table_name="orders",
+            display_name="Order 1",
+            class_name="example.Order",
+            dimensions={"number": "O-1"},
+            normalized_dimensions={"number": "o-1"},
+            search_text="Order 1",
+        ),
+        _document("products:1", "products"),
+    ]
+    deterministic_relation = _relation(
+        "orders:1",
+        "products:1",
+        relation_type="foreign_key",
+        strength="strong",
+        confidence=1.0,
+    )
+    llm_relation = _relation(
+        "products:1",
+        "orders:1",
+        relation_type="used_by",
+        direction="target_to_source",
+        confidence=0.6,
+    )
+
+    _, entity_nodes, table_edges, entity_edges = build_graph(
+        documents,
+        [
+            EntityEdge(
+                id="source-edge-id-is-not-used-for-deduplication",
+                source=deterministic_relation.source,
+                target=deterministic_relation.target,
+                relations=[
+                    EntityRelation(**deterministic_relation.model_dump())
+                ],
+            )
+        ],
+        [llm_relation],
+    )
+
+    assert entity_nodes[0].class_name == "example.Order"
+    assert len(entity_edges) == 1
+    entity_edge = entity_edges[0]
+    assert entity_edge.id == "orders:1->products:1"
+    relations_by_type = {
+        relation.relation_type: relation for relation in entity_edge.relations
+    }
+    assert (
+        relations_by_type["foreign_key"].source,
+        relations_by_type["foreign_key"].target,
+        relations_by_type["foreign_key"].direction,
+        relations_by_type["foreign_key"].evidence[0].source_value,
+    ) == ("orders:1", "products:1", "source_to_target", "orders:1")
+    assert (
+        relations_by_type["used_by"].source,
+        relations_by_type["used_by"].target,
+        relations_by_type["used_by"].direction,
+        relations_by_type["used_by"].evidence[0].source_value,
+    ) == ("products:1", "orders:1", "target_to_source", "products:1")
+    assert len(table_edges) == 1
+    assert table_edges[0].strong_count == 1
+    assert table_edges[0].weak_count == 1
+    assert table_edges[0].relation_types == ["foreign_key", "used_by"]
+
+
+def test_graph_output_is_stable_when_relation_input_order_changes():
+    documents = [
+        _document("orders:1", "orders"),
+        _document("products:1", "products"),
+    ]
+    uses = _relation("orders:1", "products:1", relation_type="uses")
+    contains = _relation(
+        "products:1",
+        "orders:1",
+        relation_type="contains",
+        direction="target_to_source",
+        confidence=0.7,
+    )
+
+    graph_from_first_order = build_graph(
+        documents, [], [uses, contains]
+    )
+    graph_from_reversed_order = build_graph(
+        list(reversed(documents)), [], [contains, uses]
+    )
+
+    assert [
+        [item.model_dump() for item in graph_part]
+        for graph_part in graph_from_first_order
+    ] == [
+        [item.model_dump() for item in graph_part]
+        for graph_part in graph_from_reversed_order
+    ]
