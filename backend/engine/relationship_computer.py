@@ -23,16 +23,6 @@ __deprecated__ = (
 
 
 @dataclass
-class _LegacyFKConstraint:
-    """外键约束元数据。"""
-
-    source_table: str
-    source_columns: list[str]
-    target_table: str
-    target_columns: list[str]
-
-
-@dataclass
 class Node:
     """图谱节点（内部使用）。"""
 

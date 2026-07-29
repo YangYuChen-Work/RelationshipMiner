@@ -21,6 +21,9 @@ asserts a `complete` terminal graph result.
   `compute_relationships`.
 - The legacy modules remain explicitly marked `__deprecated__` for direct
   pure-function compatibility tests. They are not a router/pipeline fallback.
+- Follow-up cleanup removed the unused private `_LegacyFKConstraint` class;
+  the public `relationship_computer.FKConstraint` compatibility alias still
+  resolves to `schema_analyzer.FKConstraint`.
 
 ## Tests and checks
 
