@@ -28,6 +28,9 @@ const MAX_NODE_SCREEN_RADIUS = 2_800;
 const MAX_EDGE_LABELS = 200;
 const EDGE_LABEL_BUCKET_WIDTH = 96;
 const EDGE_LABEL_BUCKET_HEIGHT = 32;
+const EDGE_LABEL_MAX_TEXT_WIDTH = 344;
+const EDGE_LABEL_HORIZONTAL_PADDING = 8;
+const UNRESOLVED_MIXED_RELATION_LABEL = "mixed relationships";
 const TABLE_PALETTE = [
   "#38bdf8",
   "#2dd4bf",
@@ -96,6 +99,7 @@ export interface SceneEdgeLabel {
   edgeId: string;
   kind: "table" | "entity";
   text: string;
+  maxWidth: number;
   lineStyle: SceneEdgeLineStyle;
   world: WorldPoint;
   screen: ScreenPoint;
@@ -302,7 +306,11 @@ function buildEdgeLabels(
       x: (edge.from.screen.x + edge.to.screen.x) / 2,
       y: (edge.from.screen.y + edge.to.screen.y) / 2,
     };
-    const halfWidth = Math.min(180, edge.label.length * 3.5 + 8);
+    const maxWidth = Math.min(
+      EDGE_LABEL_MAX_TEXT_WIDTH,
+      edge.label.length * 7,
+    );
+    const halfWidth = maxWidth / 2 + EDGE_LABEL_HORIZONTAL_PADDING;
     const bounds = {
       left: screen.x - halfWidth,
       right: screen.x + halfWidth,
@@ -324,6 +332,7 @@ function buildEdgeLabels(
       edgeId: edge.id,
       kind,
       text: edge.label,
+      maxWidth,
       lineStyle: edge.lineStyle,
       world,
       screen,
@@ -354,6 +363,12 @@ function tableEdgeSemantics(
     };
   }
   if (!tableEdgeVisible(edge, threshold)) return null;
+  if (edge.strong_count > 0 && edge.weak_count > 0) {
+    return {
+      label: UNRESOLVED_MIXED_RELATION_LABEL,
+      lineStyle: "solid",
+    };
+  }
   return {
     label: relationLabel(edge.relation_types),
     lineStyle: edge.strong_count > 0 ? "solid" : "dashed",

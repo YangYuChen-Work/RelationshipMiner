@@ -347,6 +347,39 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBe("b");
   });
 
+  it("draws long edge labels with the same maximum width used for collision bounds", async () => {
+    const longType = `relation-${"semantic-".repeat(100)}`;
+    const longGraph: SemanticGraphData = {
+      ...graph,
+      table_edges: [{
+        ...graph.table_edges[0],
+        relation_types: [longType],
+      }],
+      entity_edges: [{
+        ...graph.entity_edges[0],
+        relations: [{
+          ...graph.entity_edges[0].relations[0],
+          relation_type: longType,
+        }],
+      }],
+    };
+    act(() => setGraph(longGraph));
+
+    render(<GraphCanvas />);
+    await ready();
+    const context = document.querySelector("canvas")!.getContext("2d")!;
+    const labelCall = vi.mocked(context.fillText).mock.calls.find(
+      ([text]) => text === longType,
+    );
+
+    expect(labelCall).toEqual([
+      longType,
+      expect.any(Number),
+      expect.any(Number),
+      344,
+    ]);
+  });
+
   it("fits every opted-in entity in a 7000-node radial layout inside the viewport", async () => {
     const entities = Array.from({ length: 7_000 }, (_, index) => ({
       id: `entity-${index}`,

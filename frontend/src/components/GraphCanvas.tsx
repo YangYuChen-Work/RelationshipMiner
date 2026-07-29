@@ -183,7 +183,12 @@ function drawScene(
   context.textBaseline = "middle";
   for (const label of scene.edgeLabels) {
     context.fillStyle = label.lineStyle === "solid" ? "#dbeafe" : "#94a3b8";
-    context.fillText(label.text, label.screen.x + 5, label.screen.y - 5);
+    context.fillText(
+      label.text,
+      label.screen.x - label.maxWidth / 2,
+      label.screen.y - 5,
+      label.maxWidth,
+    );
   }
 
   context.fillStyle = "#dbeafe";

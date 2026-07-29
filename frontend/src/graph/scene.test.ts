@@ -175,6 +175,105 @@ describe("buildScene", () => {
     });
   });
 
+  it("uses a conservative generic label for unresolved mixed aggregate support", () => {
+    const unresolvedGraph: SemanticGraphData = {
+      table_nodes: [
+        { id: "orders", display_name: "Orders", entity_count: 0 },
+        { id: "users", display_name: "Users", entity_count: 0 },
+      ],
+      entity_nodes: [],
+      table_edges: [{
+        id: "mixed-unresolved",
+        source_table: "orders",
+        target_table: "users",
+        relation_types: ["strong-type", "weak-type"],
+        strong_count: 1,
+        weak_count: 1,
+        entity_edge_count: 2,
+        average_confidence: 0.2,
+        supporting_entity_edges: ["missing-strong", "missing-weak"],
+      }],
+      entity_edges: [],
+    };
+    const unresolvedLayout: GraphLayout = {
+      tableNodes: [
+        { id: "orders", x: 0, y: 0 },
+        { id: "users", x: 100, y: 0 },
+      ],
+      entityNodes: [],
+      tableEdges: [{
+        id: "mixed-unresolved",
+        source: "orders",
+        target: "users",
+        from: { x: 0, y: 0 },
+        to: { x: 100, y: 0 },
+      }],
+      entityEdges: [],
+    };
+
+    const scene = buildScene({
+      graph: unresolvedGraph,
+      layout: unresolvedLayout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0.9,
+    });
+
+    expect(scene.tableEdges).toHaveLength(1);
+    expect(scene.tableEdges[0]).toMatchObject({
+      label: "mixed relationships",
+      lineStyle: "solid",
+    });
+    expect(scene.tableEdges[0].label).not.toContain("weak-type");
+  });
+
+  it("caps indexed long-label text width to the scene collision width", () => {
+    const longType = `relation-${"semantic-".repeat(100)}`;
+    const longGraph: SemanticGraphData = {
+      table_nodes: [
+        { id: "left", display_name: "Left", entity_count: 0 },
+        { id: "right", display_name: "Right", entity_count: 0 },
+      ],
+      entity_nodes: [],
+      table_edges: [{
+        id: "long-edge",
+        source_table: "left",
+        target_table: "right",
+        relation_types: [longType],
+        strong_count: 1,
+        weak_count: 0,
+        entity_edge_count: 0,
+        average_confidence: 1,
+        supporting_entity_edges: [],
+      }],
+      entity_edges: [],
+    };
+    const longLayout: GraphLayout = {
+      tableNodes: [
+        { id: "left", x: 0, y: 0 },
+        { id: "right", x: 100, y: 0 },
+      ],
+      entityNodes: [],
+      tableEdges: [{
+        id: "long-edge",
+        source: "left",
+        target: "right",
+        from: { x: 0, y: 0 },
+        to: { x: 100, y: 0 },
+      }],
+      entityEdges: [],
+    };
+
+    const label = buildScene({
+      graph: longGraph,
+      layout: longLayout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    }).edgeLabels[0];
+
+    expect(label.text).toBe(longType);
+    expect(label.maxWidth).toBe(344);
+  });
+
   it("bounds dense edge labels and keeps them deterministic under input reordering", () => {
     const edgeCount = 600;
     const tableNodes = Array.from({ length: edgeCount * 2 }, (_, index) => ({

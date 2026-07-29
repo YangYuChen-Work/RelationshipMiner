@@ -338,3 +338,111 @@ staging.
   used.
 - The global 200 edge-label cap intentionally favors deterministic strong and
   table-level labels over showing every label in dense scenes.
+
+## Fix Round 2/5
+
+### RED
+
+Command:
+
+```text
+npm --prefix frontend test -- --run src/graph/scene.test.ts src/components/__tests__/GraphCanvas.test.tsx
+```
+
+Recorded output (verbatim):
+
+```text
+> frontend@0.0.0 test
+> vitest run --run src/graph/scene.test.ts src/components/__tests__/GraphCanvas.test.tsx
+
+
+ RUN  v4.1.10 D:/桌面/test/ai-graph/frontend
+
+ ❯ src/graph/scene.test.ts (15 tests | 2 failed) 41ms
+     × uses a conservative generic label for unresolved mixed aggregate support 10ms
+     × caps indexed long-label text width to the scene collision width 1ms
+ ❯ src/components/__tests__/GraphCanvas.test.tsx (25 tests | 1 failed) 821ms
+     × draws long edge labels with the same maximum width used for collision bounds 19ms
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 37 passed (40)
+   Start at  00:59:07
+   Duration  5.54s (transform 258ms, setup 945ms, import 1.17s, tests 862ms, environment 5.22s)
+```
+
+The unresolved mixed fallback emitted `strong-type · weak-type` as a solid
+edge, the scene label had no drawing-width contract, and Canvas used the
+three-argument `fillText` overload.
+
+### GREEN
+
+Scene/GraphCanvas focused command:
+
+```text
+npm --prefix frontend test -- --run src/graph/scene.test.ts src/components/__tests__/GraphCanvas.test.tsx
+```
+
+Recorded result: 2 files passed, 40 tests passed.
+
+Full Task 4 focused command:
+
+```text
+npm --prefix frontend test -- --run src/graph/layout.test.ts src/graph/scene.test.ts src/components/__tests__/GraphCanvas.test.tsx
+```
+
+Recorded result: 3 files passed, 56 tests passed.
+
+Full frontend command:
+
+```text
+npm --prefix frontend test -- --run
+```
+
+Recorded result: 21 files passed, 155 tests passed.
+
+Lint command:
+
+```text
+npm --prefix frontend run lint
+```
+
+Recorded result: exit 0, no findings.
+
+Build command:
+
+```text
+npm --prefix frontend run build
+```
+
+Recorded result: exit 0; TypeScript and Vite transformed 604 modules and
+emitted the production bundles.
+
+### Changed files
+
+- `frontend/src/graph/scene.ts`
+- `frontend/src/graph/scene.test.ts`
+- `frontend/src/components/GraphCanvas.tsx`
+- `frontend/src/components/__tests__/GraphCanvas.test.tsx`
+- `.superpowers/sdd/2026-07-29-authoritative-semantic-graph/task-4-report.md`
+
+The pre-existing `.gitignore` edit remains preserved and unstaged.
+
+### Behavior and self-review
+
+- An aggregate with both strong and weak counts but no resolvable supporting
+  entity edge now renders as the conservative generic `mixed relationships`
+  label. Its solid style communicates that some strong aggregate evidence
+  exists without assigning either specific type to the strong evidence.
+- Homogeneous unresolved aggregates retain their relation types: all-strong
+  remains solid, while all-weak remains threshold-controlled and dashed.
+- `SceneEdgeLabel.maxWidth` is the exact Canvas text width contract. Collision
+  bounds use `maxWidth / 2 + 8px` per side, capped at 344px of text / 360px
+  total indexed width.
+- Canvas centers the label on its indexed midpoint and calls
+  `fillText(text, x, y, maxWidth)`, so long rendered text cannot exceed the
+  width reserved by collision detection.
+- Focused and full suites cover the generic mixed fallback, the 344px scene
+  width, and the Canvas fourth argument. `git diff --check` is clean.
+- The generic unresolved mixed label is intentionally non-specific. Details
+  and export still retain the original aggregate types/counts in the full
+  store graph.
