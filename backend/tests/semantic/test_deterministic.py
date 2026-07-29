@@ -283,6 +283,52 @@ def test_primary_keys_are_identity_only_not_semantic_unique_identifiers():
     assert edges == []
 
 
+def test_primary_key_reported_as_unique_index_remains_identity_only():
+    edges = build_unique_identifier_edges(
+        records={
+            "requirements": [{"id": 7}],
+            "operations": [{"id": 7}],
+        },
+        schema_result=SchemaAnalysisResult(
+            tables={
+                "requirements": TableSchema(
+                    name="requirements",
+                    primary_keys=["id"],
+                    indexes=[
+                        IndexMeta("uq_requirements_id", ["id"], True)
+                    ],
+                ),
+                "operations": TableSchema(
+                    name="operations",
+                    primary_keys=["id"],
+                    indexes=[
+                        IndexMeta("uq_operations_id", ["id"], True)
+                    ],
+                ),
+            },
+            all_foreign_keys=[],
+            pk_metadata={
+                "requirements": ["id"],
+                "operations": ["id"],
+            },
+        ),
+        plans=[
+            RelationshipPlan(
+                source_table="requirements",
+                target_table="operations",
+                relation_type="same identifier",
+                direction="source_to_target",
+                source_dimensions=["id"],
+                target_dimensions=["id"],
+                retrieval_modes=["keyword"],
+                reason="primary keys are system identity only",
+            )
+        ],
+    )
+
+    assert edges == []
+
+
 def test_null_unique_identifiers_do_not_match_empty_strings():
     edges = build_unique_identifier_edges(
         records={

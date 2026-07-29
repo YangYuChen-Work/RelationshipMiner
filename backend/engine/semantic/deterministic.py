@@ -190,6 +190,9 @@ def _has_single_column_unique_index(
     table_schema: TableSchema,
     field_name: str,
 ) -> bool:
+    if field_name in table_schema.primary_keys:
+        return False
+
     return any(
         index.unique and index.columns == [field_name]
         for index in table_schema.indexes
