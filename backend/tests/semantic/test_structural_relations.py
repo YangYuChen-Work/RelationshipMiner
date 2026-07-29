@@ -1,5 +1,5 @@
 import pytest
-from sqlalchemy import Column, MetaData, String, Table, create_engine
+from sqlalchemy import Column, MetaData, String, Table, create_engine, event
 from sqlalchemy.pool import StaticPool
 
 from engine.schema_analyzer import analyze_schema
@@ -504,6 +504,276 @@ def test_unknown_pair_without_assembly_keeps_database_row_direction():
     )
 
 
+def test_same_business_table_is_excluded_without_excluding_cross_table_same_class():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    metadata = MetaData()
+    relation_id = Table(
+        "relation_id",
+        metadata,
+        Column("left_id", String),
+        Column("right_id", String),
+        Column("left_class", String),
+        Column("right_class", String),
+    )
+    Table("polymorphic", metadata, Column("id", String, primary_key=True))
+    Table("peer", metadata, Column("id", String, primary_key=True))
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            relation_id.insert(),
+            [
+                {
+                    "left_id": "poly-shared",
+                    "right_id": "poly-internal",
+                    "left_class": "SharedType",
+                    "right_class": "InternalType",
+                },
+                {
+                    "left_id": "poly-shared",
+                    "right_id": "peer-shared",
+                    "left_class": "SharedType",
+                    "right_class": "SharedType",
+                },
+            ],
+        )
+
+    records = {
+        "polymorphic": [
+            {"id": "poly-shared"},
+            {"id": "poly-internal"},
+        ],
+        "peer": [{"id": "peer-shared"}],
+    }
+    schema_result = analyze_schema(engine, list(records))
+    documents = [
+        _document("polymorphic:poly-shared", "polymorphic", "SharedType"),
+        _document("polymorphic:poly-internal", "polymorphic", "InternalType"),
+        _document("peer:peer-shared", "peer", "SharedType"),
+    ]
+
+    edges = build_relation_table_edges(
+        engine,
+        records,
+        schema_result,
+        documents,
+    )
+
+    assert [
+        (relation.source, relation.target)
+        for edge in edges
+        for relation in edge.relations
+    ] == [
+        ("polymorphic:poly-shared", "peer:peer-shared"),
+    ]
+
+
+def test_opposite_unknown_rows_keep_separate_ordered_relations_and_evidence():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    metadata = MetaData()
+    relation_id = Table(
+        "relation_id",
+        metadata,
+        Column("left_id", String),
+        Column("right_id", String),
+        Column("left_class", String),
+        Column("right_class", String),
+    )
+    metargetrl = Table(
+        "metargetrl",
+        metadata,
+        Column("left_id", String),
+        Column("right_id", String),
+        Column("left_class", String),
+        Column("right_class", String),
+    )
+    Table("custom_a", metadata, Column("id", String, primary_key=True))
+    Table("custom_b", metadata, Column("id", String, primary_key=True))
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            relation_id.insert(),
+            [{
+                "left_id": "a-1",
+                "right_id": "b-1",
+                "left_class": "CustomA",
+                "right_class": "CustomB",
+            }],
+        )
+        connection.execute(
+            metargetrl.insert(),
+            [{
+                "left_id": "b-1",
+                "right_id": "a-1",
+                "left_class": "CustomB",
+                "right_class": "CustomA",
+            }],
+        )
+
+    records = {
+        "custom_a": [{"id": "a-1"}],
+        "custom_b": [{"id": "b-1"}],
+    }
+    schema_result = analyze_schema(engine, list(records))
+    documents = [
+        _document("custom_a:a-1", "custom_a", "CustomA"),
+        _document("custom_b:b-1", "custom_b", "CustomB"),
+    ]
+
+    edges = build_relation_table_edges(
+        engine,
+        records,
+        schema_result,
+        documents,
+    )
+
+    assert len(edges) == 1
+    assert len(edges[0].relations) == 2
+    relation_evidence = {
+        (relation.source, relation.target): (
+            evidence.source_field,
+            evidence.source_value,
+            evidence.target_field,
+            evidence.target_value,
+        )
+        for relation in edges[0].relations
+        for evidence in relation.evidence
+    }
+    assert relation_evidence == {
+        ("custom_a:a-1", "custom_b:b-1"): (
+            "left_id",
+            "a-1",
+            "right_id",
+            "b-1",
+        ),
+        ("custom_b:b-1", "custom_a:a-1"): (
+            "left_id",
+            "b-1",
+            "right_id",
+            "a-1",
+        ),
+    }
+
+
+def test_relation_queries_filter_selected_ids_in_safe_chunks_and_stream_partial():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    metadata = MetaData()
+    relation_id = Table(
+        "relation_id",
+        metadata,
+        Column("left_id", String),
+        Column("right_id", String),
+        Column("left_class", String),
+        Column("right_class", String),
+    )
+    Table("sources", metadata, Column("id", String, primary_key=True))
+    Table("targets", metadata, Column("id", String, primary_key=True))
+    metadata.create_all(engine)
+    selected_count = 600
+    with engine.begin() as connection:
+        connection.execute(
+            relation_id.insert(),
+            [
+                {
+                    "left_id": f"source-{index}",
+                    "right_id": f"target-{index}",
+                    "left_class": "SourceType",
+                    "right_class": "TargetType",
+                }
+                for index in range(selected_count)
+            ]
+            + [
+                {
+                    "left_id": f"unselected-source-{index}",
+                    "right_id": f"unselected-target-{index}",
+                    "left_class": "SourceType",
+                    "right_class": "TargetType",
+                }
+                for index in range(2_000)
+            ],
+        )
+
+    records = {
+        "sources": [{"id": f"source-{index}"} for index in range(selected_count)],
+        "targets": [{"id": f"target-{index}"} for index in range(selected_count)],
+    }
+    schema_result = analyze_schema(engine, list(records))
+    documents = [
+        *[
+            _document(
+                f"sources:source-{index}",
+                "sources",
+                "SourceType",
+            )
+            for index in range(selected_count)
+        ],
+        *[
+            _document(
+                f"targets:target-{index}",
+                "targets",
+                "TargetType",
+            )
+            for index in range(selected_count)
+        ],
+    ]
+    relation_queries: list[tuple[str, int]] = []
+
+    def capture_query(
+        _connection,
+        _cursor,
+        statement,
+        parameters,
+        _context,
+        _executemany,
+    ) -> None:
+        if "FROM relation_id" not in statement:
+            return
+        parameter_count = (
+            len(parameters)
+            if isinstance(parameters, (tuple, list))
+            else len(parameters.keys())
+        )
+        relation_queries.append((statement, parameter_count))
+
+    event.listen(engine, "before_cursor_execute", capture_query)
+    deadline_checks = 0
+
+    def expire_during_stream(_stage: str) -> None:
+        nonlocal deadline_checks
+        deadline_checks += 1
+        if deadline_checks == 10:
+            raise DeadlineExceeded("stream batch")
+
+    with pytest.raises(DeadlineExceeded) as raised:
+        build_relation_table_edges(
+            engine,
+            records,
+            schema_result,
+            documents,
+            check_deadline=expire_during_stream,
+        )
+
+    resolved_edges = getattr(raised.value, "resolved_edges", [])
+    assert 0 < len(resolved_edges) < selected_count
+    assert relation_queries
+    assert all(
+        "left_id IN" in statement and "right_id IN" in statement
+        for statement, _ in relation_queries
+    )
+    assert max(parameter_count for _, parameter_count in relation_queries) <= 900
+
+
 def test_relation_table_deadline_exposes_edges_resolved_before_failure():
     engine, records, schema_result, documents = _relation_table_fixture()
     deadline_checks = 0
@@ -511,7 +781,7 @@ def test_relation_table_deadline_exposes_edges_resolved_before_failure():
     def expire_after_first_table(stage: str) -> None:
         nonlocal deadline_checks
         deadline_checks += 1
-        if deadline_checks == 4:
+        if deadline_checks == 7:
             raise DeadlineExceeded(stage)
 
     with pytest.raises(DeadlineExceeded) as raised:

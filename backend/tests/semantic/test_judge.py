@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
+from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.judge import SemanticJudge
 from engine.semantic.models import (
     CandidateGroup,
@@ -439,6 +440,56 @@ async def test_deadline_marks_unstarted_groups_pending():
     assert result.failed_groups == 0
     assert result.decisions == []
     assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_upstream_deadline_keeps_completed_judgement_and_marks_remainder_pending():
+    class CompletingLlm:
+        def __init__(self) -> None:
+            self.completed = asyncio.Event()
+            self.active = 0
+
+        async def complete_json(
+            self,
+            messages: list[dict[str, object]],
+            max_tokens: int,
+            response_model: type[BaseModel] | None = None,
+        ) -> dict[str, object]:
+            self.active += 1
+            try:
+                payload: dict[str, object] = {
+                    "decisions": [_verdict()],
+                }
+                return response_model.model_validate(payload).model_dump()
+            finally:
+                self.active -= 1
+                self.completed.set()
+
+    llm = CompletingLlm()
+
+    async def one_completed_group_then_deadline():
+        yield _candidate_group()
+        await llm.completed.wait()
+        await asyncio.sleep(0.01)
+        raise DeadlineExceeded("candidate retrieval stream")
+
+    result = await asyncio.wait_for(
+        SemanticJudge(llm, concurrency=1).judge_groups(
+            one_completed_group_then_deadline(),
+            deadline=time.monotonic() + 30,
+        ),
+        timeout=1,
+    )
+
+    assert llm.active == 0
+    assert [decision.target for decision in result.decisions] == ["part:1"]
+    assert result.completed_groups == 1
+    assert result.failed_groups == 0
+    assert result.pending_groups >= 1
+    assert [outcome.status for outcome in result.outcomes] == [
+        "completed",
+        "pending",
+    ]
 
 
 @pytest.mark.asyncio

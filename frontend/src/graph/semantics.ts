@@ -1,6 +1,5 @@
 import type {
   EntityEdgeData,
-  EntityNodeData,
   EntityRelationData,
 } from "../api/analysis";
 
@@ -23,8 +22,11 @@ export function visibleEntityRelations(
 }
 
 export function computeEntityDegrees(
-  entities: readonly EntityNodeData[],
-  edges: readonly EntityEdgeData[],
+  entities: readonly { readonly id: string }[],
+  edges: readonly {
+    readonly source: string;
+    readonly target: string;
+  }[],
 ): Map<string, number> {
   const entityIds = new Set(entities.map((entity) => entity.id));
   const degrees = new Map(entities.map((entity) => [entity.id, 0]));

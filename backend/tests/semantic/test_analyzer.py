@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy import text
 
+from engine.semantic.deadline import DeadlineExceeded
+from engine.semantic.judge import SemanticJudge
 from engine.semantic.models import (
     AnalysisScope,
     AnalysisStatus,
+    CandidateGroup,
     JudgementGroupOutcome,
     JudgementBatchResult,
     RelationDecision,
@@ -305,6 +310,101 @@ async def test_analyzer_marks_failed_judgement_partial_without_losing_fk_edges(e
         for edge in result.entity_edges
         for relation in edge.relations
     )
+
+
+@pytest.mark.asyncio
+async def test_analyzer_keeps_completed_weak_edge_when_candidate_stream_deadlines(
+    engine,
+    monkeypatch,
+):
+    from engine.semantic import analyzer
+
+    class ApprovingLlm:
+        async def complete_json(
+            self,
+            messages: list[dict[str, object]],
+            max_tokens: int,
+            response_model: type[BaseModel] | None = None,
+        ) -> dict[str, object]:
+            request = json.loads(str(messages[-1]["content"]))
+            source = request["source"]
+            target = request["candidates"][0]
+            plan = request["plan"]
+            payload = {
+                "decisions": [{
+                    "approved": True,
+                    "source": source["entity_id"],
+                    "target": target["entity_id"],
+                    "relation_type": plan["relation_type"],
+                    "direction": plan["direction"],
+                    "strength": "weak",
+                    "confidence": 0.91,
+                    "explanation": "The selected values support the relation.",
+                    "evidence": [{
+                        "source_field": "name",
+                        "source_value": source["dimensions"]["name"],
+                        "target_field": "title",
+                        "target_value": target["dimensions"]["title"],
+                        "method": "llm_semantic_reasoning",
+                        "reason": "The selected values match.",
+                    }],
+                }],
+            }
+            return response_model.model_validate(payload).model_dump()
+
+    def one_group_then_deadline(
+        documents,
+        plans,
+        _embedding_adapter,
+        check_deadline=None,
+    ):
+        source = next(
+            document for document in documents
+            if document.table_name == "users"
+        )
+        target = next(
+            document for document in documents
+            if document.table_name == "products"
+        )
+        yield CandidateGroup(
+            plan=plans[0],
+            source=source,
+            candidates=[target],
+        )
+        raise DeadlineExceeded("candidate retrieval stream")
+
+    monkeypatch.setattr(
+        analyzer,
+        "iter_candidate_groups",
+        one_group_then_deadline,
+    )
+    result = await analyzer.RelationshipAnalyzer(
+        planner=_StaticPlanner([_product_plan()]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=SemanticJudge(ApprovingLlm(), concurrency=1),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="products", dimensions=["title"]),
+            ],
+        ),
+    )
+
+    weak_relations = [
+        relation
+        for edge in result.entity_edges
+        for relation in edge.relations
+        if relation.strength == "weak"
+    ]
+    assert result.status == AnalysisStatus.PARTIAL
+    assert len(weak_relations) == 1
+    assert weak_relations[0].relation_type == "user_discusses_product"
+    assert result.diagnostics.candidates_completed == 1
+    assert result.warnings == [
+        "Candidate judgement did not complete for all groups."
+    ]
 
 
 @pytest.mark.asyncio
@@ -609,6 +709,50 @@ async def test_empty_plan_keeps_relation_table_edge_without_selecting_class_name
 
 
 @pytest.mark.asyncio
+async def test_analyzer_excludes_relation_rows_within_one_selected_business_table(
+    engine,
+):
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    _install_user_order_relation_table(engine)
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO relation_id "
+            "(left_id, right_id, left_class, right_class) VALUES "
+            "('1', '2', 'com.example.User', 'com.example.Admin')"
+        ))
+
+    result = await RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="orders", dimensions=["amount"]),
+            ]
+        ),
+    )
+
+    relation_table_pairs = {
+        frozenset((relation.source, relation.target))
+        for edge in result.entity_edges
+        for relation in edge.relations
+        if any(
+            evidence.method == "relation_table"
+            for evidence in relation.evidence
+        )
+    }
+    assert frozenset(("users:1", "users:2")) not in relation_table_pairs
+    assert relation_table_pairs == {
+        frozenset(("users:1", "orders:1")),
+        frozenset(("users:2", "orders:2")),
+    }
+
+
+@pytest.mark.asyncio
 async def test_analyzer_exposes_known_manufacturing_relation_labels_without_class_selection(
     engine,
 ):
@@ -866,7 +1010,7 @@ async def test_internal_structural_deadline_keeps_already_resolved_edges(
         for edge in result.entity_edges
         for relation in edge.relations
         for evidence in relation.evidence
-    ) == 2
+    ) == 1
     assert result.warnings == ["Analysis timed out."]
 
 

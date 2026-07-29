@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from config import settings
 
+from .deadline import DeadlineExceeded
 from .interfaces import JsonLlmAdapter
 from .models import (
     CandidateGroup,
@@ -121,6 +122,8 @@ class SemanticJudge:
         decisions: list[RelationDecision] = []
         active: dict[asyncio.Task[None], tuple[int, CandidateGroup]] = {}
         producer_current: tuple[int, CandidateGroup] | None = None
+        producer_sequence = 0
+        upstream_deadline_reached = False
         peak_live_groups = 0
 
         def observe_live_groups() -> None:
@@ -148,6 +151,8 @@ class SemanticJudge:
 
         async def producer() -> None:
             nonlocal producer_current
+            nonlocal producer_sequence
+            nonlocal upstream_deadline_reached
             is_async = isinstance(groups, AsyncIterable)
             iterator = aiter(groups) if is_async else iter(groups)
             sequence = 0
@@ -158,6 +163,16 @@ class SemanticJudge:
                     for _ in range(self._concurrency):
                         async with asyncio.timeout_at(deadline):
                             await queue.put(stop)
+                    return
+                except DeadlineExceeded:
+                    upstream_deadline_reached = True
+                    producer_sequence = sequence
+                    for _ in range(self._concurrency):
+                        try:
+                            async with asyncio.timeout_at(deadline):
+                                await queue.put(stop)
+                        except TimeoutError:
+                            return
                     return
                 item = (sequence, group)
                 sequence += 1
@@ -227,6 +242,15 @@ class SemanticJudge:
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
+        if upstream_deadline_reached:
+            outcomes.setdefault(
+                producer_sequence,
+                JudgementGroupOutcome(
+                    source_id="__candidate_stream_remainder__",
+                    candidate_count=0,
+                    status="pending",
+                ),
+            )
         ordered_outcomes = [outcomes[index] for index in sorted(outcomes)]
         return JudgementBatchResult(
             decisions=decisions,

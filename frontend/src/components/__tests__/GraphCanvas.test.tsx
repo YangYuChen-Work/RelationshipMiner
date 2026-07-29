@@ -327,6 +327,20 @@ describe("GraphCanvas", () => {
       "a",
       "invoice",
     ]);
+    expect(firstWorker.messages[0].graph.entity_nodes).toEqual([
+      { id: "a", table_id: "accounts", class_name: "Account" },
+      { id: "invoice", table_id: "billing", class_name: "Invoice" },
+    ]);
+    expect(firstWorker.messages[0].graph.table_edges).toEqual([
+      {
+        id: "accounts--billing",
+        source_table: "accounts",
+        target_table: "billing",
+      },
+    ]);
+    expect(firstWorker.messages[0].graph.entity_edges).toEqual([
+      { id: "a--invoice", source: "a", target: "invoice" },
+    ]);
     expect(canvas.getAttribute("aria-label")).toContain("2 个实体");
     const search = screen.getByRole("searchbox", { name: /查找实体/ });
     fireEvent.change(search, { target: { value: "b" } });
@@ -345,6 +359,59 @@ describe("GraphCanvas", () => {
     expect(canvas.getAttribute("aria-label")).toContain("3 个实体");
     fireEvent.keyDown(search, { key: "Enter" });
     expect(useAnalysisStore.getState().selectedNodeId).toBe("b");
+  });
+
+  it("coalesces resize bursts behind one in-flight compact worker request", async () => {
+    LayoutWorker.autoReply = false;
+    let size = { width: 960, height: 600 };
+    let notifyResize: ResizeObserverCallback = () => undefined;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({
+        x: 0,
+        y: 0,
+        width: size.width,
+        height: size.height,
+        top: 0,
+        left: 0,
+        bottom: size.height,
+        right: size.width,
+        toJSON: () => ({}),
+      }),
+    );
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize = callback;
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    });
+
+    render(<GraphCanvas />);
+    const worker = LayoutWorker.instances[0];
+    await waitFor(() => expect(worker.messages).toHaveLength(1));
+
+    for (const next of [
+      { width: 1_000, height: 620 },
+      { width: 1_100, height: 650 },
+      { width: 1_200, height: 700 },
+    ]) {
+      size = next;
+      await act(async () => {
+        notifyResize([], {} as ResizeObserver);
+        await Promise.resolve();
+      });
+    }
+
+    expect(worker.messages).toHaveLength(1);
+    act(() => worker.reply(worker.messages[0]));
+    await waitFor(() => expect(worker.messages).toHaveLength(2));
+    expect(worker.messages[1].viewport).toEqual({
+      width: 1_200,
+      height: 700,
+    });
+    act(() => worker.reply(worker.messages[1]));
+    await ready();
   });
 
   it("draws long edge labels with the same maximum width used for collision bounds", async () => {

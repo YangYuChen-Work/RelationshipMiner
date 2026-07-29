@@ -248,21 +248,111 @@ describe("LayoutClient", () => {
     await expect(pending).resolves.toBe(layout);
   });
 
-  it("settles concurrent requests by increasing ID even when replies are out of order", async () => {
+  it("coalesces queued layout requests and posts only the latest heavy change", async () => {
     const worker = new FakeWorker();
     const client = new LayoutClient(worker as unknown as Worker);
     const graph = graphFixture();
     const first = client.layoutGraph(graph, { width: 800, height: 600 });
     const second = client.layoutGraph(graph, { width: 400, height: 300 });
-    const requests = worker.messages as { requestId: number }[];
-    expect(requests.map((request) => request.requestId)).toEqual([1, 2]);
+    const third = client.layoutGraph(graph, { width: 320, height: 240 });
+    const secondRejection = second.catch((error: unknown) => error);
 
     const firstLayout = computeGroupedLayout(graph, { width: 800, height: 600 });
-    const secondLayout = { ...firstLayout, entityNodes: [] };
-    worker.reply({ requestId: 2, layout: secondLayout });
-    await expect(second).resolves.toBe(secondLayout);
-    worker.reply({ requestId: 1, layout: firstLayout });
+    const firstRequest = worker.messages[0] as { requestId: number };
+    expect(worker.messages).toHaveLength(1);
+    worker.reply({ requestId: firstRequest.requestId, layout: firstLayout });
     await expect(first).resolves.toBe(firstLayout);
+    expect(await secondRejection).toBeInstanceOf(StaleLayoutRequestError);
+
+    const thirdRequest = worker.messages[1] as {
+      requestId: number;
+      viewport: { width: number; height: number };
+    };
+    expect(worker.messages).toHaveLength(2);
+    expect(thirdRequest.viewport).toEqual({ width: 320, height: 240 });
+    const thirdLayout = computeGroupedLayout(graph, thirdRequest.viewport);
+    worker.reply({ requestId: thirdRequest.requestId, layout: thirdLayout });
+    await expect(third).resolves.toBe(thirdLayout);
+  });
+
+  it("posts a compact layout DTO without dimensions, evidence, or support payloads", async () => {
+    const worker = new FakeWorker();
+    const client = new LayoutClient(worker as unknown as Worker);
+    const graph = graphFixture();
+    graph.entity_nodes[0].dimensions = {
+      secret_dimension: "dimension-value".repeat(1_000),
+    };
+    graph.entity_edges[0].relations = [{
+      source: "order-1",
+      target: "user-1",
+      relation_type: "owns",
+      direction: "source_to_target",
+      strength: "strong",
+      confidence: 1,
+      explanation: "explanation-value".repeat(1_000),
+      evidence: [{
+        source_field: "secret_dimension",
+        source_value: "source-evidence-value".repeat(1_000),
+        target_field: "name",
+        target_value: "target-evidence-value".repeat(1_000),
+        method: "llm_semantic_reasoning",
+        reason: "support-reason".repeat(1_000),
+      }],
+      model_id: null,
+      task_id: null,
+    }];
+    graph.table_edges[0].supporting_entity_edges = Array.from(
+      { length: 1_000 },
+      (_, index) => `support-${index}`,
+    );
+
+    const pending = client.layoutGraph(graph, { width: 800, height: 600 });
+    const request = worker.messages[0] as {
+      requestId: number;
+      graph: Record<string, unknown>;
+      viewport: { width: number; height: number };
+    };
+    const posted = JSON.stringify(request.graph);
+
+    expect(request.graph).toEqual({
+      table_nodes: [
+        { id: "orders", display_name: "Orders" },
+        { id: "users", display_name: "Users" },
+      ],
+      entity_nodes: [
+        { id: "order-2", table_id: "orders", class_name: null },
+        { id: "user-2", table_id: "users", class_name: null },
+        { id: "order-1", table_id: "orders", class_name: null },
+        { id: "user-1", table_id: "users", class_name: null },
+      ],
+      table_edges: [
+        {
+          id: "orders-users",
+          source_table: "orders",
+          target_table: "users",
+        },
+        {
+          id: "missing-table",
+          source_table: "orders",
+          target_table: "missing",
+        },
+      ],
+      entity_edges: [
+        { id: "order-user", source: "order-1", target: "user-1" },
+        { id: "missing-entity", source: "order-1", target: "missing" },
+      ],
+    });
+    expect(posted).not.toContain("dimension-value");
+    expect(posted).not.toContain("evidence-value");
+    expect(posted).not.toContain("explanation-value");
+    expect(posted).not.toContain("support-");
+
+    const layout = computeGroupedLayout(
+      request.graph as never,
+      request.viewport,
+    );
+    worker.reply({ requestId: request.requestId, layout });
+    await expect(pending).resolves.toBe(layout);
   });
 
   it("rejects reset work, ignores its late reply, and accepts later requests", async () => {
@@ -314,7 +404,7 @@ describe("LayoutClient", () => {
     await expect(
       client.layoutGraph(graphFixture(), { width: 800, height: 600 }),
     ).rejects.toBeInstanceOf(LayoutClientDisposedError);
-    expect(worker.messages).toHaveLength(2);
+    expect(worker.messages).toHaveLength(1);
   });
 
   it.each([
@@ -334,6 +424,6 @@ describe("LayoutClient", () => {
     await expect(
       client.layoutGraph(graphFixture(), { width: 800, height: 600 }),
     ).rejects.toThrow(/layout worker/i);
-    expect(worker.messages).toHaveLength(2);
+    expect(worker.messages).toHaveLength(1);
   });
 });

@@ -352,9 +352,33 @@ class RelationshipAnalyzer:
             )
 
         if not timed_out:
+            reserve_seconds = min(
+                1.0,
+                max(0.01, scope.time_budget_seconds * 0.05),
+            )
+            structural_deadline = max(
+                time.monotonic(),
+                deadline - reserve_seconds,
+            )
+            structural_outer_deadline = max(
+                structural_deadline,
+                deadline - reserve_seconds / 2,
+            )
+
+            def require_structural_deadline(stage: str) -> None:
+                if time.monotonic() >= structural_deadline:
+                    raise DeadlineExceeded(stage)
+
+            def structural_remaining_seconds() -> float:
+                require_structural_deadline("structural discovery")
+                return max(0.0, structural_deadline - time.monotonic())
+
             try:
                 async with asyncio.timeout(
-                    max(0.0, deadline - time.monotonic())
+                    max(
+                        0.0,
+                        structural_outer_deadline - time.monotonic(),
+                    )
                 ):
                     relation_table_edges = await asyncio.to_thread(
                         build_relation_table_edges,
@@ -362,7 +386,8 @@ class RelationshipAnalyzer:
                         records,
                         schema_result,
                         documents,
-                        check_deadline=require_deadline,
+                        check_deadline=require_structural_deadline,
+                        remaining_seconds=structural_remaining_seconds,
                     )
                 deterministic_edges.extend(relation_table_edges)
                 before("structural discovery")

@@ -1,10 +1,4 @@
-import type {
-  EntityEdgeData,
-  EntityNodeData,
-  SemanticGraphData,
-  TableEdgeData,
-  TableNodeData,
-} from "../api/analysis";
+import type { SemanticGraphData } from "../api/analysis";
 import { computeEntityDegrees } from "./semantics";
 
 export interface Viewport {
@@ -41,10 +35,63 @@ export interface GraphLayout {
   entityEdges: LayoutEdge[];
 }
 
-export type LayoutGraph = Pick<
-  SemanticGraphData,
-  "table_nodes" | "entity_nodes" | "table_edges" | "entity_edges"
->;
+export interface LayoutTableInput {
+  readonly id: string;
+  readonly display_name: string;
+}
+
+export interface LayoutEntityInput {
+  readonly id: string;
+  readonly table_id: string;
+  readonly class_name: string | null;
+}
+
+export interface LayoutTableEdgeInput {
+  readonly id: string;
+  readonly source_table: string;
+  readonly target_table: string;
+}
+
+export interface LayoutEntityEdgeInput {
+  readonly id: string;
+  readonly source: string;
+  readonly target: string;
+}
+
+export interface LayoutGraph {
+  readonly table_nodes: readonly LayoutTableInput[];
+  readonly entity_nodes: readonly LayoutEntityInput[];
+  readonly table_edges: readonly LayoutTableEdgeInput[];
+  readonly entity_edges: readonly LayoutEntityEdgeInput[];
+}
+
+export function compactLayoutGraph(
+  graph: SemanticGraphData | LayoutGraph,
+): LayoutGraph {
+  return {
+    table_nodes: graph.table_nodes.map(({ id, display_name }) => ({
+      id,
+      display_name,
+    })),
+    entity_nodes: graph.entity_nodes.map(({ id, table_id, class_name }) => ({
+      id,
+      table_id,
+      class_name,
+    })),
+    table_edges: graph.table_edges.map(
+      ({ id, source_table, target_table }) => ({
+        id,
+        source_table,
+        target_table,
+      }),
+    ),
+    entity_edges: graph.entity_edges.map(({ id, source, target }) => ({
+      id,
+      source,
+      target,
+    })),
+  };
+}
 
 const PROCESS_CLASS_ORDER = [
   "MEProcess",
@@ -75,7 +122,7 @@ function assertUniqueIds(
   }
 }
 
-function processClassIndex(table: TableNodeData): number {
+function processClassIndex(table: LayoutTableInput): number {
   const id = table.id.toLowerCase();
   const displayName = table.display_name.toLowerCase();
   const index = PROCESS_CLASS_ORDER.findIndex((known) => {
@@ -85,7 +132,7 @@ function processClassIndex(table: TableNodeData): number {
   return index < 0 ? PROCESS_CLASS_ORDER.length : index;
 }
 
-function sortedTables(tables: readonly TableNodeData[]): TableNodeData[] {
+function sortedTables(tables: readonly LayoutTableInput[]): LayoutTableInput[] {
   return [...tables].sort((left, right) => {
     const leftIndex = processClassIndex(left);
     const rightIndex = processClassIndex(right);
@@ -94,12 +141,12 @@ function sortedTables(tables: readonly TableNodeData[]): TableNodeData[] {
 }
 
 function entitiesByTable(
-  entities: readonly EntityNodeData[],
-  tables: readonly TableNodeData[],
+  entities: readonly LayoutEntityInput[],
+  tables: readonly LayoutTableInput[],
   degrees: ReadonlyMap<string, number>,
-): Map<string, EntityNodeData[]> {
+): Map<string, LayoutEntityInput[]> {
   const tableIds = new Set(tables.map((table) => table.id));
-  const groups = new Map<string, EntityNodeData[]>();
+  const groups = new Map<string, LayoutEntityInput[]>();
   for (const entity of entities) {
     if (!tableIds.has(entity.table_id)) continue;
     const group = groups.get(entity.table_id);
@@ -151,7 +198,7 @@ function anchorColumns(tableCount: number, viewport: Viewport): number {
 }
 
 function placeEntities(
-  entities: readonly EntityNodeData[],
+  entities: readonly LayoutEntityInput[],
   tableId: string,
   anchor: LayoutPoint,
 ): LayoutEntityNode[] {
@@ -179,7 +226,7 @@ function placeEntities(
 }
 
 function routeTableEdges(
-  edges: readonly TableEdgeData[],
+  edges: readonly LayoutTableEdgeInput[],
   anchors: ReadonlyMap<string, LayoutPoint>,
 ): LayoutEdge[] {
   return [...edges]
@@ -200,7 +247,7 @@ function routeTableEdges(
 }
 
 function routeEntityEdges(
-  edges: readonly EntityEdgeData[],
+  edges: readonly LayoutEntityEdgeInput[],
   positions: ReadonlyMap<string, LayoutPoint>,
 ): LayoutEdge[] {
   return [...edges]

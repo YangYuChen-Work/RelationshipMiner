@@ -1,4 +1,10 @@
-import type { GraphLayout, LayoutGraph, Viewport } from "./layout";
+import type { SemanticGraphData } from "../api/analysis";
+import {
+  compactLayoutGraph,
+  type GraphLayout,
+  type LayoutGraph,
+  type Viewport,
+} from "./layout";
 
 interface LayoutWorkerRequest {
   requestId: number;
@@ -38,6 +44,8 @@ export class LayoutClient {
   private workerTerminated = false;
   private unavailableError: Error | null = null;
   private readonly pending = new Map<number, PendingLayout>();
+  private inFlightRequestId: number | null = null;
+  private queuedRequest: LayoutWorkerRequest | null = null;
 
   constructor(worker?: Worker) {
     this.worker =
@@ -56,35 +64,42 @@ export class LayoutClient {
     };
   }
 
-  layoutGraph(graph: LayoutGraph, viewport: Viewport): Promise<GraphLayout> {
+  layoutGraph(
+    graph: SemanticGraphData | LayoutGraph,
+    viewport: Viewport,
+  ): Promise<GraphLayout> {
     if (this.disposed) return Promise.reject(new LayoutClientDisposedError());
     if (this.unavailableError) return Promise.reject(this.unavailableError);
 
     const requestId = ++this.nextRequestId;
     return new Promise<GraphLayout>((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
-      try {
-        const request: LayoutWorkerRequest = { requestId, graph, viewport };
-        this.worker.postMessage(request);
-      } catch (error) {
-        this.failWorker(
-          error instanceof Error
-            ? error
-            : new Error("The graph layout worker rejected a request."),
-        );
+      if (this.queuedRequest) {
+        const superseded = this.pending.get(this.queuedRequest.requestId);
+        superseded?.reject(new StaleLayoutRequestError());
+        this.pending.delete(this.queuedRequest.requestId);
       }
+      this.queuedRequest = {
+        requestId,
+        graph: compactLayoutGraph(graph),
+        viewport: { ...viewport },
+      };
+      this.postQueuedRequest();
     });
   }
 
   /** Rejects in-flight graph work; late worker responses have no pending owner. */
   reset() {
     this.rejectAll(new StaleLayoutRequestError());
+    this.queuedRequest = null;
   }
 
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     this.rejectAll(new LayoutClientDisposedError());
+    this.inFlightRequestId = null;
+    this.queuedRequest = null;
     this.detachWorker();
     this.terminateWorker();
   }
@@ -93,6 +108,8 @@ export class LayoutClient {
     if (this.disposed || this.unavailableError) return;
     this.unavailableError = error;
     this.rejectAll(error);
+    this.inFlightRequestId = null;
+    this.queuedRequest = null;
     this.detachWorker();
     this.terminateWorker();
   }
@@ -110,18 +127,45 @@ export class LayoutClient {
   }
 
   private receive(response: LayoutWorkerResponse) {
+    if (response.requestId !== this.inFlightRequestId) return;
+    this.inFlightRequestId = null;
     const pending = this.pending.get(response.requestId);
-    if (!pending) return;
-    this.pending.delete(response.requestId);
-    if (response.error) {
-      pending.reject(new Error(response.error));
+    if (pending) {
+      this.pending.delete(response.requestId);
+      if (response.error) {
+        pending.reject(new Error(response.error));
+      } else if (!response.layout) {
+        pending.reject(
+          new Error("The graph layout worker returned no layout."),
+        );
+      } else {
+        pending.resolve(response.layout);
+      }
+    }
+    this.postQueuedRequest();
+  }
+
+  private postQueuedRequest() {
+    if (
+      this.disposed ||
+      this.unavailableError ||
+      this.inFlightRequestId !== null ||
+      !this.queuedRequest
+    ) {
       return;
     }
-    if (!response.layout) {
-      pending.reject(new Error("The graph layout worker returned no layout."));
-      return;
+    const request = this.queuedRequest;
+    this.queuedRequest = null;
+    this.inFlightRequestId = request.requestId;
+    try {
+      this.worker.postMessage(request);
+    } catch (error) {
+      this.failWorker(
+        error instanceof Error
+          ? error
+          : new Error("The graph layout worker rejected a request."),
+      );
     }
-    pending.resolve(response.layout);
   }
 
   private rejectAll(error: Error) {
@@ -136,7 +180,10 @@ export function createLayoutClient(worker?: Worker): LayoutClient {
 
 let sharedClient: LayoutClient | null = null;
 
-export function layoutGraph(graph: LayoutGraph, viewport: Viewport) {
+export function layoutGraph(
+  graph: SemanticGraphData | LayoutGraph,
+  viewport: Viewport,
+) {
   sharedClient ??= new LayoutClient();
   return sharedClient.layoutGraph(graph, viewport);
 }

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable
-from itertools import permutations
+from collections.abc import Callable, Mapping
+from itertools import product
 
 from sqlalchemy import MetaData, Table, bindparam, inspect, select
 from sqlalchemy.engine import Engine
@@ -31,6 +31,8 @@ _DIRECTED_RELATION_TYPES = {
 }
 _MATERIAL_RELATION_TYPE = "关联物料"
 _DEFAULT_RELATION_TYPE = "结构关联"
+_ID_CHUNK_SIZE = 400
+_ROW_BATCH_SIZE = 128
 
 
 class StructuralRelationResolutionError(RuntimeError):
@@ -62,6 +64,7 @@ def build_relation_table_edges(
     schema_result: SchemaAnalysisResult,
     documents: list[EntityDocument],
     check_deadline: Callable[[str], None] | None = None,
+    remaining_seconds: Callable[[], float] | None = None,
 ) -> list[EntityEdge]:
     """Resolve relation-table edges and expose any resolved before failure."""
     edges: dict[tuple[str, str], EntityEdge] = {}
@@ -73,6 +76,7 @@ def build_relation_table_edges(
             documents,
             edges,
             check_deadline,
+            remaining_seconds,
         )
     except DeadlineExceeded as error:
         raise StructuralRelationDeadlineExceeded(
@@ -92,6 +96,7 @@ def _resolve_relation_table_edges(
     documents: list[EntityDocument],
     edges: dict[tuple[str, str], EntityEdge],
     check_deadline: Callable[[str], None] | None,
+    remaining_seconds: Callable[[], float] | None,
 ) -> list[EntityEdge]:
     _check_deadline(check_deadline, "发现关系表前")
     relation_tables = _discover_relation_tables(engine)
@@ -109,92 +114,181 @@ def _resolve_relation_table_edges(
             MetaData(),
             autoload_with=engine,
         )
-        for left_class, right_class in permutations(endpoint_indexes, 2):
-            statement = (
-                select(
-                    relation_table.c.left_id,
-                    relation_table.c.right_id,
-                    relation_table.c.left_class,
-                    relation_table.c.right_class,
-                )
-                .where(
-                    relation_table.c.left_class
-                    == bindparam("left_class"),
-                    relation_table.c.right_class
-                    == bindparam("right_class"),
-                )
-            )
-            with engine.connect() as connection:
-                rows = connection.execute(
-                    statement,
-                    {
-                        "left_class": left_class,
-                        "right_class": right_class,
-                    },
-                )
-                for row in rows.mappings():
-                    left_endpoint = _resolve_endpoint(
-                        endpoint_indexes,
-                        row["left_class"],
-                        row["left_id"],
+        for left_class, right_class in product(endpoint_indexes, repeat=2):
+            left_ids = list(endpoint_indexes[left_class])
+            right_ids = list(endpoint_indexes[right_class])
+            for left_id_chunk in _chunks(left_ids, _ID_CHUNK_SIZE):
+                for right_id_chunk in _chunks(right_ids, _ID_CHUNK_SIZE):
+                    stage = f"读取关系表 {table_name}"
+                    _check_deadline(check_deadline, stage)
+                    statement = (
+                        select(
+                            relation_table.c.left_id,
+                            relation_table.c.right_id,
+                            relation_table.c.left_class,
+                            relation_table.c.right_class,
+                        )
+                        .where(
+                            relation_table.c.left_class
+                            == bindparam("left_class"),
+                            relation_table.c.right_class
+                            == bindparam("right_class"),
+                            relation_table.c.left_id.in_(
+                                bindparam("left_ids", expanding=True)
+                            ),
+                            relation_table.c.right_id.in_(
+                                bindparam("right_ids", expanding=True)
+                            ),
+                        )
                     )
-                    right_endpoint = _resolve_endpoint(
-                        endpoint_indexes,
-                        row["right_class"],
-                        row["right_id"],
-                    )
-                    if left_endpoint is None or right_endpoint is None:
-                        continue
-
-                    relation_type, reverse_row = _relation_semantics(
-                        str(left_class),
-                        str(right_class),
-                    )
-                    if reverse_row:
-                        source, target = right_endpoint, left_endpoint
-                        source_field, source_value = "right_id", row["right_id"]
-                        target_field, target_value = "left_id", row["left_id"]
-                    else:
-                        source, target = left_endpoint, right_endpoint
-                        source_field, source_value = "left_id", row["left_id"]
-                        target_field, target_value = "right_id", row["right_id"]
-                    key = tuple(sorted((source.entity_id, target.entity_id)))
-                    reason = (
-                        f"{table_name} records {left_class} to {right_class}"
-                    )
-                    evidence = RelationEvidence(
-                        source_field=source_field,
-                        source_value=source_value,
-                        target_field=target_field,
-                        target_value=target_value,
-                        method="relation_table",
-                        reason=reason,
-                    )
-                    existing_edge = edges.get(key)
-                    if existing_edge is not None:
-                        existing_evidence = existing_edge.relations[0].evidence
-                        if evidence not in existing_evidence:
-                            existing_evidence.append(evidence)
-                        continue
-                    relation = EntityRelation(
-                        source=source.entity_id,
-                        target=target.entity_id,
-                        relation_type=relation_type,
-                        direction="source_to_target",
-                        strength="strong",
-                        confidence=1.0,
-                        explanation=reason,
-                        evidence=[evidence],
-                    )
-                    edges[key] = EntityEdge(
-                        id=f"{source.entity_id}->{target.entity_id}",
-                        source=source.entity_id,
-                        target=target.entity_id,
-                        relations=[relation],
-                    )
+                    if (
+                        engine.dialect.name == "mysql"
+                        and remaining_seconds is not None
+                    ):
+                        timeout_ms = max(
+                            1,
+                            int(remaining_seconds() * 1000),
+                        )
+                        statement = statement.prefix_with(
+                            f"/*+ MAX_EXECUTION_TIME({timeout_ms}) */",
+                            dialect="mysql",
+                        )
+                    with engine.connect() as connection:
+                        rows = connection.execution_options(
+                            stream_results=True,
+                            yield_per=_ROW_BATCH_SIZE,
+                        ).execute(
+                            statement,
+                            {
+                                "left_class": left_class,
+                                "right_class": right_class,
+                                "left_ids": left_id_chunk,
+                                "right_ids": right_id_chunk,
+                            },
+                        )
+                        for batch in rows.mappings().partitions(
+                            _ROW_BATCH_SIZE
+                        ):
+                            _check_deadline(check_deadline, stage)
+                            for row in batch:
+                                _merge_relation_row(
+                                    edges,
+                                    endpoint_indexes,
+                                    table_name,
+                                    left_class,
+                                    right_class,
+                                    row,
+                                )
+                                _check_deadline(check_deadline, stage)
+                            _check_deadline(check_deadline, stage)
         _check_deadline(check_deadline, f"读取关系表 {table_name} 后")
 
     return list(edges.values())
+
+
+def _merge_relation_row(
+    edges: dict[tuple[str, str], EntityEdge],
+    endpoint_indexes: dict[str, dict[str, list[EntityDocument]]],
+    table_name: str,
+    left_class: str,
+    right_class: str,
+    row: Mapping[str, object],
+) -> None:
+    left_endpoint = _resolve_endpoint(
+        endpoint_indexes,
+        row["left_class"],
+        row["left_id"],
+    )
+    right_endpoint = _resolve_endpoint(
+        endpoint_indexes,
+        row["right_class"],
+        row["right_id"],
+    )
+    if (
+        left_endpoint is None
+        or right_endpoint is None
+        or left_endpoint.table_name == right_endpoint.table_name
+    ):
+        return
+
+    relation_type, reverse_row = _relation_semantics(
+        left_class,
+        right_class,
+    )
+    if reverse_row:
+        source, target = right_endpoint, left_endpoint
+        source_field, source_value = "right_id", row["right_id"]
+        target_field, target_value = "left_id", row["left_id"]
+    else:
+        source, target = left_endpoint, right_endpoint
+        source_field, source_value = "left_id", row["left_id"]
+        target_field, target_value = "right_id", row["right_id"]
+
+    key = tuple(sorted((source.entity_id, target.entity_id)))
+    reason = f"{table_name} records {left_class} to {right_class}"
+    evidence = RelationEvidence(
+        source_field=source_field,
+        source_value=source_value,
+        target_field=target_field,
+        target_value=target_value,
+        method="relation_table",
+        reason=reason,
+    )
+    existing_edge = edges.get(key)
+    if existing_edge is None:
+        relation = EntityRelation(
+            source=source.entity_id,
+            target=target.entity_id,
+            relation_type=relation_type,
+            direction="source_to_target",
+            strength="strong",
+            confidence=1.0,
+            explanation=reason,
+            evidence=[evidence],
+        )
+        edges[key] = EntityEdge(
+            id=f"{source.entity_id}->{target.entity_id}",
+            source=source.entity_id,
+            target=target.entity_id,
+            relations=[relation],
+        )
+        return
+
+    matching_relation = next(
+        (
+            relation
+            for relation in existing_edge.relations
+            if relation.source == source.entity_id
+            and relation.target == target.entity_id
+            and relation.direction == "source_to_target"
+            and relation.relation_type == relation_type
+            and relation.strength == "strong"
+        ),
+        None,
+    )
+    if matching_relation is not None:
+        if evidence not in matching_relation.evidence:
+            matching_relation.evidence.append(evidence)
+        return
+    existing_edge.relations.append(
+        EntityRelation(
+            source=source.entity_id,
+            target=target.entity_id,
+            relation_type=relation_type,
+            direction="source_to_target",
+            strength="strong",
+            confidence=1.0,
+            explanation=reason,
+            evidence=[evidence],
+        )
+    )
+
+
+def _chunks(values: list[str], size: int) -> list[list[str]]:
+    return [
+        values[offset : offset + size]
+        for offset in range(0, len(values), size)
+    ]
 
 
 def _relation_semantics(
