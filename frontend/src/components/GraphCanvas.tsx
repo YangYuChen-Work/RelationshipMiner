@@ -8,6 +8,7 @@ import {
 import { projectGraph } from "../graph/projection";
 import { buildScene, type GraphTransform, type RenderScene } from "../graph/scene";
 import { hitTest, type HitTarget } from "../graph/hitTest";
+import { visibleEntityRelations } from "../graph/semantics";
 import { useAnalysisStore } from "../store/analysis";
 
 const FALLBACK_WIDTH = 960;
@@ -18,6 +19,8 @@ const EDGE = "#52677a";
 const TABLE_EDGE = "#8fa0b0";
 const MAX_ENTITY_LABELS = 500;
 const LABEL_VIEWPORT_PADDING = 24;
+const MIN_ZOOM = 0.02;
+const MAX_ZOOM = 2.5;
 const CANVAS_CONTEXT_ERROR =
   "无法创建 Canvas 2D 上下文，当前浏览器不支持图谱画布。";
 
@@ -48,12 +51,14 @@ function fitTransform(
   const maxY = Math.max(...points.map((point) => point.y));
   const worldPadding = 72;
   const k = Math.max(
-    0.25,
+    MIN_ZOOM,
     Math.min(
       2,
       Math.min(
-        (viewport.width - 96) / Math.max(1, maxX - minX + worldPadding * 2),
-        (viewport.height - 96) / Math.max(1, maxY - minY + worldPadding * 2),
+        Math.max(1, viewport.width - 96) /
+          Math.max(1, maxX - minX + worldPadding * 2),
+        Math.max(1, viewport.height - 96) /
+          Math.max(1, maxY - minY + worldPadding * 2),
       ),
     ),
   );
@@ -196,7 +201,8 @@ function drawScene(
         left.nodeId === selectedNodeId ? 0 : left.nodeId === hoveredNodeId ? 1 : 2;
       const rightPriority =
         right.nodeId === selectedNodeId ? 0 : right.nodeId === hoveredNodeId ? 1 : 2;
-      return leftPriority - rightPriority || left.nodeId.localeCompare(right.nodeId);
+      return leftPriority - rightPriority ||
+        compareText(left.nodeId, right.nodeId);
     })
     .slice(0, MAX_ENTITY_LABELS)
     .forEach((label) =>
@@ -472,7 +478,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     const canvas = canvasRef.current;
     if (!canvas) return;
     const zoom = d3.zoom<HTMLCanvasElement, unknown>()
-      .scaleExtent([0.25, 2.5])
+      .scaleExtent([MIN_ZOOM, MAX_ZOOM])
       .on("zoom", (event) => {
         transformRef.current = event.transform;
         rebuildCurrentScene();
@@ -648,8 +654,16 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     const tableEdge = projectedGraph.table_edges.find((edge) => edge.id === tableEdgeId);
     if (!tableEdge || tableEdge.supporting_entity_edges.length === 0) return;
     const supportingIds = new Set(tableEdge.supporting_entity_edges);
+    const visibleSupportingIds = new Set(
+      projectedGraph.entity_edges
+        .filter((edge) =>
+          supportingIds.has(edge.id) &&
+          visibleEntityRelations(edge, confidenceThreshold).length > 0
+        )
+        .map((edge) => edge.id),
+    );
     const supportingEdges = layout.entityEdges.filter((edge) =>
-      supportingIds.has(edge.id),
+      visibleSupportingIds.has(edge.id),
     );
     if (supportingEdges.length === 0) return;
     const points = supportingEdges.flatMap((edge) => [edge.from, edge.to]);
@@ -659,9 +673,9 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     const maxY = Math.max(...points.map((point) => point.y));
     const padding = 120;
     const k = Math.max(
-      0.25,
+      MIN_ZOOM,
       Math.min(
-        2.5,
+        MAX_ZOOM,
         Math.min(
           (viewport.width - padding * 2) / Math.max(1, maxX - minX),
           (viewport.height - padding * 2) / Math.max(1, maxY - minY),
@@ -673,7 +687,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       .scale(k)
       .translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
     d3.select(canvasRef.current).call(zoomRef.current.transform, transform);
-  }, [layout, projectedGraph, viewport]);
+  }, [confidenceThreshold, layout, projectedGraph, viewport]);
 
   const focusTableNode = useCallback((tableId: string) => {
     if (!layout || !zoomRef.current || !canvasRef.current) return;

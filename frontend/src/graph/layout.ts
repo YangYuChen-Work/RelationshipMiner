@@ -5,6 +5,7 @@ import type {
   TableEdgeData,
   TableNodeData,
 } from "../api/analysis";
+import { computeEntityDegrees } from "./semantics";
 
 export interface Viewport {
   width: number;
@@ -14,19 +15,6 @@ export interface Viewport {
 export interface LayoutPoint {
   x: number;
   y: number;
-}
-
-/**
- * Retained as an empty compatibility surface for callers created before the
- * clustered layout. Clustered graphs never emit table rectangles.
- */
-export interface TableRegion {
-  id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  header: LayoutPoint;
 }
 
 export interface LayoutTableNode extends LayoutPoint {
@@ -47,7 +35,6 @@ export interface LayoutEdge {
 }
 
 export interface GraphLayout {
-  tableRegions: TableRegion[];
   tableNodes: LayoutTableNode[];
   entityNodes: LayoutEntityNode[];
   tableEdges: LayoutEdge[];
@@ -104,22 +91,6 @@ function sortedTables(tables: readonly TableNodeData[]): TableNodeData[] {
     const rightIndex = processClassIndex(right);
     return leftIndex - rightIndex || compareIds(left.id, right.id);
   });
-}
-
-function entityDegrees(
-  entities: readonly EntityNodeData[],
-  edges: readonly EntityEdgeData[],
-): Map<string, number> {
-  const entityIds = new Set(entities.map((entity) => entity.id));
-  const degrees = new Map(entities.map((entity) => [entity.id, 0]));
-  for (const edge of edges) {
-    if (!entityIds.has(edge.source) || !entityIds.has(edge.target)) continue;
-    degrees.set(edge.source, (degrees.get(edge.source) ?? 0) + 1);
-    if (edge.target !== edge.source) {
-      degrees.set(edge.target, (degrees.get(edge.target) ?? 0) + 1);
-    }
-  }
-  return degrees;
 }
 
 function entitiesByTable(
@@ -258,7 +229,7 @@ export function computeGroupedLayout(
   assertUniqueIds(graph.entity_edges, "entity edge");
 
   const tables = sortedTables(graph.table_nodes);
-  const degrees = entityDegrees(graph.entity_nodes, graph.entity_edges);
+  const degrees = computeEntityDegrees(graph.entity_nodes, graph.entity_edges);
   const groups = entitiesByTable(graph.entity_nodes, tables, degrees);
   const viewport = normalizedViewport(rawViewport);
   const columns = anchorColumns(tables.length, viewport);
@@ -297,7 +268,6 @@ export function computeGroupedLayout(
   });
 
   return {
-    tableRegions: [],
     tableNodes,
     entityNodes,
     tableEdges: routeTableEdges(graph.table_edges, anchors),

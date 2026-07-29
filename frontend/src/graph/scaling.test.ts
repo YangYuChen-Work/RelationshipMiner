@@ -133,7 +133,7 @@ describe("7000-entity graph scaling", () => {
     });
 
     expect(layout.entityNodes).toHaveLength(ENTITY_COUNT);
-    expect(layout.tableRegions.length).toBeLessThanOrEqual(10);
+    expect(layout.tableNodes.length).toBeLessThanOrEqual(10);
     expect(scene.entityLabels).toHaveLength(0);
   });
 

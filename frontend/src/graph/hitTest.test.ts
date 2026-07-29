@@ -26,7 +26,6 @@ function graphFixture(): SemanticGraphData {
 
 function layoutFixture(): GraphLayout {
   return {
-    tableRegions: [],
     tableNodes: [{ id: "orders", x: 0, y: 0 }, { id: "users", x: 100, y: 0 }],
     entityNodes: [{ id: "order-1", tableId: "orders", x: 0, y: 50 }, { id: "user-1", tableId: "users", x: 100, y: 50 }],
     tableEdges: [{ id: "table-edge", source: "orders", target: "users", from: { x: 0, y: 0 }, to: { x: 100, y: 0 } }],
@@ -67,7 +66,6 @@ describe("hitTest", () => {
       entity_edges: [],
     };
     const largeLayout: GraphLayout = {
-      tableRegions: [],
       tableNodes: [{ id: "table", x: -100, y: -100 }],
       entityNodes: Array.from({ length: count }, (_, index) => ({ id: `entity-${index}`, tableId: "table", x: (index % 100) * 24, y: Math.floor(index / 100) * 24 })),
       tableEdges: [],
@@ -233,7 +231,6 @@ describe("hitTest", () => {
       })),
     };
     const layout: GraphLayout = {
-      tableRegions: [],
       tableNodes: [],
       entityNodes: [
         { id: "source", tableId: "table", x: 10_000, y: 10_000 },

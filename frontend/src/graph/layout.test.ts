@@ -35,7 +35,6 @@ describe("computeGroupedLayout", () => {
   it("places separated table anchors with their entities orbiting instead of emitting table rectangles", () => {
     const layout = computeGroupedLayout(graphFixture(), { width: 1200, height: 800 });
 
-    expect(layout.tableRegions).toEqual([]);
     expect(layout.tableNodes).toHaveLength(2);
     expect(Math.hypot(
       layout.tableNodes[0].x - layout.tableNodes[1].x,
@@ -113,7 +112,6 @@ describe("computeGroupedLayout", () => {
       entity_edges: [],
     };
     const layout = computeGroupedLayout(largeGraph, { width: 1600, height: 900 });
-    expect(layout.tableRegions).toEqual([]);
     expect(layout.tableNodes).toHaveLength(10);
     expect(layout.entityNodes).toHaveLength(7_000);
     expect(layout.entityNodes.every((node) => Number.isFinite(node.x) && Number.isFinite(node.y))).toBe(true);
@@ -155,7 +153,6 @@ describe("computeGroupedLayout", () => {
       entity_edges: [],
     };
     expect(computeGroupedLayout(empty, { width: 0, height: 0 })).toEqual({
-      tableRegions: [],
       tableNodes: [],
       entityNodes: [],
       tableEdges: [],
@@ -173,14 +170,7 @@ describe("computeGroupedLayout", () => {
     const layout = computeGroupedLayout(graph, { width: 0, height: 0 });
     expect(layout.entityNodes.some((entity) => entity.id === "orphan")).toBe(false);
     const numericValues = [
-      ...layout.tableRegions.flatMap((region) => [
-        region.x,
-        region.y,
-        region.width,
-        region.height,
-        region.header.x,
-        region.header.y,
-      ]),
+      ...layout.tableNodes.flatMap((node) => [node.x, node.y]),
       ...layout.entityNodes.flatMap((entity) => [entity.x, entity.y]),
       ...layout.tableEdges.flatMap((edge) => [
         edge.from.x,

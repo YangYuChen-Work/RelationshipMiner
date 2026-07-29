@@ -177,3 +177,164 @@ Task 4 staging.
   older scene fixtures without `color` exposed compatibility gaps. The drawing
   call and scene field are backward-compatible now; the fresh full run above is
   green.
+
+## Fix Round 1/5
+
+### RED
+
+Command:
+
+```text
+npm --prefix frontend test -- --run src/graph/layout.test.ts src/graph/scene.test.ts src/components/__tests__/GraphCanvas.test.tsx
+```
+
+Recorded output (verbatim):
+
+```text
+> frontend@0.0.0 test
+> vitest run --run src/graph/layout.test.ts src/graph/scene.test.ts src/components/__tests__/GraphCanvas.test.tsx
+
+
+ RUN  v4.1.10 D:/桌面/test/ai-graph/frontend
+
+ ❯ src/graph/scene.test.ts (14 tests | 3 failed) 54ms
+     × derives mixed table-edge labels and style only from relations visible at the threshold 8ms
+     × bounds dense edge labels and keeps them deterministic under input reordering 29ms
+     × uses code-unit edge ID ordering for deterministic label priority 2ms
+ ❯ src/components/__tests__/GraphCanvas.test.tsx (24 tests | 2 failed) 817ms
+     × fits every opted-in entity in a 7000-node radial layout inside the viewport 40ms
+     × focuses a mixed table edge using only supporting relations visible at the threshold 15ms
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  5 failed | 49 passed (54)
+   Start at  00:42:16
+   Duration  6.44s (transform 322ms, setup 1.48s, import 1.47s, tests 898ms, environment 9.58s)
+```
+
+The failures proved the 0.25 fit floor clipped the large radial world, dense
+labels were unbounded at 600, locale ordering prioritized `a-edge` before
+`Z-edge`, aggregate labels leaked a filtered weak relation, and table-edge
+focus included the same filtered weak support.
+
+### GREEN
+
+Focused command:
+
+```text
+npm --prefix frontend test -- --run src/graph/layout.test.ts src/graph/scene.test.ts src/components/__tests__/GraphCanvas.test.tsx
+```
+
+Recorded output (verbatim):
+
+```text
+> frontend@0.0.0 test
+> vitest run --run src/graph/layout.test.ts src/graph/scene.test.ts src/components/__tests__/GraphCanvas.test.tsx
+
+
+ RUN  v4.1.10 D:/桌面/test/ai-graph/frontend
+
+
+ Test Files  3 passed (3)
+      Tests  53 passed (53)
+```
+
+Full frontend command:
+
+```text
+npm --prefix frontend test -- --run
+```
+
+Recorded output (verbatim):
+
+```text
+> frontend@0.0.0 test
+> vitest run --run
+
+
+ RUN  v4.1.10 D:/桌面/test/ai-graph/frontend
+
+
+ Test Files  21 passed (21)
+      Tests  152 passed (152)
+```
+
+Lint command:
+
+```text
+npm --prefix frontend run lint
+```
+
+Recorded result: exit 0, `oxlint` emitted no findings.
+
+Build command:
+
+```text
+npm --prefix frontend run build
+```
+
+Recorded result: exit 0; TypeScript and Vite completed, transforming 604
+modules and emitting the worker and production bundles.
+
+### Changed files
+
+- `frontend/src/components/GraphCanvas.tsx`
+- `frontend/src/components/__tests__/GraphCanvas.test.tsx`
+- `frontend/src/graph/semantics.ts`
+- `frontend/src/graph/layout.ts`
+- `frontend/src/graph/layout.test.ts`
+- `frontend/src/graph/scene.ts`
+- `frontend/src/graph/scene.test.ts`
+- `frontend/src/graph/hitTest.test.ts`
+- `frontend/src/graph/scaling.test.ts`
+- `.superpowers/sdd/2026-07-29-authoritative-semantic-graph/task-4-report.md`
+
+The pre-existing `.gitignore` edit remains preserved and outside Task 4
+staging.
+
+### Correctness and runtime reasoning
+
+- Fit computes the scale from every projected table/entity point plus world
+  padding, clamps it to the valid `0.02..2.5` zoom domain, and uses the same
+  lower bound for D3 zoom. The 7,000-node regression checks all transformed
+  points remain inside the 960x600 viewport and proves the required scale is
+  below 0.25.
+- Edge-label candidates retain deterministic priority through code-unit ID
+  sorting. Accepted labels are capped at 200 and indexed into fixed
+  screen-space buckets. Collision checks inspect only neighboring bucket
+  occupants instead of every previously accepted label.
+- Label work is `O(E log E)` for deterministic sorting plus bounded local
+  collision checks; label-index memory is bounded by the 200-label cap. It no
+  longer has the prior `O(E²)` accepted-label scan.
+- Label width is capped and bucket coordinates must be safe integers with a
+  bounded span. This prevents enormous but finite geometry from creating an
+  unincrementable bucket loop; the regression keeps the edge but skips its
+  unsafe label.
+- Table-edge label/style derives from threshold-visible relations on
+  resolvable supporting entity edges. Strong support remains solid while a
+  below-threshold weak relation contributes neither label nor focus geometry.
+- Table-edge focus filters supporting IDs through the same
+  `visibleEntityRelations` helper before calculating bounds.
+- `computeEntityDegrees` now has one implementation in `graph/semantics.ts`
+  and is consumed by both worker-side layout and main-thread scene building.
+- A repository-wide source check found no unchanged production consumer of
+  `TableRegion`, `SceneTableRegion`, or `tableRegions`. Those dead types and
+  fields were removed, and only directly affected test fixtures changed.
+- Layout still executes in the existing Web Worker; rendering remains one
+  Canvas with spatial hit indexes and no per-node DOM.
+
+### Self-review and concerns
+
+- `git diff --check` is clean, and repository-wide searches return no
+  `tableRegions`, `TableRegion`, `SceneTableRegion`, `localeCompare`, or
+  duplicated degree helper.
+- An initial full-suite attempt exposed a new OOM in the existing
+  `Number.MAX_VALUE` hit-test case. Diagnosis showed an unsafe bucket index
+  could not change when incremented. Safe-integer/span guards fixed the cause;
+  the isolated hit-test suite is 10/10 and the subsequent full suite is
+  152/152.
+- Aggregate table edges with no resolvable supporting entity edge retain the
+  existing aggregate-field fallback so table-only evidence remains visible.
+  When supporting edges are present, only their visible relation semantics are
+  used.
+- The global 200 edge-label cap intentionally favors deterministic strong and
+  table-level labels over showing every label in dense scenes.

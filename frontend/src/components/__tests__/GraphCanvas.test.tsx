@@ -347,6 +347,44 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBe("b");
   });
 
+  it("fits every opted-in entity in a 7000-node radial layout inside the viewport", async () => {
+    const entities = Array.from({ length: 7_000 }, (_, index) => ({
+      id: `entity-${index}`,
+      table_id: "bulk",
+      display_name: `Entity ${index}`,
+      class_name: null,
+      dimensions: {},
+    }));
+    const largeGraph: SemanticGraphData = {
+      table_nodes: [{
+        id: "bulk",
+        display_name: "Bulk",
+        entity_count: entities.length,
+      }],
+      entity_nodes: entities,
+      table_edges: [],
+      entity_edges: [],
+    };
+    act(() => {
+      setGraph(largeGraph);
+      useAnalysisStore.getState().setShowIsolatedNodes(true);
+    });
+
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    const transform = d3.zoomTransform(canvas);
+    const layout = computeGroupedLayout(largeGraph, { width: 960, height: 600 });
+    const screenPoints = [...layout.tableNodes, ...layout.entityNodes]
+      .map((point) => transform.apply([point.x, point.y]));
+
+    expect(transform.k).toBeLessThan(0.25);
+    expect(Math.min(...screenPoints.map(([x]) => x))).toBeGreaterThanOrEqual(48);
+    expect(Math.max(...screenPoints.map(([x]) => x))).toBeLessThanOrEqual(912);
+    expect(Math.min(...screenPoints.map(([, y]) => y))).toBeGreaterThanOrEqual(48);
+    expect(Math.max(...screenPoints.map(([, y]) => y))).toBeLessThanOrEqual(552);
+  });
+
   it("uses one canvas and no per-entity DOM for a 7000 entity graph", async () => {
     const entities = Array.from({ length: 7_000 }, (_, index) => ({ id: `entity-${index}`, table_id: "bulk", display_name: `Entity ${index}`, class_name: null, dimensions: {} }));
     act(() => {
@@ -484,7 +522,7 @@ describe("GraphCanvas", () => {
       clientY: 300,
       deltaY: 5_000,
     });
-    expect(d3.zoomTransform(canvas).k).toBe(0.25);
+    expect(d3.zoomTransform(canvas).k).toBe(0.02);
 
     fireEvent.focus(canvas);
     fireEvent.keyDown(canvas, { key: "ArrowDown" });
@@ -542,6 +580,62 @@ describe("GraphCanvas", () => {
     expect(focused).not.toEqual(transform);
     expect(midpoint[0]).toBeCloseTo(480);
     expect(midpoint[1]).toBeCloseTo(300);
+  });
+
+  it("focuses a mixed table edge using only supporting relations visible at the threshold", async () => {
+    const weakEdge = {
+      id: "b--invoice",
+      source: "b",
+      target: "invoice",
+      relations: [{
+        source: "b",
+        target: "invoice",
+        relation_type: "suggests",
+        direction: "source_to_target" as const,
+        strength: "weak" as const,
+        confidence: 0.2,
+        explanation: "below threshold",
+        evidence: [],
+        model_id: null,
+        task_id: null,
+      }],
+    };
+    const mixedGraph: SemanticGraphData = {
+      ...graph,
+      table_edges: [{
+        ...graph.table_edges[0],
+        relation_types: ["owns", "suggests"],
+        weak_count: 1,
+        entity_edge_count: 2,
+        supporting_entity_edges: ["a--invoice", weakEdge.id],
+      }],
+      entity_edges: [...graph.entity_edges, weakEdge],
+    };
+    act(() => {
+      setGraph(mixedGraph);
+      useAnalysisStore.getState().setConfidenceThreshold(0.8);
+    });
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    const layout = computeGroupedLayout(mixedGraph, { width: 960, height: 600 });
+    const tableEdge = layout.tableEdges[0];
+    const before = d3.zoomTransform(canvas);
+    const tablePoint = before.apply([
+      (tableEdge.from.x + tableEdge.to.x) / 2,
+      (tableEdge.from.y + tableEdge.to.y) / 2,
+    ]);
+
+    fireEvent.click(canvas, { clientX: tablePoint[0], clientY: tablePoint[1] });
+
+    expect(useAnalysisStore.getState().selectedTableEdgeId).toBe(tableEdge.id);
+    const strongEdge = layout.entityEdges.find((edge) => edge.id === "a--invoice")!;
+    const focusedMidpoint = d3.zoomTransform(canvas).apply([
+      (strongEdge.from.x + strongEdge.to.x) / 2,
+      (strongEdge.from.y + strongEdge.to.y) / 2,
+    ]);
+    expect(focusedMidpoint[0]).toBeCloseTo(480);
+    expect(focusedMidpoint[1]).toBeCloseTo(300);
   });
 
   it("selects a table edge with no supporting relations without moving the camera", async () => {

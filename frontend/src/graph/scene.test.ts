@@ -40,7 +40,6 @@ const graph: SemanticGraphData = {
 };
 
 const layout: GraphLayout = {
-  tableRegions: [],
   tableNodes: [
     { id: "orders", x: 20, y: 30 },
     { id: "users", x: 120, y: 30 },
@@ -125,12 +124,162 @@ describe("buildScene", () => {
       lineStyle: "dashed",
     });
     expect(scene.tableEdges.find((edge) => edge.id === "orders-audit")).toMatchObject({
-      label: "logged",
+      label: "created",
       lineStyle: "solid",
     });
     expect(scene.edgeLabels.map((label) => label.text)).toEqual(
-      expect.arrayContaining(["owns", "created", "logged"]),
+      expect.arrayContaining(["owns", "created"]),
     );
+  });
+
+  it("derives mixed table-edge labels and style only from relations visible at the threshold", () => {
+    const mixedGraph: SemanticGraphData = {
+      ...graph,
+      table_edges: [{
+        ...graph.table_edges[0],
+        relation_types: ["created", "owns"],
+        strong_count: 1,
+        weak_count: 1,
+        entity_edge_count: 2,
+        supporting_entity_edges: ["weak-edge", "strong-edge"],
+      }],
+      entity_edges: graph.entity_edges.slice(0, 2),
+    };
+    const mixedLayout: GraphLayout = {
+      ...layout,
+      tableEdges: layout.tableEdges.slice(0, 1),
+      entityEdges: layout.entityEdges.slice(0, 2),
+    };
+
+    const filtered = buildScene({
+      graph: mixedGraph,
+      layout: mixedLayout,
+      transform: { k: 1.2, x: 0, y: 0 },
+      confidenceThreshold: 0.9,
+    });
+    expect(filtered.tableEdges).toHaveLength(1);
+    expect(filtered.tableEdges[0]).toMatchObject({
+      label: "created",
+      lineStyle: "solid",
+    });
+
+    const inclusive = buildScene({
+      graph: mixedGraph,
+      layout: mixedLayout,
+      transform: { k: 1.2, x: 0, y: 0 },
+      confidenceThreshold: 0.75,
+    });
+    expect(inclusive.tableEdges[0]).toMatchObject({
+      label: "created · owns",
+      lineStyle: "solid",
+    });
+  });
+
+  it("bounds dense edge labels and keeps them deterministic under input reordering", () => {
+    const edgeCount = 600;
+    const tableNodes = Array.from({ length: edgeCount * 2 }, (_, index) => ({
+      id: `table-${index.toString().padStart(4, "0")}`,
+      display_name: `Table ${index}`,
+      entity_count: 0,
+    }));
+    const tableEdges = Array.from({ length: edgeCount }, (_, index) => ({
+      id: `edge-${index.toString().padStart(4, "0")}`,
+      source_table: tableNodes[index * 2].id,
+      target_table: tableNodes[index * 2 + 1].id,
+      relation_types: [`type-${index}`],
+      strong_count: 1,
+      weak_count: 0,
+      entity_edge_count: 0,
+      average_confidence: 1,
+      supporting_entity_edges: [],
+    }));
+    const layoutNodes = tableNodes.map((node, index) => ({
+      id: node.id,
+      x: (index % 40) * 120,
+      y: Math.floor(index / 40) * 48,
+    }));
+    const positions = new Map(layoutNodes.map((node) => [node.id, node]));
+    const layoutEdges = tableEdges.map((edge) => ({
+      id: edge.id,
+      source: edge.source_table,
+      target: edge.target_table,
+      from: positions.get(edge.source_table)!,
+      to: positions.get(edge.target_table)!,
+    }));
+    const denseGraph: SemanticGraphData = {
+      table_nodes: tableNodes,
+      entity_nodes: [],
+      table_edges: tableEdges,
+      entity_edges: [],
+    };
+    const denseLayout: GraphLayout = {
+      tableNodes: layoutNodes,
+      entityNodes: [],
+      tableEdges: layoutEdges,
+      entityEdges: [],
+    };
+
+    const first = buildScene({
+      graph: denseGraph,
+      layout: denseLayout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    }).edgeLabels;
+    const second = buildScene({
+      graph: {
+        ...denseGraph,
+        table_nodes: [...denseGraph.table_nodes].reverse(),
+        table_edges: [...denseGraph.table_edges].reverse(),
+      },
+      layout: {
+        ...denseLayout,
+        tableNodes: [...denseLayout.tableNodes].reverse(),
+        tableEdges: [...denseLayout.tableEdges].reverse(),
+      },
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    }).edgeLabels;
+
+    expect(first.length).toBeLessThanOrEqual(200);
+    expect(second).toEqual(first);
+  });
+
+  it("uses code-unit edge ID ordering for deterministic label priority", () => {
+    const orderingGraph: SemanticGraphData = {
+      table_nodes: [
+        { id: "left-a", display_name: "Left A", entity_count: 0 },
+        { id: "right-a", display_name: "Right A", entity_count: 0 },
+        { id: "left-z", display_name: "Left Z", entity_count: 0 },
+        { id: "right-z", display_name: "Right Z", entity_count: 0 },
+      ],
+      entity_nodes: [],
+      table_edges: [
+        { id: "a-edge", source_table: "left-a", target_table: "right-a", relation_types: ["a"], strong_count: 1, weak_count: 0, entity_edge_count: 0, average_confidence: 1, supporting_entity_edges: [] },
+        { id: "Z-edge", source_table: "left-z", target_table: "right-z", relation_types: ["z"], strong_count: 1, weak_count: 0, entity_edge_count: 0, average_confidence: 1, supporting_entity_edges: [] },
+      ],
+      entity_edges: [],
+    };
+    const orderingLayout: GraphLayout = {
+      tableNodes: [
+        { id: "left-a", x: 0, y: 0 },
+        { id: "right-a", x: 20, y: 0 },
+        { id: "left-z", x: 0, y: 100 },
+        { id: "right-z", x: 20, y: 100 },
+      ],
+      entityNodes: [],
+      tableEdges: [
+        { id: "a-edge", source: "left-a", target: "right-a", from: { x: 0, y: 0 }, to: { x: 20, y: 0 } },
+        { id: "Z-edge", source: "left-z", target: "right-z", from: { x: 0, y: 100 }, to: { x: 20, y: 100 } },
+      ],
+      entityEdges: [],
+    };
+
+    expect(buildScene({
+      graph: orderingGraph,
+      layout: orderingLayout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    }).edgeLabels.map((label) => label.edgeId)).toEqual(["Z-edge", "a-edge"]);
   });
 
   it("uses stable table colors and scales connected entity nodes by graph degree", () => {
@@ -193,6 +342,59 @@ describe("buildScene", () => {
     expect(scene.entityEdges.some((edge) => edge.id === "missing-entity")).toBe(false);
   });
 
+  it("skips label buckets whose finite coordinates exceed safe integer indexing", () => {
+    const extremeGraph: SemanticGraphData = {
+      table_nodes: [{ id: "table", display_name: "Table", entity_count: 2 }],
+      entity_nodes: [
+        { id: "source", table_id: "table", display_name: "Source", class_name: null, dimensions: {} },
+        { id: "target", table_id: "table", display_name: "Target", class_name: null, dimensions: {} },
+      ],
+      table_edges: [],
+      entity_edges: [{
+        id: "extreme",
+        source: "source",
+        target: "target",
+        relations: [{
+          source: "source",
+          target: "target",
+          relation_type: "extreme",
+          direction: "source_to_target",
+          strength: "strong",
+          confidence: 1,
+          explanation: "",
+          evidence: [],
+          model_id: null,
+          task_id: null,
+        }],
+      }],
+    };
+    const extremeLayout: GraphLayout = {
+      tableNodes: [{ id: "table", x: 0, y: 0 }],
+      entityNodes: [
+        { id: "source", tableId: "table", x: 0, y: 0 },
+        { id: "target", tableId: "table", x: 1, y: 1 },
+      ],
+      tableEdges: [],
+      entityEdges: [{
+        id: "extreme",
+        source: "source",
+        target: "target",
+        from: { x: 0, y: 0 },
+        to: { x: Number.MAX_VALUE, y: Number.MAX_VALUE },
+      }],
+    };
+
+    const scene = buildScene({
+      graph: extremeGraph,
+      layout: extremeLayout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+
+    expect(scene.entityEdges).toHaveLength(1);
+    expect(scene.edgeLabels).toHaveLength(0);
+  });
+
   it("returns an empty finite scene for empty graph input and ignores NaN confidence", () => {
     const empty: SemanticGraphData = {
       table_nodes: [],
@@ -201,7 +403,6 @@ describe("buildScene", () => {
       entity_edges: [],
     };
     const emptyLayout: GraphLayout = {
-      tableRegions: [],
       tableNodes: [],
       entityNodes: [],
       tableEdges: [],
@@ -233,7 +434,6 @@ describe("buildScene", () => {
       entity_edges: [],
     };
     const extremeLayout: GraphLayout = {
-      tableRegions: [],
       tableNodes: [{ id: "origin", x: 0, y: 0 }],
       entityNodes: [],
       tableEdges: [],
@@ -251,79 +451,4 @@ describe("buildScene", () => {
     expect(hitTest(scene, { x: 0, y: 0 })).toBeNull();
   });
 
-  it("never emits table rectangle commands for the clustered network", () => {
-    const regionGraph: SemanticGraphData = {
-      table_nodes: [
-        { id: "valid", display_name: "Valid", entity_count: 0 },
-        { id: "zero", display_name: "Zero", entity_count: 0 },
-        { id: "negative", display_name: "Negative", entity_count: 0 },
-      ],
-      entity_nodes: [],
-      table_edges: [],
-      entity_edges: [],
-    };
-    const regionLayout: GraphLayout = {
-      tableRegions: [
-        { id: "valid", x: 1, y: 5, width: 20, height: 10, header: { x: 1, y: 5 } },
-        { id: "zero", x: 0, y: 0, width: 0, height: 10, header: { x: 0, y: 0 } },
-        { id: "negative", x: 0, y: 0, width: 10, height: -1, header: { x: 0, y: 0 } },
-      ],
-      tableNodes: [],
-      entityNodes: [],
-      tableEdges: [],
-      entityEdges: [],
-    };
-
-    expect(buildScene({
-      graph: regionGraph,
-      layout: regionLayout,
-      transform: { k: 2, x: 5, y: 7 },
-      confidenceThreshold: 0,
-    }).tableRegions).toEqual([]);
-
-    const overflowingLayout: GraphLayout = {
-      ...regionLayout,
-      tableRegions: [
-        { id: "valid", x: 0, y: 0, width: 2, height: 2, header: { x: 0, y: 0 } },
-      ],
-    };
-    expect(buildScene({
-      graph: regionGraph,
-      layout: overflowingLayout,
-      transform: { k: Number.MAX_VALUE, x: 0, y: 0 },
-      confidenceThreshold: 0,
-    }).tableRegions).toHaveLength(0);
-  });
-
-  it("does not resurrect table rectangles when normal camera panning makes x and y negative", () => {
-    const pannedGraph: SemanticGraphData = {
-      table_nodes: [{ id: "panned", display_name: "Panned", entity_count: 0 }],
-      entity_nodes: [],
-      table_edges: [],
-      entity_edges: [],
-    };
-    const pannedLayout: GraphLayout = {
-      tableRegions: [{
-        id: "panned",
-        x: 10,
-        y: 20,
-        width: 100,
-        height: 50,
-        header: { x: 20, y: 30 },
-      }],
-      tableNodes: [],
-      entityNodes: [],
-      tableEdges: [],
-      entityEdges: [],
-    };
-
-    const scene = buildScene({
-      graph: pannedGraph,
-      layout: pannedLayout,
-      transform: { k: 2, x: -50, y: -70 },
-      confidenceThreshold: 0,
-    });
-
-    expect(scene.tableRegions).toEqual([]);
-  });
 });
