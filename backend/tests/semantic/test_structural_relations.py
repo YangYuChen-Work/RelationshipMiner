@@ -319,6 +319,191 @@ def test_known_reverse_rows_normalize_relation_and_evidence_direction():
     }
 
 
+@pytest.mark.parametrize(
+    (
+        "left_id",
+        "left_class",
+        "right_id",
+        "right_class",
+        "expected_source_field",
+        "expected_target_field",
+    ),
+    [
+        pytest.param(
+            "custom-1",
+            "CustomType",
+            "assembly-1",
+            "Assembly",
+            "left_id",
+            "right_id",
+            id="custom-to-assembly",
+        ),
+        pytest.param(
+            "assembly-1",
+            "Assembly",
+            "custom-1",
+            "CustomType",
+            "right_id",
+            "left_id",
+            id="assembly-to-custom",
+        ),
+    ],
+)
+def test_custom_assembly_relation_always_points_toward_assembly(
+    left_id,
+    left_class,
+    right_id,
+    right_class,
+    expected_source_field,
+    expected_target_field,
+):
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    metadata = MetaData()
+    relation_id = Table(
+        "relation_id",
+        metadata,
+        Column("left_id", String),
+        Column("right_id", String),
+        Column("left_class", String),
+        Column("right_class", String),
+    )
+    Table("custom", metadata, Column("id", String, primary_key=True))
+    Table("assembly", metadata, Column("id", String, primary_key=True))
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            relation_id.insert(),
+            [{
+                "left_id": left_id,
+                "right_id": right_id,
+                "left_class": left_class,
+                "right_class": right_class,
+            }],
+        )
+
+    records = {
+        "custom": [{"id": "custom-1"}],
+        "assembly": [{"id": "assembly-1"}],
+    }
+    schema_result = analyze_schema(engine, list(records))
+    documents = [
+        _document("custom:custom-1", "custom", "CustomType"),
+        _document("assembly:assembly-1", "assembly", "Assembly"),
+    ]
+
+    edges = build_relation_table_edges(
+        engine,
+        records,
+        schema_result,
+        documents,
+    )
+
+    assert len(edges) == 1
+    relation = edges[0].relations[0]
+    evidence = relation.evidence[0]
+    assert (
+        relation.source,
+        relation.target,
+        relation.direction,
+        relation.relation_type,
+        evidence.source_field,
+        evidence.source_value,
+        evidence.target_field,
+        evidence.target_value,
+    ) == (
+        "custom:custom-1",
+        "assembly:assembly-1",
+        "source_to_target",
+        "关联物料",
+        expected_source_field,
+        "custom-1",
+        expected_target_field,
+        "assembly-1",
+    )
+
+
+def test_unknown_pair_without_assembly_keeps_database_row_direction():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    metadata = MetaData()
+    relation_id = Table(
+        "relation_id",
+        metadata,
+        Column("left_id", String),
+        Column("right_id", String),
+        Column("left_class", String),
+        Column("right_class", String),
+    )
+    Table("custom_source", metadata, Column("id", String, primary_key=True))
+    Table("custom_target", metadata, Column("id", String, primary_key=True))
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            relation_id.insert(),
+            [{
+                "left_id": "source-1",
+                "right_id": "target-1",
+                "left_class": "CustomSource",
+                "right_class": "CustomTarget",
+            }],
+        )
+
+    records = {
+        "custom_source": [{"id": "source-1"}],
+        "custom_target": [{"id": "target-1"}],
+    }
+    schema_result = analyze_schema(engine, list(records))
+    documents = [
+        _document(
+            "custom_source:source-1",
+            "custom_source",
+            "CustomSource",
+        ),
+        _document(
+            "custom_target:target-1",
+            "custom_target",
+            "CustomTarget",
+        ),
+    ]
+
+    edges = build_relation_table_edges(
+        engine,
+        records,
+        schema_result,
+        documents,
+    )
+
+    assert len(edges) == 1
+    relation = edges[0].relations[0]
+    evidence = relation.evidence[0]
+    assert (
+        relation.source,
+        relation.target,
+        relation.direction,
+        relation.relation_type,
+        evidence.source_field,
+        evidence.source_value,
+        evidence.target_field,
+        evidence.target_value,
+    ) == (
+        "custom_source:source-1",
+        "custom_target:target-1",
+        "source_to_target",
+        "结构关联",
+        "left_id",
+        "source-1",
+        "right_id",
+        "target-1",
+    )
+
+
 def test_relation_table_deadline_exposes_edges_resolved_before_failure():
     engine, records, schema_result, documents = _relation_table_fixture()
     deadline_checks = 0

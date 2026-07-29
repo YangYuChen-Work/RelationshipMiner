@@ -29,7 +29,6 @@ _DIRECTED_RELATION_TYPES = {
     ("MEProcess", "MEOperation"): "包含工序",
     ("MEOperation", "MEStep"): "包含工步",
 }
-_MATERIAL_SOURCE_CLASSES = {"MEProcess", "MEOperation", "MEStep"}
 _MATERIAL_RELATION_TYPE = "关联物料"
 _DEFAULT_RELATION_TYPE = "结构关联"
 
@@ -212,13 +211,8 @@ def _relation_semantics(
 
     if right_class == "Assembly":
         return _MATERIAL_RELATION_TYPE, False
-    if (
-        left_class == "Assembly"
-        and right_class in _MATERIAL_SOURCE_CLASSES
-    ):
-        return _MATERIAL_RELATION_TYPE, True
     if left_class == "Assembly":
-        return _MATERIAL_RELATION_TYPE, False
+        return _MATERIAL_RELATION_TYPE, True
     return _DEFAULT_RELATION_TYPE, False
 
 
