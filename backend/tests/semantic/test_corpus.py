@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from engine.schema_analyzer import analyze_schema
-from engine.pipeline import AnalysisTimeoutError, run_analysis_pipeline
+from engine.pipeline import run_analysis_pipeline
 from engine.semantic.corpus import (
     build_entity_documents,
     group_documents_by_signature,
@@ -208,5 +208,5 @@ def test_schema_timeout_is_reported_before_schema_completion(
         timeout_seconds=180.0, on_progress=progress_events.append,
     ))
     assert result.status == "partial"
-    assert "time budget reached" in result.warnings[0]
+    assert result.warnings == ["分析超时：读取 Schema 前已达到时间预算。"]
     assert progress_events[0]["phase"] == "schema"

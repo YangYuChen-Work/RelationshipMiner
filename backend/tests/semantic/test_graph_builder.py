@@ -1,6 +1,7 @@
 import pytest
 
 from engine.semantic.graph_builder import build_graph
+from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.models import (
     EntityDocument,
     EntityEdge,
@@ -376,3 +377,22 @@ def test_same_table_entity_relation_is_retained_without_a_table_self_loop():
     assert len(entity_edges) == 1
     assert len(entity_edges[0].relations) == 1
     assert table_edges == []
+
+
+def test_graph_builder_checks_deadline_inside_entity_node_loop():
+    stages: list[str] = []
+
+    def stop_on_second_node(stage: str) -> None:
+        stages.append(stage)
+        if stages.count("构建实体节点时") == 2:
+            raise DeadlineExceeded(stage)
+
+    with pytest.raises(DeadlineExceeded, match="构建实体节点时"):
+        build_graph(
+            [_document("orders:1", "orders"), _document("orders:2", "orders")],
+            [],
+            [],
+            check_deadline=stop_on_second_node,
+        )
+
+    assert stages.count("构建实体节点时") == 2

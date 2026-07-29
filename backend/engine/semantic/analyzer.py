@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 import time
 from collections.abc import Callable
 from typing import Any
@@ -16,6 +17,7 @@ from .corpus import (
     group_documents_by_signature,
     load_scoped_records,
 )
+from .deadline import DeadlineExceeded
 from .deterministic import build_fk_edges, build_unique_identifier_edges
 from .graph_builder import build_graph
 from .models import (
@@ -80,6 +82,7 @@ class RelationshipAnalyzer:
         warnings: list[str] = []
         timed_out = False
         planner_failed = False
+        planner_timed_out = False
         failed_groups = 0
         pending_groups = 0
         completed_groups = 0
@@ -110,13 +113,21 @@ class RelationshipAnalyzer:
             if time.monotonic() < deadline:
                 return True
             timed_out = True
-            warning = f"Analysis time budget reached before {stage}."
+            warning = str(DeadlineExceeded(f"{stage}已达到时间预算"))
             if warning not in warnings:
                 warnings.append(warning)
             return False
 
+        def require_deadline(stage: str) -> None:
+            if not before(stage):
+                raise DeadlineExceeded(f"{stage}已达到时间预算")
+
+        def remaining_seconds(stage: str) -> float:
+            require_deadline(stage)
+            return max(0.0, deadline - time.monotonic())
+
         await emit("schema", "Reading selected table schemas.", 0.02)
-        if not before("schema reading"):
+        if not before("读取 Schema 前"):
             return self._empty_partial(diagnostics, warnings)
         try:
             schema_result = analyze_schema(
@@ -162,17 +173,24 @@ class RelationshipAnalyzer:
         )
         records: dict[str, list[dict[str, object]]] = {}
         for table_scope in effective_scope.tables:
-            if not before(f"reading table {table_scope.name}"):
+            if not before(f"读取表 {table_scope.name} 前"):
                 break
             table_scope_only = AnalysisScope(
                 tables=[table_scope],
                 time_budget_seconds=scope.time_budget_seconds,
             )
-            loaded = load_scoped_records(
-                engine,
-                table_scope_only,
-                schema_result,
-            )
+            try:
+                loaded = load_scoped_records(
+                    engine,
+                    table_scope_only,
+                    schema_result,
+                    check_deadline=require_deadline,
+                )
+            except DeadlineExceeded as error:
+                timed_out = True
+                if str(error) not in warnings:
+                    warnings.append(str(error))
+                break
             records.update(loaded)
             diagnostics.entities_read += len(records.get(table_scope.name, []))
             await emit("entities", f"Read {table_scope.name} entities.", 0.18)
@@ -193,23 +211,41 @@ class RelationshipAnalyzer:
 
         plans = []
         if len(effective_scope.tables) > 1:
-            if before("relationship planning"):
+            if before("关系规划前"):
                 try:
-                    plans = await self._planner.plan(
-                        effective_scope,
-                        schema_result.tables,
-                        {
-                            name: rows[:1]
-                            for name, rows in records.items()
-                        },
+                    async with asyncio.timeout(
+                        remaining_seconds("关系规划前")
+                    ):
+                        plans = await self._planner.plan(
+                            effective_scope,
+                            schema_result.tables,
+                            {
+                                name: rows[:1]
+                                for name, rows in records.items()
+                            },
+                        )
+                    require_deadline("关系规划后")
+                except TimeoutError:
+                    planner_failed = True
+                    planner_timed_out = True
+                    warnings.append(
+                        "分析超时：关系规划阶段未在剩余时间内完成。"
                     )
+                except DeadlineExceeded as error:
+                    planner_failed = True
+                    planner_timed_out = True
+                    if str(error) not in warnings:
+                        warnings.append(str(error))
                 except Exception as error:
                     planner_failed = True
                     warnings.append(f"Relationship planning failed: {error}")
             else:
                 planner_failed = True
+                planner_timed_out = True
         diagnostics.plans_created = len(plans)
         await emit("planning", "Relationship planning finished.", 0.35)
+        if planner_timed_out:
+            return self._empty_failed(diagnostics, warnings)
 
         # Strong links do not depend on an LLM and survive a planner failure.
         deterministic_edges = build_fk_edges(
@@ -226,7 +262,7 @@ class RelationshipAnalyzer:
         ]
         relation_decisions: list[RelationDecision] = []
         for plan in plans:
-            if not before("candidate index build"):
+            if not before("构建候选索引前"):
                 pending_groups += 1
                 continue
             try:
@@ -234,7 +270,13 @@ class RelationshipAnalyzer:
                     representative_documents,
                     [plan],
                     self._embedding_adapter,
+                    check_deadline=require_deadline,
                 )
+            except DeadlineExceeded as error:
+                pending_groups += 1
+                if str(error) not in warnings:
+                    warnings.append(str(error))
+                break
             except Exception as error:
                 warnings.append(f"Candidate retrieval failed: {error}")
                 failed_groups += 1
@@ -249,7 +291,7 @@ class RelationshipAnalyzer:
             await emit("candidates", "Candidate retrieval finished.", 0.55)
             if not candidate_groups:
                 continue
-            if not before("candidate judgement launch"):
+            if not before("启动候选判断前"):
                 pending_groups += len(candidate_groups)
                 diagnostics.candidates_pending += candidate_count
                 continue
@@ -292,20 +334,21 @@ class RelationshipAnalyzer:
             )
             await emit("semantic_judging", "Semantic judgement finished.", 0.76)
 
-        if before("graph assembly"):
+        if not before("组装图谱前"):
+            if planner_failed and not deterministic_edges:
+                return self._empty_failed(diagnostics, warnings)
+            return self._empty_partial(diagnostics, warnings)
+        try:
             table_nodes, entity_nodes, table_edges, entity_edges = build_graph(
                 documents,
                 deterministic_edges,
                 relation_decisions,
+                check_deadline=require_deadline,
             )
-        else:
-            # Graph assembly is local and bounded; preserve completed strong
-            # work even when the deadline lands immediately before it.
-            table_nodes, entity_nodes, table_edges, entity_edges = build_graph(
-                documents,
-                deterministic_edges,
-                relation_decisions,
-            )
+        except DeadlineExceeded as error:
+            if str(error) not in warnings:
+                warnings.append(str(error))
+            return self._empty_partial(diagnostics, warnings)
 
         diagnostics.strong_edges_created = sum(
             relation.strength == "strong"
@@ -317,6 +360,7 @@ class RelationshipAnalyzer:
             for edge in entity_edges
             for relation in edge.relations
         )
+        await emit("graph", "图谱组装完成。", 0.95)
         no_trustworthy_output = not entity_edges
         all_judgement_groups_failed = (
             completed_groups == 0

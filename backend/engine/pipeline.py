@@ -10,17 +10,6 @@ from sqlalchemy.engine import Engine
 from engine.semantic.analyzer import RelationshipAnalyzer
 from engine.semantic.models import AnalysisResult, AnalysisScope, TableScope
 
-
-class AnalysisTimeoutError(Exception):
-    """Retained for callers of the pre-semantic pipeline API."""
-
-    def __init__(self, elapsed: float):
-        self.elapsed = elapsed
-        super().__init__(
-            f"分析超时（{elapsed:.0f} 秒），建议减少表数量或行数后重试"
-        )
-
-
 async def run_analysis_pipeline(
     engine: Engine,
     tables: list[dict[str, object]],

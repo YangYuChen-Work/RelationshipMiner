@@ -16,6 +16,26 @@ router = APIRouter(prefix="/api", tags=["analyze"])
 _task_registry: dict[str, dict[str, object]] = {}
 
 
+def _final_payload(result: AnalysisResult) -> dict[str, object]:
+    payload = result.model_dump(mode="json")
+    return {
+        "phase": "complete",
+        "progress": 1.0,
+        "status": payload["status"],
+        "graph": {
+            key: payload[key]
+            for key in (
+                "table_nodes",
+                "entity_nodes",
+                "table_edges",
+                "entity_edges",
+            )
+        },
+        "diagnostics": payload["diagnostics"],
+        "warnings": payload["warnings"],
+    }
+
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 def create_analysis_task(
     request: AnalyzeRequest,
@@ -91,28 +111,6 @@ async def analyze_progress(
             tables=task["request"]["tables"],
             on_progress=send_progress,
         )
-        result_payload = result.model_dump(mode="json")
-        graph = {
-            key: result_payload[key]
-            for key in (
-                "table_nodes",
-                "entity_nodes",
-                "table_edges",
-                "entity_edges",
-            )
-        }
-        final = {
-            "phase": "complete",
-            "progress": 1.0,
-            "status": result_payload["status"],
-            "graph": graph,
-            "diagnostics": result_payload["diagnostics"],
-            "warnings": result_payload["warnings"],
-        }
-        task["status"] = "done"
-        # Keep the domain result, not a parallel export-specific snapshot.
-        task["result"] = result
-        await ws.send_json(final)
     except Exception as error:
         result = AnalysisResult(
             status=AnalysisStatus.FAILED,
@@ -123,30 +121,15 @@ async def analyze_progress(
             diagnostics=AnalysisDiagnostics(),
             warnings=[f"Analysis failed: {error}"],
         )
-        result_payload = result.model_dump(mode="json")
-        task["status"] = "done"
-        task["result"] = result
-        try:
-            await ws.send_json(
-                {
-                    "phase": "complete",
-                    "progress": 1.0,
-                    "status": "failed",
-                    "graph": {
-                        key: result_payload[key]
-                        for key in (
-                            "table_nodes",
-                            "entity_nodes",
-                            "table_edges",
-                            "entity_edges",
-                        )
-                    },
-                    "diagnostics": result_payload["diagnostics"],
-                    "warnings": result_payload["warnings"],
-                }
-            )
-        except Exception:
-            pass
+    # Store the complete domain result before publishing the terminal state.
+    # There is no await between these assignments, so export cannot observe
+    # ``done`` without the result it projects.
+    task["result"] = result
+    task["status"] = "done"
+    try:
+        await ws.send_json(_final_payload(result))
+    except Exception as error:
+        task["final_send_error"] = str(error)
     finally:
         try:
             await ws.close()
@@ -158,9 +141,21 @@ async def analyze_progress(
 def export_analysis_snapshot(task_id: str) -> dict[str, object]:
     task = _task_registry.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "detail": "任务不存在或已过期",
+                "suggestion": "请重新提交分析任务。",
+            },
+        )
     if task["status"] != "done":
-        raise HTTPException(status_code=400, detail="分析尚未完成")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "detail": "分析尚未完成",
+                "suggestion": "请等待分析完成后再导出。",
+            },
+        )
     result = task["result"]
     assert isinstance(result, AnalysisResult)
     result_payload = result.model_dump(mode="json")

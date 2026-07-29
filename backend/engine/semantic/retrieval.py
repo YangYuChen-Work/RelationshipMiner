@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -58,7 +59,10 @@ def retrieve_candidate_groups(
     documents: list[EntityDocument],
     plans: list[RelationshipPlan],
     embedding_adapter: EmbeddingAdapter,
+    *,
+    check_deadline: Callable[[str], None] | None = None,
 ) -> list[CandidateGroup]:
+    _check_deadline(check_deadline, "构建候选索引前")
     documents_by_table = _documents_by_table(documents)
     documents_by_id = {
         document.entity_id: document for document in documents
@@ -66,23 +70,28 @@ def retrieve_candidate_groups(
     keyword_indexes = _build_keyword_indexes(
         documents_by_table,
         plans,
+        check_deadline,
     )
     vector_indexes = _build_vector_indexes(
         documents_by_table,
         plans,
         embedding_adapter,
+        check_deadline,
     )
     source_vector_caches = _build_source_vector_caches(
         documents_by_table,
         plans,
         vector_indexes,
         embedding_adapter,
+        check_deadline,
     )
     groups: list[CandidateGroup] = []
 
     for plan in plans:
+        _check_deadline(check_deadline, "检索候选计划前")
         corpus_key = _corpus_key(plan)
         for source in documents_by_table.get(plan.source_table, []):
+            _check_deadline(check_deadline, "检索候选源实体前")
             candidate_ids: list[str] = []
             seen: set[str] = set()
             source_text = _dimension_text(
@@ -149,9 +158,11 @@ def _documents_by_table(
 def _build_keyword_indexes(
     documents_by_table: dict[str, list[EntityDocument]],
     plans: list[RelationshipPlan],
+    check_deadline: Callable[[str], None] | None,
 ) -> dict[_CorpusKey, _KeywordIndex]:
     indexes: dict[_CorpusKey, _KeywordIndex] = {}
     for plan in plans:
+        _check_deadline(check_deadline, "构建关键词索引前")
         key = _corpus_key(plan)
         if key in indexes:
             continue
@@ -159,6 +170,7 @@ def _build_keyword_indexes(
         postings: dict[str, list[str]] = {}
         targets = documents_by_table.get(plan.target_table, [])
         for target in targets:
+            _check_deadline(check_deadline, "构建关键词目标索引时")
             text = _dimension_text(target, plan.target_dimensions)
             for token in _keyword_tokens(text):
                 postings.setdefault(token, []).append(target.entity_id)
@@ -176,9 +188,11 @@ def _build_vector_indexes(
     documents_by_table: dict[str, list[EntityDocument]],
     plans: list[RelationshipPlan],
     embedding_adapter: EmbeddingAdapter,
+    check_deadline: Callable[[str], None] | None,
 ) -> dict[_CorpusKey, _VectorIndex]:
     indexes: dict[_CorpusKey, _VectorIndex] = {}
     for plan in plans:
+        _check_deadline(check_deadline, "构建向量目标索引前")
         key = _corpus_key(plan)
         if (
             key in indexes
@@ -212,12 +226,14 @@ def _build_vector_indexes(
             len(eligible_targets),
             batch_size,
         ):
+            _check_deadline(check_deadline, "编码目标向量批次前")
             batch = eligible_targets[
                 batch_start : batch_start + batch_size
             ]
             encoded = embedding_adapter.encode_documents(
                 [text for _, _, text in batch]
             )
+            _check_deadline(check_deadline, "编码目标向量批次后")
             valid_keys: list[int] = []
             valid_vectors: list[np.ndarray] = []
 
@@ -266,9 +282,11 @@ def _build_source_vector_caches(
     plans: list[RelationshipPlan],
     vector_indexes: dict[_CorpusKey, _VectorIndex],
     embedding_adapter: EmbeddingAdapter,
+    check_deadline: Callable[[str], None] | None,
 ) -> dict[_SourceKey, _SourceVectorCache]:
     caches: dict[_SourceKey, _SourceVectorCache] = {}
     for plan in plans:
+        _check_deadline(check_deadline, "构建查询向量缓存前")
         key = _source_key(plan)
         if (
             key in caches
@@ -296,12 +314,14 @@ def _build_source_vector_caches(
             len(eligible_sources),
             batch_size,
         ):
+            _check_deadline(check_deadline, "编码查询向量批次前")
             batch = eligible_sources[
                 batch_start : batch_start + batch_size
             ]
             vectors = embedding_adapter.encode_queries(
                 [text for _, text in batch]
             )
+            _check_deadline(check_deadline, "编码查询向量批次后")
             for (source, _), raw_vector in zip(
                 batch,
                 vectors,
@@ -388,3 +408,11 @@ def _extend_unique(
         destination.append(entity_id)
         if len(destination) >= limit:
             return
+
+
+def _check_deadline(
+    check_deadline: Callable[[str], None] | None,
+    stage: str,
+) -> None:
+    if check_deadline is not None:
+        check_deadline(stage)

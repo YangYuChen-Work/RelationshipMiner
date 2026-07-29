@@ -1,5 +1,7 @@
 """Public HTTP, WebSocket, and export contracts for semantic analysis."""
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -172,6 +174,79 @@ class TestAnalyzeWebSocket:
         assert final["graph"]["entity_edges"] == []
         assert final["warnings"]
 
+    @pytest.mark.asyncio
+    async def test_final_send_failure_keeps_completed_registry_result_once(
+        self, engine, monkeypatch
+    ):
+        import routers.analyze as analyze_router
+        from engine.semantic.models import (
+            AnalysisDiagnostics,
+            AnalysisResult,
+            AnalysisStatus,
+        )
+
+        task_id = "send-failure"
+        result = AnalysisResult(
+            status=AnalysisStatus.COMPLETE,
+            table_nodes=[], entity_nodes=[], table_edges=[], entity_edges=[],
+            diagnostics=AnalysisDiagnostics(), warnings=[],
+        )
+        analyze_router._task_registry[task_id] = {
+            "status": "pending", "request": {"tables": []},
+        }
+        monkeypatch.setattr(
+            analyze_router, "run_analysis_pipeline", AsyncMock(return_value=result)
+        )
+        ws = SimpleNamespace(
+            accept=AsyncMock(),
+            send_json=AsyncMock(side_effect=RuntimeError("socket closed")),
+            close=AsyncMock(),
+        )
+
+        await analyze_router.analyze_progress(ws, task_id, engine)
+
+        task = analyze_router._task_registry[task_id]
+        assert task["status"] == "done"
+        assert task["result"] is result
+        assert ws.send_json.await_count == 1
+        assert ws.close.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_registry_is_complete_before_final_message_is_observable(
+        self, engine, monkeypatch
+    ):
+        import routers.analyze as analyze_router
+        from engine.semantic.models import (
+            AnalysisDiagnostics,
+            AnalysisResult,
+            AnalysisStatus,
+        )
+
+        task_id = "atomic-result"
+        result = AnalysisResult(
+            status=AnalysisStatus.PARTIAL,
+            table_nodes=[], entity_nodes=[], table_edges=[], entity_edges=[],
+            diagnostics=AnalysisDiagnostics(entities_read=3), warnings=["warning"],
+        )
+        analyze_router._task_registry[task_id] = {
+            "status": "pending", "request": {"tables": []},
+        }
+        monkeypatch.setattr(
+            analyze_router, "run_analysis_pipeline", AsyncMock(return_value=result)
+        )
+
+        async def observe_final(payload):
+            task = analyze_router._task_registry[task_id]
+            assert task["status"] == "done"
+            assert task["result"] is result
+            exported = analyze_router.export_analysis_snapshot(task_id)
+            assert exported["diagnostics"]["entities_read"] == 3
+
+        ws = SimpleNamespace(
+            accept=AsyncMock(), send_json=AsyncMock(side_effect=observe_final), close=AsyncMock(),
+        )
+        await analyze_router.analyze_progress(ws, task_id, engine)
+
 
 class TestExportEndpoint:
     def test_returns_full_snapshot_for_completed_task(self, client: TestClient):
@@ -192,7 +267,10 @@ class TestExportEndpoint:
     def test_404_for_nonexistent_task(self, client: TestClient):
         response = client.get("/api/export/nonexistent-task-id")
         assert response.status_code == 404
-        assert "不存在" in str(response.json()["detail"])
+        assert response.json()["detail"] == {
+            "detail": "任务不存在或已过期",
+            "suggestion": "请重新提交分析任务。",
+        }
 
     def test_400_for_pending_task(self, client: TestClient):
         task_id = client.post(
@@ -201,7 +279,10 @@ class TestExportEndpoint:
         ).json()["task_id"]
         response = client.get(f"/api/export/{task_id}")
         assert response.status_code == 400
-        assert "尚未完成" in str(response.json()["detail"])
+        assert response.json()["detail"] == {
+            "detail": "分析尚未完成",
+            "suggestion": "请等待分析完成后再导出。",
+        }
 
     def test_export_raw_data_matches_records(self, client: TestClient):
         """The export must be the semantic result projection, never a recomputation."""
@@ -220,12 +301,28 @@ class TestExportEndpoint:
 
 
 class TestAnalyzeErrorPaths:
-    def test_timeout_error_contains_chinese_prompt(self, client: TestClient):
-        from engine.pipeline import AnalysisTimeoutError
+    def test_timeout_error_contains_chinese_prompt(self, client: TestClient, monkeypatch):
+        from engine.semantic import analyzer
+        from engine.semantic.models import AnalysisScope, TableScope
+        from tests.conftest import create_test_engine
 
-        message = str(AnalysisTimeoutError(elapsed=1.0))
-        assert "分析超时" in message
-        assert "建议减少表数量或行数后重试" in message
+        values = iter([0.0, 2.0])
+        monkeypatch.setattr(
+            analyzer, "time", SimpleNamespace(monotonic=lambda: next(values))
+        )
+        result = asyncio.run(analyzer.RelationshipAnalyzer(
+            planner=SimpleNamespace(plan=AsyncMock(return_value=[])),
+            embedding_adapter=SimpleNamespace(),
+            judge=SimpleNamespace(),
+        ).analyze(
+            create_test_engine(),
+            AnalysisScope(
+                tables=[TableScope(name="users", dimensions=["name"])],
+                time_budget_seconds=1,
+            ),
+        ))
+        assert result.status == "partial"
+        assert result.warnings == ["分析超时：读取 Schema 前已达到时间预算。"]
 
     def test_db_connection_error_format(self, client: TestClient):
         response = client.get("/api/tables/nonexistent/fields")

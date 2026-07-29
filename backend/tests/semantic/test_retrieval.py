@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from engine.semantic.embeddings import SentenceTransformerEmbeddingAdapter
+from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.models import EntityDocument, RelationshipPlan
 from engine.semantic.retrieval import retrieve_candidate_groups
 
@@ -42,6 +43,20 @@ class RejectingEmbeddings:
 
     def encode_queries(self, texts: list[str]) -> list[list[float]]:
         raise AssertionError("keyword-only retrieval must not embed queries")
+
+
+class SlowBatchEmbeddings:
+    def __init__(self) -> None:
+        self.document_calls = 0
+        self.query_calls = 0
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        self.document_calls += 1
+        return [[1.0, 0.0] for _ in texts]
+
+    def encode_queries(self, texts: list[str]) -> list[list[float]]:
+        self.query_calls += 1
+        return [[1.0, 0.0] for _ in texts]
 
 
 class EdgeCaseEmbeddings:
@@ -405,6 +420,31 @@ def test_keyword_only_retrieval_does_not_load_embeddings():
         candidate.entity_id
         for candidate in groups[0].candidates
     ] == ["part:1"]
+
+
+def test_deadline_after_target_encoding_stops_before_query_encoding():
+    embeddings = SlowBatchEmbeddings()
+    stages: list[str] = []
+
+    def expire_after_target_batch(stage: str) -> None:
+        stages.append(stage)
+        if stage == "编码目标向量批次后":
+            raise DeadlineExceeded(stage)
+
+    with pytest.raises(DeadlineExceeded, match="编码目标向量批次后"):
+        retrieve_candidate_groups(
+            documents=[
+                _document("process:1", "process", "source"),
+                _document("part:1", "part", "target"),
+            ],
+            plans=[_plan(retrieval_modes=["semantic"], candidate_limit=1)],
+            embedding_adapter=embeddings,
+            check_deadline=expire_after_target_batch,
+        )
+
+    assert embeddings.document_calls == 1
+    assert embeddings.query_calls == 0
+    assert stages[-1] == "编码目标向量批次后"
 
 
 def test_sentence_transformer_adapter_loads_lazily_and_normalizes_float32(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -80,6 +82,12 @@ class _FailedJudge:
         )
 
 
+class _SlowPlanner:
+    async def plan(self, *args: object, **kwargs: object) -> list[RelationshipPlan]:
+        await asyncio.sleep(0.05)
+        return [_product_plan()]
+
+
 def _plan() -> RelationshipPlan:
     return RelationshipPlan(
         source_table="users",
@@ -130,11 +138,10 @@ async def test_analyzer_completes_and_emits_structured_progress(engine):
 
     assert result.status == AnalysisStatus.COMPLETE
     assert result.entity_edges
-    assert all(
-        {"entities_read", "plans_created", "candidates_retrieved", "entity_edges_created"}
-        <= event.keys()
-        for event in events
-    )
+    graph_event = events[-1]
+    assert graph_event["phase"] == "graph"
+    assert graph_event["entity_edges_created"] == 4
+    assert graph_event["entities_read"] == 4
 
 
 @pytest.mark.asyncio
@@ -242,3 +249,117 @@ async def test_analyzer_expands_representative_verdicts_to_all_signature_members
         ("products:2", "users:1"),
         ("products:2", "users:2"),
     }
+
+
+@pytest.mark.asyncio
+async def test_deadline_stops_before_next_table_and_returns_chinese_partial(
+    engine, monkeypatch
+):
+    from engine import semantic
+    from engine.semantic import analyzer
+    from engine.semantic.corpus import load_scoped_records as real_load
+
+    class Clock:
+        now = 0.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+    clock = Clock()
+    reads: list[str] = []
+    planner = _StaticPlanner([_plan()])
+
+    def slow_first_read(engine, scope, schema_result, *, check_deadline=None):
+        reads.append(scope.tables[0].name)
+        loaded = real_load(engine, scope, schema_result)
+        clock.now = 2.0
+        return loaded
+
+    monkeypatch.setattr(analyzer, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(analyzer, "load_scoped_records", slow_first_read)
+    result = await analyzer.RelationshipAnalyzer(
+        planner=planner,
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="orders", dimensions=["amount"]),
+            ],
+            time_budget_seconds=1,
+        ),
+    )
+
+    assert reads == ["users"]
+    assert result.status == AnalysisStatus.PARTIAL
+    assert result.warnings == ["分析超时：读取表 orders 前已达到时间预算。"]
+
+
+@pytest.mark.asyncio
+async def test_planner_uses_remaining_deadline_and_returns_failed_warning(engine):
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    result = await RelationshipAnalyzer(
+        planner=_SlowPlanner(),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="products", dimensions=["title"]),
+            ],
+            time_budget_seconds=0.02,
+        ),
+    )
+
+    assert result.status == AnalysisStatus.FAILED
+    assert result.warnings == ["分析超时：关系规划阶段未在剩余时间内完成。"]
+
+
+@pytest.mark.asyncio
+async def test_deadline_before_graph_assembly_does_not_start_graph_builder(
+    engine, monkeypatch
+):
+    from engine.semantic import analyzer
+
+    class Clock:
+        expired = False
+
+        def monotonic(self) -> float:
+            return 2.0 if self.expired else 0.0
+
+    clock = Clock()
+    original_fk_edges = analyzer.build_fk_edges
+
+    def expire_after_strong_edges(*args, **kwargs):
+        edges = original_fk_edges(*args, **kwargs)
+        clock.expired = True
+        return edges
+
+    def graph_must_not_start(*args, **kwargs):
+        raise AssertionError("graph assembly must not start after deadline")
+
+    monkeypatch.setattr(analyzer, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(analyzer, "build_fk_edges", expire_after_strong_edges)
+    monkeypatch.setattr(analyzer, "build_graph", graph_must_not_start)
+    result = await analyzer.RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="orders", dimensions=["amount"]),
+            ],
+            time_budget_seconds=1,
+        ),
+    )
+
+    assert result.status == AnalysisStatus.PARTIAL
+    assert result.warnings == ["分析超时：组装图谱前已达到时间预算。"]

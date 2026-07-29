@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Callable
 from urllib.parse import quote
 
 from sqlalchemy import MetaData, Table, select
@@ -19,10 +20,13 @@ def load_scoped_records(
     engine: Engine,
     scope: AnalysisScope,
     schema_result: SchemaAnalysisResult,
+    *,
+    check_deadline: Callable[[str], None] | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     records: dict[str, list[dict[str, object]]] = {}
 
     for table_scope in scope.tables:
+        _check_deadline(check_deadline, f"读取表 {table_scope.name} 前")
         schema = schema_result.tables[table_scope.name]
         requested = list(table_scope.dimensions)
         requested.extend(schema.primary_keys)
@@ -56,8 +60,17 @@ def load_scoped_records(
             records[table_scope.name] = [
                 dict(row._mapping) for row in result
             ]
+        _check_deadline(check_deadline, f"读取表 {table_scope.name} 后")
 
     return records
+
+
+def _check_deadline(
+    check_deadline: Callable[[str], None] | None,
+    stage: str,
+) -> None:
+    if check_deadline is not None:
+        check_deadline(stage)
 
 
 def build_entity_documents(
