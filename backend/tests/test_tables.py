@@ -26,6 +26,30 @@ class TestListTables:
             assert "name" in item
             assert isinstance(item["name"], str)
 
+    def test_runtime_connection_failure_returns_safe_json(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        import routers.tables as tables_router
+
+        secret = "password=do-not-leak"
+
+        def fail_to_connect(_engine):
+            raise RuntimeError(
+                "cryptography is required for caching_sha2_password; "
+                + secret
+            )
+
+        monkeypatch.setattr(tables_router, "get_table_names", fail_to_connect)
+        safe_client = TestClient(client.app, raise_server_exceptions=False)
+
+        response = safe_client.get("/api/tables")
+
+        assert response.status_code == 503
+        assert response.headers["content-type"].startswith("application/json")
+        payload = response.json()
+        assert payload["detail"]["code"] == "database_unavailable"
+        assert secret not in response.text
+
 
 class TestListFields:
     """GET /api/tables/{table_name}/fields — 字段列表端点测试。"""

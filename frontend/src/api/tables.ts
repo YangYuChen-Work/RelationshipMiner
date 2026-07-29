@@ -18,11 +18,41 @@ export interface TableColumnsResponse {
 
 const BASE = "/api";
 
+async function apiErrorMessage(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  const defaultMessage = `${fallback} (HTTP ${response.status})`;
+  const contentType =
+    response.headers?.get?.("content-type")?.toLowerCase() ?? "application/json";
+  if (!contentType.includes("application/json")) {
+    return defaultMessage;
+  }
+
+  try {
+    const payload = await response.json();
+    const detail = payload?.detail;
+    if (typeof detail === "string" && detail.trim()) {
+      return detail;
+    }
+    if (detail && typeof detail === "object") {
+      if (typeof detail.message === "string" && detail.message.trim()) {
+        return detail.message;
+      }
+      if (typeof detail.detail === "string" && detail.detail.trim()) {
+        return detail.detail;
+      }
+    }
+  } catch {
+    // Preserve the useful HTTP fallback for malformed JSON error bodies.
+  }
+  return defaultMessage;
+}
+
 export async function fetchTables(): Promise<TableInfo[]> {
   const res = await fetch(`${BASE}/tables`);
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.detail?.detail || "获取表列表失败");
+    throw new Error(await apiErrorMessage(res, "获取表列表失败"));
   }
   return res.json();
 }
@@ -32,8 +62,7 @@ export async function fetchTableColumns(
 ): Promise<TableColumnsResponse> {
   const res = await fetch(`${BASE}/tables/${tableName}/fields`);
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.detail?.detail || "获取字段列表失败");
+    throw new Error(await apiErrorMessage(res, "获取字段列表失败"));
   }
   return res.json();
 }

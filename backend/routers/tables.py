@@ -10,23 +10,28 @@ from models.schemas import TableInfo, ColumnInfo, TableColumnsResponse
 router = APIRouter(prefix="/api", tags=["tables"])
 
 
+def _database_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "database_unavailable",
+            "message": "数据库连接不可用，请检查数据库配置和服务状态",
+            "suggestion": (
+                "确认 DB_HOST、DB_PORT、DB_USER、DB_PASSWORD、DB_NAME 配置正确，"
+                "并确保 MySQL 服务正在运行"
+            ),
+        },
+    )
+
+
 @router.get("/tables", response_model=list[TableInfo])
 def list_tables(engine: Engine = Depends(get_engine)):
     """返回数据库中所有表名列表。"""
     try:
         names = get_table_names(engine)
         return [TableInfo(name=n) for n in names]
-    except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "detail": "数据库连接失败，请检查 .env 文件中的数据库配置",
-                "suggestion": (
-                    "确认 DB_HOST、DB_PORT、DB_USER、DB_PASSWORD、DB_NAME 配置正确，"
-                    "并确保 MySQL 服务正在运行"
-                ),
-            },
-        )
+    except (SQLAlchemyError, RuntimeError) as exc:
+        raise _database_unavailable() from exc
 
 
 @router.get(
@@ -68,11 +73,5 @@ def list_fields(table_name: str, engine: Engine = Depends(get_engine)):
 
     except HTTPException:
         raise
-    except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "detail": "数据库查询失败，请确认数据库连接正常",
-                "suggestion": "检查 MySQL 服务是否正常运行，以及网络连接是否畅通",
-            },
-        )
+    except (SQLAlchemyError, RuntimeError) as exc:
+        raise _database_unavailable() from exc
