@@ -195,6 +195,77 @@ async def test_analyzer_fails_when_planner_fails_without_trustworthy_output(engi
 
 
 @pytest.mark.asyncio
+async def test_planner_exception_keeps_fk_edges_as_partial_result(engine):
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    result = await RelationshipAnalyzer(
+        planner=_StaticPlanner(RuntimeError("planner unavailable")),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[
+                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="orders", dimensions=["amount"]),
+            ]
+        ),
+    )
+
+    assert result.status == AnalysisStatus.PARTIAL
+    assert len(result.entity_edges) == 2
+    assert all(
+        relation.strength == "strong"
+        for edge in result.entity_edges
+        for relation in edge.relations
+    )
+    assert result.warnings == ["Relationship planning failed: planner unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_schema_overrun_does_not_start_record_loading(engine, monkeypatch):
+    from engine.semantic import analyzer
+    from engine.schema_analyzer import analyze_schema as real_analyze_schema
+
+    class Clock:
+        now = 0.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+    clock = Clock()
+    loaded = False
+
+    def slow_schema(engine, table_names):
+        clock.now = 2.0
+        return real_analyze_schema(engine, table_names)
+
+    def record_loading_must_not_start(*args, **kwargs):
+        nonlocal loaded
+        loaded = True
+        raise AssertionError("record loading must not start after schema timeout")
+
+    monkeypatch.setattr(analyzer, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(analyzer, "analyze_schema", slow_schema)
+    monkeypatch.setattr(analyzer, "load_scoped_records", record_loading_must_not_start)
+    result = await analyzer.RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[TableScope(name="users", dimensions=["name"])],
+            time_budget_seconds=1,
+        ),
+    )
+
+    assert loaded is False
+    assert result.status == AnalysisStatus.PARTIAL
+    assert result.warnings == ["分析超时：读取 Schema 后已达到时间预算。"]
+
+
+@pytest.mark.asyncio
 async def test_malformed_judgement_cannot_be_complete_with_zero_edges(engine):
     from engine.semantic.analyzer import RelationshipAnalyzer
 

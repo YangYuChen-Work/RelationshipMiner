@@ -90,3 +90,22 @@ git diff --check cc64d53780e40ce30c41ed349087a5440c438551 --
 
 Verification for this round: focused deadline/API suites **57 passed**;
 full backend **158 passed**; `compileall` and `git diff --check` passed.
+
+## Fix round 2 — synchronous deadline boundaries
+
+- `load_scoped_records` now checks before and after reflection, before and
+  after connection acquisition, and before and immediately after query
+  execution. This catches a synchronous reflection or query overrun before
+  another blocking database action can begin.
+- `RelationshipAnalyzer` checks the shared deadline immediately after the
+  synchronous schema analysis call. An overrun returns a Chinese `partial`
+  result and never enters record loading or planning.
+- Added regressions for reflection advancing the fake clock (asserting
+  `execute` was never called), schema analysis advancing it (asserting record
+  loading was never called), and a normal planner exception with physical FK
+  edges (asserting `partial` plus the two retained strong edges). The existing
+  planner-timeout regression continues to require `failed` with no later
+  stage.
+
+Verification for this round: corpus/analyzer focused tests **20 passed**;
+full backend **161 passed**; `compileall` and `git diff --check` passed.

@@ -134,6 +134,11 @@ class RelationshipAnalyzer:
                 engine,
                 [table.name for table in scope.tables],
             )
+            require_deadline("读取 Schema 后")
+        except DeadlineExceeded as error:
+            if str(error) not in warnings:
+                warnings.append(str(error))
+            return self._empty_partial(diagnostics, warnings)
         except Exception as error:
             warnings.append(f"Schema analysis failed: {error}")
             return self._empty_failed(diagnostics, warnings)

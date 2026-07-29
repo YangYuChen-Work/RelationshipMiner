@@ -48,15 +48,21 @@ def load_scoped_records(
             requested.append(class_name_field)
 
         column_names = list(dict.fromkeys(requested))
+        _check_deadline(check_deadline, f"读取表 {table_scope.name} 反射前")
         table = Table(
             table_scope.name,
             MetaData(),
             autoload_with=engine,
         )
+        _check_deadline(check_deadline, f"读取表 {table_scope.name} 反射后")
         columns = [table.c[name] for name in column_names]
 
+        _check_deadline(check_deadline, f"读取表 {table_scope.name} 连接前")
         with engine.connect() as connection:
+            _check_deadline(check_deadline, f"读取表 {table_scope.name} 连接后")
+            _check_deadline(check_deadline, f"读取表 {table_scope.name} 执行查询前")
             result = connection.execute(select(*columns))
+            _check_deadline(check_deadline, f"读取表 {table_scope.name} 执行查询后")
             records[table_scope.name] = [
                 dict(row._mapping) for row in result
             ]

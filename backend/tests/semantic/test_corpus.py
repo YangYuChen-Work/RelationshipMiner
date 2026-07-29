@@ -10,6 +10,7 @@ from engine.semantic.corpus import (
     group_documents_by_signature,
     load_scoped_records,
 )
+from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.models import AnalysisScope, EntityDocument, TableScope
 
 
@@ -34,6 +35,53 @@ def test_load_scoped_records_reads_only_selected_tables_and_required_fields(
         "amount",
         "className",
     }
+
+
+def test_reflection_deadline_prevents_execute_after_blocking_autoload(
+    engine, monkeypatch
+):
+    """A reflection overrun must be noticed before opening a SELECT."""
+    from engine.semantic import corpus
+
+    scope = AnalysisScope(
+        tables=[TableScope(name="users", dimensions=["name"])]
+    )
+    schema_result = analyze_schema(engine, ["users"])
+    executed = False
+
+    class Connection:
+        def execute(self, statement):
+            nonlocal executed
+            executed = True
+            raise AssertionError("execute must not run after reflection timeout")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return Connection()
+
+    def slow_table(name, metadata, *, autoload_with):
+        clock["expired"] = True
+        return SimpleNamespace(c={"id": object(), "name": object(), "class_name": object()})
+
+    clock = {"expired": False}
+
+    def check_deadline(stage: str) -> None:
+        if clock["expired"]:
+            raise DeadlineExceeded(stage)
+
+    monkeypatch.setattr(corpus, "Table", slow_table)
+    with pytest.raises(DeadlineExceeded, match="读取表 users 反射后"):
+        corpus.load_scoped_records(
+            FakeEngine(), scope, schema_result, check_deadline=check_deadline
+        )
+
+    assert executed is False
 
 
 def test_document_contains_only_selected_dimensions():
