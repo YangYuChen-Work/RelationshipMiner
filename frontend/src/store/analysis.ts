@@ -262,7 +262,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     if (!entry) return;
 
     const col = entry.columns.find((c) => c.name === fieldName);
-    if (col && isSystemColumn(col)) return;
+    if (!col || isSystemColumn(col)) return;
 
     const next = patchSelectedTable(selectedTables, tableName, (e) => {
       const nextFields = new Set(e.selectedFields);

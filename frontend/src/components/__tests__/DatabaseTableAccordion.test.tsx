@@ -119,8 +119,21 @@ describe("DatabaseTableAccordion", () => {
     expect(className).toBeDisabled();
     expect(id).not.toBeChecked();
     expect(className).not.toBeChecked();
+    expect(id).toHaveAttribute("aria-describedby", "users-id-primary-key-purpose");
+    expect(className).toHaveAttribute(
+      "aria-describedby",
+      "users-class_name-class-name-purpose"
+    );
     expect(screen.getByText("自动用于实体 ID")).toBeVisible();
     expect(screen.getByText("用于节点展示")).toBeVisible();
+    expect(screen.getByText("自动用于实体 ID")).toHaveAttribute(
+      "id",
+      "users-id-primary-key-purpose"
+    );
+    expect(screen.getByText("用于节点展示")).toHaveAttribute(
+      "id",
+      "users-class_name-class-name-purpose"
+    );
 
     const email = screen.getByRole("checkbox", { name: "字段 email" });
     await user.click(email);

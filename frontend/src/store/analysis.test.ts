@@ -110,6 +110,13 @@ describe("analysis selection store", () => {
       new Set(["email"])
     );
 
+    useAnalysisStore.getState().toggleField("users", "id");
+    useAnalysisStore.getState().toggleField("users", "class_name");
+    useAnalysisStore.getState().toggleField("users", "stale_field");
+    expect(useAnalysisStore.getState().selectedTables.get("users")?.selectedFields).toEqual(
+      new Set(["email"])
+    );
+
     useAnalysisStore.getState().selectAllFields("users");
     useAnalysisStore.getState().deselectAllFields("users");
     expect(useAnalysisStore.getState().selectedTables.get("users")?.selectedFields).toEqual(

@@ -138,6 +138,16 @@ export default function DatabaseTableAccordion({
         >
           {entry.columns.map((column) => {
             const systemColumn = isSystemColumn(column);
+            const purposeIds = [
+              column.is_primary_key
+                ? `${tableName}-${column.name}-primary-key-purpose`
+                : null,
+              column.is_class_name
+                ? `${tableName}-${column.name}-class-name-purpose`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" ");
             return (
               <label
                 key={column.name}
@@ -148,6 +158,7 @@ export default function DatabaseTableAccordion({
                 <input
                   type="checkbox"
                   aria-label={`字段 ${column.name}`}
+                  aria-describedby={purposeIds || undefined}
                   checked={entry.selectedFields.has(column.name)}
                   disabled={systemColumn}
                   onChange={() => toggleField(tableName, column.name)}
@@ -166,10 +177,20 @@ export default function DatabaseTableAccordion({
                   </span>
                 )}
                 {column.is_primary_key && (
-                  <span className="text-xs text-gray-500">自动用于实体 ID</span>
+                  <span
+                    id={`${tableName}-${column.name}-primary-key-purpose`}
+                    className="text-xs text-gray-500"
+                  >
+                    自动用于实体 ID
+                  </span>
                 )}
                 {column.is_class_name && (
-                  <span className="text-xs text-gray-500">用于节点展示</span>
+                  <span
+                    id={`${tableName}-${column.name}-class-name-purpose`}
+                    className="text-xs text-gray-500"
+                  >
+                    用于节点展示
+                  </span>
                 )}
               </label>
             );
