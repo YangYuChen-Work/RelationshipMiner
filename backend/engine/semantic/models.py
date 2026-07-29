@@ -70,7 +70,12 @@ class RelationEvidence(BaseModel):
     source_value: object
     target_field: str
     target_value: object
-    method: Literal["foreign_key", "unique_identifier", "llm_semantic_reasoning"]
+    method: Literal[
+        "foreign_key",
+        "unique_identifier",
+        "relation_table",
+        "llm_semantic_reasoning",
+    ]
     reason: str
 
 
