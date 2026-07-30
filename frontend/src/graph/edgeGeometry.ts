@@ -63,6 +63,16 @@ function finiteCoordinate(value: number, fallback: number): number {
   return value < 0 ? -Number.MAX_VALUE : Number.MAX_VALUE;
 }
 
+function representableMove(
+  value: number,
+  direction: -1 | 1,
+  steps: number,
+): number {
+  const step = Math.max(Number.MIN_VALUE, Math.abs(value) * Number.EPSILON);
+  const candidate = value + direction * step * steps;
+  return Number.isFinite(candidate) && candidate !== value ? candidate : value;
+}
+
 function midpoint(left: number, right: number): number {
   const difference = right - left;
   const value = Number.isFinite(difference)
@@ -170,7 +180,7 @@ export function buildQuadraticGeometry(input: {
       ? input.parallelOrdinal!
       : 0;
     const span = baseSpan + ordinal * 4;
-    return {
+    const loop: QuadraticGeometry = {
       from: {
         x: finiteCoordinate(fromBounds.right + CLIP_PADDING, from.x),
         y: finiteCoordinate(fromBounds.top - span * 0.25, from.y),
@@ -182,6 +192,38 @@ export function buildQuadraticGeometry(input: {
       to: {
         x: finiteCoordinate(fromBounds.right + span * 0.25, from.x),
         y: finiteCoordinate(fromBounds.top - CLIP_PADDING, from.y),
+      },
+      isLoop: true,
+    };
+    if (
+      loop.from.x !== loop.control.x ||
+      loop.from.y !== loop.control.y ||
+      loop.from.x !== loop.to.x ||
+      loop.from.y !== loop.to.y
+    ) {
+      return loop;
+    }
+
+    const anchorX = fromBounds.right;
+    const anchorY = fromBounds.top;
+    const right = representableMove(anchorX, 1, 1);
+    const xDirection: -1 | 1 = right > anchorX ? 1 : -1;
+    const above = representableMove(anchorY, -1, 1);
+    const yDirection: -1 | 1 = above < anchorY ? -1 : 1;
+    return {
+      from: {
+        x: representableMove(anchorX, xDirection, 1),
+        y: representableMove(anchorY, yDirection, 1),
+      },
+      control: {
+        x: xDirection > 0
+          ? representableMove(anchorX, xDirection, 4)
+          : anchorX,
+        y: representableMove(anchorY, yDirection, 4),
+      },
+      to: {
+        x: representableMove(anchorX, xDirection, 2),
+        y: representableMove(anchorY, yDirection, 2),
       },
       isLoop: true,
     };

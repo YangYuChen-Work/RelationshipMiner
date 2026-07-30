@@ -72,6 +72,30 @@ describe("edge geometry", () => {
       .toBe(true);
   });
 
+  it("keeps an extreme finite self-loop non-zero at the numeric limit", () => {
+    const maximum = Number.MAX_VALUE;
+    const geometry = buildQuadraticGeometry({
+      edgeId: "extreme-self",
+      from: { x: maximum, y: maximum },
+      to: { x: maximum, y: maximum },
+      fromBounds: { left: maximum, top: maximum, right: maximum, bottom: maximum },
+      toBounds: { left: maximum, top: maximum, right: maximum, bottom: maximum },
+    });
+    const samples = sampleQuadratic(geometry, 8);
+    const points = [geometry.from, geometry.control, geometry.to, ...samples];
+
+    expect(geometry.isLoop).toBe(true);
+    expect(points.every((point) =>
+      Number.isFinite(point.x) && Number.isFinite(point.y)
+    )).toBe(true);
+    expect(new Set(points.map((point) => `${point.x}:${point.y}`)).size)
+      .toBeGreaterThan(1);
+    expect(Math.hypot(
+      geometry.control.x - geometry.from.x,
+      geometry.control.y - geometry.from.y,
+    )).toBeGreaterThan(0);
+  });
+
   it("keeps a stable control point for the same edge", () => {
     const input = {
       edgeId: "orders-users",
