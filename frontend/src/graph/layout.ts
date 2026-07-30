@@ -92,6 +92,7 @@ const UINT32_RANGE = 4_294_967_296;
 const TABLE_ANCHOR_GAP = 320;
 const COMPONENT_ANCHOR_GAP = 260;
 const COMPONENT_BOUNDS_PADDING = 20;
+const LARGE_GRAPH_THRESHOLD = 1_000;
 
 interface SimulationEntity extends SimulationNodeDatum {
   id: string;
@@ -314,6 +315,33 @@ function seededRectangularAnchors(
   return new Map(points.map(({ id, x, y }) => [id, { x, y }]));
 }
 
+function tableMemberCounts(
+  entities: readonly LayoutEntityInput[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const entity of entities) {
+    counts.set(entity.table_id, (counts.get(entity.table_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function tableScatterSpan(memberCount: number): number {
+  return Math.max(
+    ENTITY_COLLISION_RADIUS * 4,
+    Math.sqrt(memberCount) * ENTITY_COLLISION_RADIUS * 2.4,
+  );
+}
+
+function scalableTableAnchorGap(
+  countsByTable: ReadonlyMap<string, number>,
+): number {
+  const largestTable = Math.max(1, ...countsByTable.values());
+  return Math.max(
+    TABLE_ANCHOR_GAP,
+    tableScatterSpan(largestTable) * 1.25,
+  );
+}
+
 function relaxPointCollisions<T extends LayoutPoint & { id: string }>(
   points: T[],
   minimumDistance: number,
@@ -322,6 +350,7 @@ function relaxPointCollisions<T extends LayoutPoint & { id: string }>(
 ) {
   const cellSize = minimumDistance;
   for (let pass = 0; pass < passes; pass += 1) {
+    let overlapFound = false;
     const cells = new Map<string, number[]>();
     for (let index = 0; index < points.length; index += 1) {
       const point = points[index];
@@ -348,6 +377,7 @@ function relaxPointCollisions<T extends LayoutPoint & { id: string }>(
             let deltaY = right.y - left.y;
             let distance = Math.hypot(deltaX, deltaY);
             if (distance >= minimumDistance) continue;
+            overlapFound = true;
             if (distance < 0.000_001) {
               const direction = stableUnitVector(`${left.id}:${right.id}`);
               deltaX = direction.x;
@@ -378,6 +408,7 @@ function relaxPointCollisions<T extends LayoutPoint & { id: string }>(
         }
       }
     }
+    if (!overlapFound) return;
   }
 }
 
@@ -410,57 +441,37 @@ function translateComponent(
   }
 }
 
-function packComponentBounds(
+function expandComponentCenters(
   components: readonly Component[],
   positions: ReadonlyMap<string, SimulationEntity>,
+  epoch: number,
 ) {
   const items = components.map((component) => {
     const bounds = componentBounds(component, positions);
     return {
       component,
-      bounds,
-      width: bounds.right - bounds.left,
-      height: bounds.bottom - bounds.top,
       centerX: (bounds.left + bounds.right) / 2,
       centerY: (bounds.top + bounds.bottom) / 2,
     };
-  }).sort((left, right) =>
-    left.centerY - right.centerY ||
-    left.centerX - right.centerX ||
-    compareIds(left.component.id, right.component.id)
-  );
-  const totalArea = items.reduce(
-    (sum, item) => sum + item.width * item.height,
-    0,
-  );
-  const overallWidth = Math.max(
-    ...items.map((item) => item.bounds.right),
-  ) - Math.min(...items.map((item) => item.bounds.left));
-  const overallHeight = Math.max(
-    ...items.map((item) => item.bounds.bottom),
-  ) - Math.min(...items.map((item) => item.bounds.top));
-  const aspect = Math.max(0.25, Math.min(4, overallWidth / overallHeight));
-  const targetWidth = Math.max(
-    ...items.map((item) => item.width),
-    Math.sqrt(totalArea * aspect) * 1.1,
-  );
-  let cursorX = 0;
-  let cursorY = 0;
-  let rowHeight = 0;
+  });
+  const centerX = items.reduce((sum, item) => sum + item.centerX, 0) /
+    items.length;
+  const centerY = items.reduce((sum, item) => sum + item.centerY, 0) /
+    items.length;
+  const expansion = 1.18 + Math.min(epoch, 4) * 0.015;
+  const jitterScale = COMPONENT_BOUNDS_PADDING * (0.4 + epoch * 0.12);
   for (const item of items) {
-    if (cursorX > 0 && cursorX + item.width > targetWidth) {
-      cursorX = 0;
-      cursorY += rowHeight + 1;
-      rowHeight = 0;
-    }
+    const jitter = stableUnitVector(
+      `${item.component.id}:organic:${epoch}`,
+    );
     translateComponent(
       item.component,
       positions,
-      cursorX - item.bounds.left,
-      cursorY - item.bounds.top,
+      (item.centerX - centerX) * (expansion - 1) +
+        jitter.x * jitterScale,
+      (item.centerY - centerY) * (expansion - 1) +
+        jitter.y * jitterScale,
     );
-    cursorX += item.width + 1;
-    rowHeight = Math.max(rowHeight, item.height);
   }
 }
 
@@ -468,9 +479,15 @@ function separateComponentBounds(
   components: readonly Component[],
   nodes: SimulationEntity[],
 ) {
+  if (
+    components.length < 2 ||
+    components.every((component) => component.nodeIds.length === 1)
+  ) {
+    return;
+  }
   const positions = new Map(nodes.map((node) => [node.id, node]));
   const cellSize = ENTITY_COLLISION_RADIUS * 4;
-  for (let pass = 0; pass < 128; pass += 1) {
+  for (let pass = 0; pass < 384; pass += 1) {
     const bounds = components.map((component) =>
       componentBounds(component, positions)
     );
@@ -534,8 +551,15 @@ function separateComponentBounds(
       }
     }
     if (!overlapFound) return;
+    if ((pass + 1) % 32 === 0) {
+      expandComponentCenters(
+        components,
+        positions,
+        Math.floor(pass / 32),
+      );
+    }
   }
-  packComponentBounds(components, positions);
+  throw new Error("Unable to separate graph component bounds.");
 }
 
 function recenterDelta(
@@ -730,14 +754,21 @@ export function computeNebulaLayout(
 
   const seed = seedFor(graph, options.seedOffset ?? 0);
   const { components, componentByNode } = connectedComponents(entities, edges);
+  const componentSizes = new Map(
+    components.map((component) => [component.id, component.nodeIds.length]),
+  );
+  const countsByTable = tableMemberCounts(entities);
+  const largeGraph = entities.length > LARGE_GRAPH_THRESHOLD;
   const tableAnchors = seededRectangularAnchors(
     tables.map((table) => table.id),
     seed ^ 0xa341_316c,
     viewport,
-    TABLE_ANCHOR_GAP,
+    largeGraph ? scalableTableAnchorGap(countsByTable) : TABLE_ANCHOR_GAP,
   );
   const componentAnchors = seededRectangularAnchors(
-    components.map((component) => component.id),
+    components
+      .filter((component) => !largeGraph || component.nodeIds.length > 1)
+      .map((component) => component.id),
     seed ^ 0xc801_3ea4,
     viewport,
     COMPONENT_ANCHOR_GAP,
@@ -746,16 +777,23 @@ export function computeNebulaLayout(
   const randomY = randomFromSeed(seed ^ 0x7e95_761e);
   const nodes: SimulationEntity[] = entities.map((entity) => {
     const tableAnchor = tableAnchors.get(entity.table_id)!;
-    const componentAnchor = componentAnchors.get(
-      componentByNode.get(entity.id)!,
-    )!;
+    const componentId = componentByNode.get(entity.id)!;
+    const componentAnchor = componentAnchors.get(componentId) ?? tableAnchor;
+    const componentWeight = largeGraph &&
+        componentSizes.get(componentId) === 1
+      ? 0
+      : 0.38;
+    const tableWeight = 1 - componentWeight;
+    const scatterSpan = largeGraph
+      ? tableScatterSpan(countsByTable.get(entity.table_id) ?? 1)
+      : 84;
     return {
       id: entity.id,
       tableId: entity.table_id,
-      x: tableAnchor.x * 0.62 + componentAnchor.x * 0.38 +
-        (randomX() - 0.5) * 84,
-      y: tableAnchor.y * 0.62 + componentAnchor.y * 0.38 +
-        (randomY() - 0.5) * 84,
+      x: tableAnchor.x * tableWeight + componentAnchor.x * componentWeight +
+        (randomX() - 0.5) * scatterSpan,
+      y: tableAnchor.y * tableWeight + componentAnchor.y * componentWeight +
+        (randomY() - 0.5) * scatterSpan,
     };
   });
   const linkedNodeIds = new Set(
@@ -768,7 +806,7 @@ export function computeNebulaLayout(
     representedTables.add(node.tableId);
     representativeNodeIds.add(node.id);
   }
-  const simulationNodes = nodes.length > 1_000
+  const simulationNodes = largeGraph
     ? nodes.filter((node) =>
       linkedNodeIds.has(node.id) || representativeNodeIds.has(node.id)
     )
@@ -810,20 +848,26 @@ export function computeNebulaLayout(
     .force(
       "component-x",
       forceX<SimulationEntity>((node) =>
-        componentAnchors.get(componentByNode.get(node.id)!)!.x
+        (componentAnchors.get(componentByNode.get(node.id)!) ??
+          tableAnchors.get(node.tableId)!).x
       ).strength(0.025),
     )
     .force(
       "component-y",
       forceY<SimulationEntity>((node) =>
-        componentAnchors.get(componentByNode.get(node.id)!)!.y
+        (componentAnchors.get(componentByNode.get(node.id)!) ??
+          tableAnchors.get(node.tableId)!).y
       ).strength(0.025),
     )
     .stop();
 
   for (let tick = 0; tick < 360; tick += 1) simulation.tick();
   simulation.stop();
-  relaxPointCollisions(nodes, ENTITY_COLLISION_RADIUS * 2, 12);
+  relaxPointCollisions(
+    nodes,
+    ENTITY_COLLISION_RADIUS * 2,
+    largeGraph ? 96 : 12,
+  );
   separateComponentBounds(components, nodes);
   return buildLayout(graph, tables, edges, nodes, tableAnchors, viewport);
 }
@@ -843,28 +887,20 @@ export function computeFallbackScatterLayout(
   }
 
   const seed = seedFor(graph, options.seedOffset ?? 0);
+  const countsByTable = tableMemberCounts(entities);
+  const largeGraph = entities.length > LARGE_GRAPH_THRESHOLD;
   const tableAnchors = seededRectangularAnchors(
     tables.map((table) => table.id),
     seed ^ 0x4cf5_ad43,
     viewport,
-    TABLE_ANCHOR_GAP,
+    largeGraph ? scalableTableAnchorGap(countsByTable) : TABLE_ANCHOR_GAP,
   );
-  const countsByTable = new Map<string, number>();
-  for (const entity of entities) {
-    countsByTable.set(
-      entity.table_id,
-      (countsByTable.get(entity.table_id) ?? 0) + 1,
-    );
-  }
   const randomX = randomFromSeed(seed ^ 0x9f6a_bc1d);
   const randomY = randomFromSeed(seed ^ 0x3c6e_f372);
   const nodes: SimulationEntity[] = entities.map((entity) => {
     const anchor = tableAnchors.get(entity.table_id)!;
     const memberCount = countsByTable.get(entity.table_id) ?? 1;
-    const span = Math.max(
-      ENTITY_COLLISION_RADIUS * 4,
-      Math.sqrt(memberCount) * ENTITY_COLLISION_RADIUS * 2.4,
-    );
+    const span = tableScatterSpan(memberCount);
     return {
       id: entity.id,
       tableId: entity.table_id,
@@ -872,7 +908,15 @@ export function computeFallbackScatterLayout(
       y: anchor.y + (randomY() - 0.5) * span,
     };
   });
-  relaxPointCollisions(nodes, ENTITY_COLLISION_RADIUS * 2, 48, true);
+  relaxPointCollisions(
+    nodes,
+    ENTITY_COLLISION_RADIUS * 2,
+    48,
+    true,
+  );
+  if (largeGraph) {
+    relaxPointCollisions(nodes, ENTITY_COLLISION_RADIUS * 2, 96);
+  }
   const { components } = connectedComponents(entities, edges);
   separateComponentBounds(components, nodes);
   return buildLayout(graph, tables, edges, nodes, tableAnchors, viewport);

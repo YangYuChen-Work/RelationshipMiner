@@ -251,6 +251,50 @@ describe("computeNebulaLayout", () => {
     expect(overlapCount).toBe(0);
   }, 15_000);
 
+  it("organically staggers pathological fallback components without repeated rows", () => {
+    const componentCount = 257;
+    const graph = layoutGraphFixture(
+      1,
+      componentCount * 2,
+      Array.from({ length: componentCount }, (_, index) => ({
+        id: `component-edge-${index}`,
+        source: `entity-${index * 2}`,
+        target: `entity-${index * 2 + 1}`,
+        weight: 1,
+      })),
+    );
+    const viewport = { width: 4_000, height: 3_000 };
+    const first = computeFallbackScatterLayout(graph, viewport);
+    const second = computeFallbackScatterLayout(graph, viewport);
+    const alternate = computeFallbackScatterLayout(
+      graph,
+      viewport,
+      { seedOffset: 1 },
+    );
+    const positions = new Map(
+      first.entityNodes.map((node) => [node.id, node]),
+    );
+    const roundedTopCounts = new Map<number, number>();
+    for (let index = 0; index < componentCount; index += 1) {
+      const top = paddedBounds(
+        [
+          positions.get(`entity-${index * 2}`)!,
+          positions.get(`entity-${index * 2 + 1}`)!,
+        ],
+        20,
+      ).top;
+      const roundedTop = Math.round(top * 1_000) / 1_000;
+      roundedTopCounts.set(
+        roundedTop,
+        (roundedTopCounts.get(roundedTop) ?? 0) + 1,
+      );
+    }
+
+    expect(Math.max(...roundedTopCounts.values())).toBeLessThanOrEqual(4);
+    expect(second).toEqual(first);
+    expect(alternate).not.toEqual(first);
+  }, 15_000);
+
   it("is independent of input ordering after sorting each output collection", () => {
     const graph = layoutGraphFixture(2, 12, [
       { id: "edge-0", source: "entity-0", target: "entity-1", weight: 1 },

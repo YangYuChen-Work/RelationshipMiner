@@ -4,7 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SemanticGraphData } from "../api/analysis";
 import GraphCanvas from "../components/GraphCanvas";
 import { useAnalysisStore } from "../store/analysis";
-import { computeNebulaLayout, type LayoutGraph } from "./layout";
+import {
+  computeFallbackScatterLayout,
+  computeNebulaLayout,
+  ENTITY_COLLISION_RADIUS,
+  type GraphLayout,
+  type LayoutGraph,
+} from "./layout";
 import { buildScene } from "./scene";
 
 const ENTITY_COUNT = 7_000;
@@ -27,6 +33,60 @@ const graph: SemanticGraphData = {
   table_edges: [],
   entity_edges: [],
 };
+
+function closePairStats(
+  nodes: GraphLayout["entityNodes"],
+  minimumDistance: number,
+) {
+  const cells = new Map<string, typeof nodes>();
+  let closePairs = 0;
+  let minimumObservedDistance = Number.POSITIVE_INFINITY;
+  for (const node of nodes) {
+    const cellX = Math.floor(node.x / minimumDistance);
+    const cellY = Math.floor(node.y / minimumDistance);
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        for (
+          const other of cells.get(`${cellX + offsetX},${cellY + offsetY}`) ??
+            []
+        ) {
+          const distance = Math.hypot(node.x - other.x, node.y - other.y);
+          minimumObservedDistance = Math.min(
+            minimumObservedDistance,
+            distance,
+          );
+          if (distance < minimumDistance) closePairs += 1;
+        }
+      }
+    }
+    const key = `${cellX},${cellY}`;
+    const bucket = cells.get(key);
+    if (bucket) bucket.push(node);
+    else cells.set(key, [node]);
+  }
+  return { closePairs, minimumObservedDistance };
+}
+
+function tableOwnershipRatio(layout: GraphLayout): number {
+  const tableCentroids = new Map(
+    layout.tableNodes.map((table) => [table.id, table]),
+  );
+  let nearestOwnTable = 0;
+  for (const node of layout.entityNodes) {
+    const ownTable = tableCentroids.get(node.tableId)!;
+    const ownDistance = Math.hypot(
+      node.x - ownTable.x,
+      node.y - ownTable.y,
+    );
+    const nearestOtherDistance = Math.min(
+      ...layout.tableNodes
+        .filter((table) => table.id !== node.tableId)
+        .map((table) => Math.hypot(node.x - table.x, node.y - table.y)),
+    );
+    if (ownDistance < nearestOtherDistance) nearestOwnTable += 1;
+  }
+  return nearestOwnTable / layout.entityNodes.length;
+}
 
 class ScalingLayoutWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;
@@ -148,6 +208,33 @@ describe("7000-entity graph scaling", () => {
     expect(layout.entityNodes).toHaveLength(ENTITY_COUNT);
     expect(layout.tableNodes.length).toBeLessThanOrEqual(10);
     expect(scene.entityLabels).toHaveLength(0);
+    expect(
+      closePairStats(
+        layout.entityNodes,
+        ENTITY_COLLISION_RADIUS * 2 - 2,
+      ).closePairs,
+    ).toBe(0);
+    expect(tableOwnershipRatio(layout)).toBeGreaterThanOrEqual(0.8);
+  });
+
+  it("keeps fallback nodes collision-spaced inside recognizable table groups", () => {
+    const layout = computeFallbackScatterLayout(
+      {
+        table_nodes: graph.table_nodes,
+        entity_nodes: graph.entity_nodes,
+        table_edges: graph.table_edges,
+        entity_edges: [],
+      },
+      VIEWPORT,
+    );
+
+    expect(
+      closePairStats(
+        layout.entityNodes,
+        ENTITY_COLLISION_RADIUS * 2 - 2,
+      ).closePairs,
+    ).toBe(0);
+    expect(tableOwnershipRatio(layout)).toBeGreaterThanOrEqual(0.8);
   });
 
   it("renders through one canvas without per-entity DOM nodes", async () => {
