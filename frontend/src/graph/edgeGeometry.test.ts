@@ -96,6 +96,49 @@ describe("edge geometry", () => {
     )).toBeGreaterThan(0);
   });
 
+  it("separates reordered parallel extreme self-loop lanes deterministically", () => {
+    const maximum = Number.MAX_VALUE;
+    const lanes = [
+      { edgeId: "loop-c", parallelOrdinal: 2 },
+      { edgeId: "loop-a", parallelOrdinal: 0 },
+      { edgeId: "loop-d", parallelOrdinal: 3 },
+      { edgeId: "loop-b", parallelOrdinal: 1 },
+    ];
+    const build = (items: typeof lanes) =>
+      Object.fromEntries(items.map((lane) => [
+        lane.edgeId,
+        buildQuadraticGeometry({
+          ...lane,
+          parallelCount: lanes.length,
+          from: { x: maximum, y: maximum },
+          to: { x: maximum, y: maximum },
+          fromBounds: { left: maximum, top: maximum, right: maximum, bottom: maximum },
+          toBounds: { left: maximum, top: maximum, right: maximum, bottom: maximum },
+        }),
+      ]));
+
+    const first = build(lanes);
+    const reordered = build([...lanes].reverse());
+
+    expect(new Set(Object.values(first).map((geometry) =>
+      JSON.stringify(geometry)
+    ))).toHaveLength(lanes.length);
+    expect(Object.values(first).every((geometry) => {
+      const points = [
+        geometry.from,
+        geometry.control,
+        geometry.to,
+        ...sampleQuadratic(geometry, 8),
+      ];
+      return geometry.isLoop &&
+        points.every((point) =>
+          Number.isFinite(point.x) && Number.isFinite(point.y)
+        ) &&
+        new Set(points.map((point) => `${point.x}:${point.y}`)).size > 1;
+    })).toBe(true);
+    expect(reordered).toEqual(first);
+  });
+
   it("keeps a stable control point for the same edge", () => {
     const input = {
       edgeId: "orders-users",

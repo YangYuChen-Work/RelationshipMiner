@@ -176,7 +176,9 @@ export function buildQuadraticGeometry(input: {
     const baseSpan = Math.min(128, finiteCoordinate(rawSpan, 16));
     const ordinal = Number.isSafeInteger(input.parallelOrdinal) &&
         Number.isSafeInteger(input.parallelCount) &&
-        input.parallelCount! > 1
+        input.parallelCount! > 1 &&
+        input.parallelOrdinal! >= 0 &&
+        input.parallelOrdinal! < input.parallelCount!
       ? input.parallelOrdinal!
       : 0;
     const span = baseSpan + ordinal * 4;
@@ -210,20 +212,21 @@ export function buildQuadraticGeometry(input: {
     const xDirection: -1 | 1 = right > anchorX ? 1 : -1;
     const above = representableMove(anchorY, -1, 1);
     const yDirection: -1 | 1 = above < anchorY ? -1 : 1;
+    const laneStepBase = ordinal * 4;
     return {
       from: {
-        x: representableMove(anchorX, xDirection, 1),
-        y: representableMove(anchorY, yDirection, 1),
+        x: representableMove(anchorX, xDirection, laneStepBase + 1),
+        y: representableMove(anchorY, yDirection, laneStepBase + 1),
       },
       control: {
         x: xDirection > 0
-          ? representableMove(anchorX, xDirection, 4)
+          ? representableMove(anchorX, xDirection, laneStepBase + 4)
           : anchorX,
-        y: representableMove(anchorY, yDirection, 4),
+        y: representableMove(anchorY, yDirection, laneStepBase + 4),
       },
       to: {
-        x: representableMove(anchorX, xDirection, 2),
-        y: representableMove(anchorY, yDirection, 2),
+        x: representableMove(anchorX, xDirection, laneStepBase + 2),
+        y: representableMove(anchorY, yDirection, laneStepBase + 2),
       },
       isLoop: true,
     };
