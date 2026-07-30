@@ -324,3 +324,58 @@ labels draw before the final arrowhead layers.
 ### Concerns
 
 None.
+
+## Fix Round 4
+
+### Finding addressed
+
+The preview-label loop drew every cached incident label. The committed label
+pass instead draws labels only when no focus is active or when that relationship
+is focused. Consequently, keeping A selected while dragging unrelated C made
+C's `mirrors` label appear in the preview without focused backing or styling.
+
+Both committed and preview labels now use one `edgeLabelDrawState` resolver. It
+derives the focused flag from the label kind and focused edge-ID sets, then
+applies the exact shared visibility predicate: visible with no active focus, or
+visible only when focused. The resulting focused flag is passed unchanged to
+the shared background/text renderer.
+
+### RED evidence
+
+Command:
+
+```powershell
+npx vitest run src/graph/renderer.test.ts -t "keeps an unrelated dragged relationship label hidden"
+```
+
+Result:
+
+```text
+Test Files  1 failed (1)
+Tests       1 failed | 11 skipped (12)
+```
+
+The composite frame recorded one `mirrors` label while A remained selected;
+expected zero. The regression also verifies A's focused `feeds` label remains
+present exactly once.
+
+### GREEN and verification
+
+```text
+Selected/unrelated regression  1/1 passed
+Renderer + GraphCanvas         48/48 passed
+Full frontend                  25 files, 229/229 passed
+oxlint                         passed
+TypeScript + Vite build        passed
+git diff --check               passed
+```
+
+### Performance
+
+The shared resolver uses existing edge-ID sets and a module-level immutable
+empty set. It adds no per-label collection allocation and does not change the
+RAF-coalesced, degree-bounded preview geometry path.
+
+### Concerns
+
+None.

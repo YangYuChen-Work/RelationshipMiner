@@ -19,6 +19,7 @@ const TABLE_EDGE = "#8fa0b0";
 const UNRELATED_NODE_OPACITY = 0.16;
 const UNRELATED_EDGE_OPACITY = 0.06;
 const FOCUS_EDGE_WIDTH = 2.2;
+const EMPTY_EDGE_IDS: ReadonlySet<string> = new Set();
 
 export interface GraphDragPreview {
   readonly node: SceneEntityNode;
@@ -387,6 +388,21 @@ function drawEdgeLabel(
   );
 }
 
+function edgeLabelDrawState(
+  label: SceneEdgeLabel,
+  hasFocus: boolean,
+  focusedEntityEdgeIds: ReadonlySet<string>,
+  focusedTableEdgeIds: ReadonlySet<string>,
+): { visible: boolean; focused: boolean } {
+  const focused = label.kind === "entity"
+    ? focusedEntityEdgeIds.has(label.edgeId)
+    : focusedTableEdgeIds.has(label.edgeId);
+  return {
+    visible: !hasFocus || focused,
+    focused,
+  };
+}
+
 export function drawGraphScene(
   context: CanvasRenderingContext2D,
   scene: RenderScene,
@@ -523,10 +539,15 @@ export function drawGraphScene(
   semanticLayer(context, 1, () => {
     for (const label of scene.edgeLabels) {
       if (excludedEdgeIds?.has(label.edgeId)) continue;
-      const focused = label.kind === "entity"
-        ? state.focusedEntityEdgeIds.has(label.edgeId)
-        : state.focusedTableEdgeIds.has(label.edgeId);
-      if (!state.hasFocus || focused) drawEdgeLabel(context, label, focused);
+      const labelState = edgeLabelDrawState(
+        label,
+        state.hasFocus,
+        state.focusedEntityEdgeIds,
+        state.focusedTableEdgeIds,
+      );
+      if (labelState.visible) {
+        drawEdgeLabel(context, label, labelState.focused);
+      }
     }
   });
 
@@ -536,6 +557,7 @@ export function drawGraphScene(
       options.dragPreview.preview,
       options.dragPreview.screen,
       state.focusedEntityEdgeIds,
+      state.hasFocus,
     );
   }
   if (scene.zoomLevel === "detail" && !state.hasFocus) {
@@ -599,7 +621,8 @@ export function drawGraphDragPreview(
   context: CanvasRenderingContext2D,
   preview: GraphDragPreview,
   screen: ScreenPoint,
-  focusedEdgeIds?: ReadonlySet<string>,
+  focusedEdgeIds: ReadonlySet<string> = EMPTY_EDGE_IDS,
+  hasFocus = false,
 ): void {
   const delta = {
     x: screen.x - preview.node.screen.x,
@@ -629,13 +652,20 @@ export function drawGraphDragPreview(
     for (const label of preview.incidentLabels) {
       const edge = edgesById.get(label.edgeId);
       if (!edge) continue;
+      const labelState = edgeLabelDrawState(
+        label,
+        hasFocus,
+        focusedEdgeIds,
+        EMPTY_EDGE_IDS,
+      );
+      if (!labelState.visible) continue;
       drawEdgeLabel(
         context,
         {
           ...label,
           screen: quadraticPoint(edge.geometry, 0.5),
         },
-        focusedEdgeIds?.has(label.edgeId) ?? false,
+        labelState.focused,
       );
     }
   });

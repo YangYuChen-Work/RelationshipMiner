@@ -376,6 +376,31 @@ describe("drawGraphScene", () => {
       20,
     ]);
   });
+
+  it("keeps an unrelated dragged relationship label hidden while another node is selected", () => {
+    const currentScene = scene();
+    const dragged = currentScene.entityDots.find((node) => node.id === "c")!;
+    const preview = createGraphDragPreview(currentScene, dragged.id)!;
+    const focusIndex = buildGraphFocusIndex(graph.entity_edges, 0);
+    const selectedFocus = resolveGraphFocus(focusIndex, null, "a");
+    const { context } = recordingContext();
+
+    drawGraphScene(context, currentScene, {
+      ...options(),
+      focus: selectedFocus,
+      dragPreview: {
+        preview,
+        screen: {
+          x: dragged.screen.x + 100,
+          y: dragged.screen.y + 60,
+        },
+      },
+    });
+
+    const texts = vi.mocked(context.fillText).mock.calls.map(([text]) => text);
+    expect(texts.filter((text) => text === "mirrors")).toHaveLength(0);
+    expect(texts.filter((text) => text === "feeds")).toHaveLength(1);
+  });
 });
 
 describe("drawGraphDragPreview", () => {
