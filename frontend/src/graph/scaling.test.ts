@@ -237,6 +237,36 @@ describe("7000-entity graph scaling", () => {
     expect(tableOwnershipRatio(layout)).toBeGreaterThanOrEqual(0.8);
   });
 
+  it.each([
+    ["nebula", computeNebulaLayout],
+    ["fallback", computeFallbackScatterLayout],
+  ])("preserves label spacing after separating mixed components in %s", (
+    _label,
+    computeLayout,
+  ) => {
+    const mixedGraph: LayoutGraph = {
+      table_nodes: graph.table_nodes,
+      entity_nodes: graph.entity_nodes,
+      table_edges: graph.table_edges,
+      entity_edges: Array.from({ length: 30 }, (_, index) => ({
+        id: `mixed-edge-${index}`,
+        source: `entity-${index * 2}`,
+        target: `entity-${index * 2 + 1}`,
+        weight: 1,
+      })),
+    };
+    const layout = computeLayout(mixedGraph, VIEWPORT);
+    const stats = closePairStats(
+      layout.entityNodes,
+      ENTITY_COLLISION_RADIUS * 2 - 2,
+    );
+
+    expect(stats.closePairs).toBe(0);
+    expect(stats.minimumObservedDistance).toBeGreaterThanOrEqual(
+      ENTITY_COLLISION_RADIUS * 2 - 2,
+    );
+  }, 15_000);
+
   it("renders through one canvas without per-entity DOM nodes", async () => {
     const { container } = render(createElement(GraphCanvas));
 

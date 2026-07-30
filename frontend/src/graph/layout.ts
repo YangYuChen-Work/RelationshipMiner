@@ -91,7 +91,7 @@ const PROCESS_CLASS_ORDER = [
 const UINT32_RANGE = 4_294_967_296;
 const TABLE_ANCHOR_GAP = 320;
 const COMPONENT_ANCHOR_GAP = 260;
-const COMPONENT_BOUNDS_PADDING = 20;
+const COMPONENT_BOUNDS_PADDING = ENTITY_COLLISION_RADIUS;
 const LARGE_GRAPH_THRESHOLD = 1_000;
 
 interface SimulationEntity extends SimulationNodeDatum {
@@ -460,7 +460,13 @@ function expandComponentCenters(
     items.length;
   const expansion = 1.18 + Math.min(epoch, 4) * 0.015;
   const jitterScale = COMPONENT_BOUNDS_PADDING * (0.4 + epoch * 0.12);
+  const hasSingleton = items.some(
+    ({ component }) => component.nodeIds.length === 1,
+  );
   for (const item of items) {
+    if (hasSingleton && item.component.nodeIds.length === 1) {
+      continue;
+    }
     const jitter = stableUnitVector(
       `${item.component.id}:organic:${epoch}`,
     );
@@ -524,6 +530,9 @@ function separateComponentBounds(
       const rightIndex = pairKey % components.length;
       const leftComponent = components[leftIndex];
       const rightComponent = components[rightIndex];
+      const leftIsSingleton = leftComponent.nodeIds.length === 1;
+      const rightIsSingleton = rightComponent.nodeIds.length === 1;
+      if (leftIsSingleton && rightIsSingleton) continue;
       const left = componentBounds(leftComponent, positions);
       const right = componentBounds(rightComponent, positions);
       const overlapX = Math.min(left.right, right.right) -
@@ -537,17 +546,49 @@ function separateComponentBounds(
             (right.left + right.right)
           ? 1
           : -1;
-        const shift = overlapX / 2 + 0.001;
-        translateComponent(leftComponent, positions, -direction * shift, 0);
-        translateComponent(rightComponent, positions, direction * shift, 0);
+        const shift = overlapX + 0.001;
+        if (!leftIsSingleton && !rightIsSingleton) {
+          translateComponent(
+            leftComponent,
+            positions,
+            -direction * shift / 2,
+            0,
+          );
+          translateComponent(
+            rightComponent,
+            positions,
+            direction * shift / 2,
+            0,
+          );
+        } else if (!leftIsSingleton) {
+          translateComponent(leftComponent, positions, -direction * shift, 0);
+        } else {
+          translateComponent(rightComponent, positions, direction * shift, 0);
+        }
       } else {
         const direction = (left.top + left.bottom) <=
             (right.top + right.bottom)
           ? 1
           : -1;
-        const shift = overlapY / 2 + 0.001;
-        translateComponent(leftComponent, positions, 0, -direction * shift);
-        translateComponent(rightComponent, positions, 0, direction * shift);
+        const shift = overlapY + 0.001;
+        if (!leftIsSingleton && !rightIsSingleton) {
+          translateComponent(
+            leftComponent,
+            positions,
+            0,
+            -direction * shift / 2,
+          );
+          translateComponent(
+            rightComponent,
+            positions,
+            0,
+            direction * shift / 2,
+          );
+        } else if (!leftIsSingleton) {
+          translateComponent(leftComponent, positions, 0, -direction * shift);
+        } else {
+          translateComponent(rightComponent, positions, 0, direction * shift);
+        }
       }
     }
     if (!overlapFound) return;
