@@ -1,4 +1,5 @@
 import type { GraphFocus } from "./focus";
+import { quadraticPoint } from "./edgeGeometry";
 import type {
   RenderScene,
   SceneEdge,
@@ -23,6 +24,7 @@ export interface GraphDragPreview {
   readonly node: SceneEntityNode;
   readonly incidentEdges: readonly SceneEdge[];
   readonly incidentEdgeIds: ReadonlySet<string>;
+  readonly incidentLabels: readonly SceneEdgeLabel[];
 }
 
 export interface DrawGraphOptions {
@@ -520,6 +522,7 @@ export function drawGraphScene(
 
   semanticLayer(context, 1, () => {
     for (const label of scene.edgeLabels) {
+      if (excludedEdgeIds?.has(label.edgeId)) continue;
       const focused = label.kind === "entity"
         ? state.focusedEntityEdgeIds.has(label.edgeId)
         : state.focusedTableEdgeIds.has(label.edgeId);
@@ -532,6 +535,7 @@ export function drawGraphScene(
       context,
       options.dragPreview.preview,
       options.dragPreview.screen,
+      state.focusedEntityEdgeIds,
     );
   }
   if (scene.zoomLevel === "detail" && !state.hasFocus) {
@@ -555,10 +559,16 @@ export function createGraphDragPreview(
   const incidentEdges = scene.entityEdges.filter(
     (edge) => edge.sourceId === nodeId || edge.targetId === nodeId,
   );
+  const incidentEdgeIds = new Set(incidentEdges.map((edge) => edge.id));
   return {
     node,
     incidentEdges,
-    incidentEdgeIds: new Set(incidentEdges.map((edge) => edge.id)),
+    incidentEdgeIds,
+    incidentLabels: scene.edgeLabels.filter(
+      (label) =>
+        label.kind === "entity" &&
+        incidentEdgeIds.has(label.edgeId),
+    ),
   };
 }
 
@@ -589,6 +599,7 @@ export function drawGraphDragPreview(
   context: CanvasRenderingContext2D,
   preview: GraphDragPreview,
   screen: ScreenPoint,
+  focusedEdgeIds?: ReadonlySet<string>,
 ): void {
   const delta = {
     x: screen.x - preview.node.screen.x,
@@ -613,5 +624,20 @@ export function drawGraphDragPreview(
       screen: node.screen,
     })
   );
+  const edgesById = new Map(edges.map((edge) => [edge.id, edge]));
+  semanticLayer(context, 1, () => {
+    for (const label of preview.incidentLabels) {
+      const edge = edgesById.get(label.edgeId);
+      if (!edge) continue;
+      drawEdgeLabel(
+        context,
+        {
+          ...label,
+          screen: quadraticPoint(edge.geometry, 0.5),
+        },
+        focusedEdgeIds?.has(label.edgeId) ?? false,
+      );
+    }
+  });
   drawArrowheads(context, edges, ENTITY_SELECTED, 1);
 }

@@ -323,6 +323,59 @@ describe("drawGraphScene", () => {
       unrelated.geometry.to.y,
     ]);
   });
+
+  it("moves the focused incident label and backing without duplicating unrelated labels", () => {
+    const currentScene = scene();
+    const dragged = currentScene.entityDots.find((node) => node.id === "a")!;
+    const incidentLabel = currentScene.edgeLabels.find(
+      (label) => label.edgeId === "a--b",
+    )!;
+    const unrelatedLabel = currentScene.edgeLabels.find(
+      (label) => label.edgeId === "c--d",
+    )!;
+    const preview = createGraphDragPreview(currentScene, dragged.id)!;
+    const screen = {
+      x: dragged.screen.x + 100,
+      y: dragged.screen.y + 60,
+    };
+    const { context } = recordingContext();
+
+    const focusedOptions = options("a");
+    drawGraphScene(context, currentScene, {
+      ...focusedOptions,
+      focus: {
+        ...focusedOptions.focus,
+        edgeIds: new Set(["a--b", "c--d"]),
+      },
+      dragPreview: { preview, screen },
+    });
+
+    const textCalls = vi.mocked(context.fillText).mock.calls;
+    expect(textCalls).not.toContainEqual([
+      incidentLabel.text,
+      incidentLabel.screen.x - incidentLabel.maxWidth / 2,
+      incidentLabel.screen.y - 5,
+      incidentLabel.maxWidth,
+    ]);
+    expect(textCalls.filter(([text]) => text === incidentLabel.text)).toEqual([[
+      incidentLabel.text,
+      incidentLabel.screen.x + 50 - incidentLabel.maxWidth / 2,
+      incidentLabel.screen.y + 30 - 5,
+      incidentLabel.maxWidth,
+    ]]);
+    expect(textCalls.filter(([text]) => text === unrelatedLabel.text)).toEqual([[
+      unrelatedLabel.text,
+      unrelatedLabel.screen.x - unrelatedLabel.maxWidth / 2,
+      unrelatedLabel.screen.y - 5,
+      unrelatedLabel.maxWidth,
+    ]]);
+    expect(vi.mocked(context.fillRect).mock.calls).toContainEqual([
+      incidentLabel.screen.x + 50 - incidentLabel.maxWidth / 2 - 5,
+      incidentLabel.screen.y + 30 - 10,
+      incidentLabel.maxWidth + 10,
+      20,
+    ]);
+  });
 });
 
 describe("drawGraphDragPreview", () => {

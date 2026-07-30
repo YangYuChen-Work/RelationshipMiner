@@ -265,3 +265,62 @@ git diff --check           passed
 None. Final pointer-up still performs the sole immutable layout/scene commit;
 cancel and lost capture still discard the preview, and arrowheads remain in the
 final drawing layers.
+
+## Fix Round 3
+
+### Finding addressed
+
+The composite preview excluded original incident curves and the original node,
+but the normal edge-label pass still drew incident relationship labels at their
+committed quadratic midpoints. The preview overlay did not draw relocated
+relationship labels.
+
+`GraphDragPreview` now caches visible incident `SceneEdgeLabel` commands using
+the same incident-edge ID set created at pointer-down. The committed label pass
+skips only those IDs. The preview pass evaluates each shifted incident curve at
+`t = 0.5`, draws its label at that moved quadratic midpoint, and applies the
+same focused-state decision, dark backing, typography, width, and line-style
+color as the normal label path. Unrelated visible relationship labels remain
+in the committed pass and are not duplicated.
+
+### RED evidence
+
+Command:
+
+```powershell
+npx vitest run src/graph/renderer.test.ts -t "moves the focused incident label"
+```
+
+Result:
+
+```text
+Test Files  1 failed (1)
+Tests       1 failed | 10 skipped (11)
+```
+
+The recording context found the focused `feeds` label at its original
+committed midpoint. The regression also requires exactly one copy at the moved
+midpoint, its dark backing at the corresponding moved rectangle, and the
+unrelated `mirrors` label unchanged.
+
+### GREEN and verification
+
+```text
+Focused label regression    1/1 passed
+Renderer + GraphCanvas      47/47 passed
+Full frontend               25 files, 228/228 passed
+oxlint                      passed
+TypeScript + Vite build     passed
+git diff --check            passed
+```
+
+### Performance and ordering
+
+Incident labels are indexed once at pointer-down with O(1) edge-ID membership.
+Each coalesced preview frame shifts only cached incident edges and labels, so
+the 7,000-node bounded pointer-move path is unchanged. Preview relationship
+labels draw before the final arrowhead layers.
+
+### Concerns
+
+None.
