@@ -1,0 +1,480 @@
+import type { GraphFocus } from "./focus";
+import type {
+  RenderScene,
+  SceneEdge,
+  SceneEdgeLabel,
+  SceneEntityNode,
+  SceneLabel,
+  SceneNode,
+} from "./scene";
+
+const GRID_SIZE = 24;
+const MAX_ENTITY_LABELS = 500;
+const LABEL_VIEWPORT_PADDING = 24;
+const ENTITY_SELECTED = "#2dd4bf";
+const EDGE = "#52677a";
+const TABLE_EDGE = "#8fa0b0";
+const UNRELATED_NODE_OPACITY = 0.16;
+const UNRELATED_EDGE_OPACITY = 0.06;
+const FOCUS_EDGE_WIDTH = 2.2;
+
+export interface DrawGraphOptions {
+  readonly width: number;
+  readonly height: number;
+  readonly focus: GraphFocus;
+  readonly selectedEntityEdgeId: string | null;
+  readonly selectedTableEdgeId: string | null;
+  readonly reduceMotion: boolean;
+}
+
+interface Bounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+interface DrawState {
+  readonly focusedNodeIds: ReadonlySet<string>;
+  readonly focusedEntityEdgeIds: ReadonlySet<string>;
+  readonly focusedTableEdgeIds: ReadonlySet<string>;
+  readonly activeNodeId: string | null;
+  readonly hasFocus: boolean;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function semanticLayer(
+  context: CanvasRenderingContext2D,
+  alpha: number,
+  draw: () => void,
+): void {
+  context.save();
+  context.globalAlpha = alpha;
+  draw();
+  context.restore();
+  // Some test and embedded Canvas implementations do not restore properties.
+  context.globalAlpha = 1;
+}
+
+function focusedDrawState(
+  scene: RenderScene,
+  options: DrawGraphOptions,
+): DrawState {
+  const focusedNodeIds = new Set(options.focus.nodeIds);
+  const focusedEntityEdgeIds = new Set(options.focus.edgeIds);
+  const focusedTableEdgeIds = new Set<string>();
+  let activeNodeId = options.focus.activeNodeId;
+
+  if (options.selectedEntityEdgeId) {
+    const edge = scene.entityEdges.find(
+      (candidate) => candidate.id === options.selectedEntityEdgeId,
+    );
+    if (edge) {
+      focusedEntityEdgeIds.add(edge.id);
+      focusedNodeIds.add(edge.sourceId);
+      focusedNodeIds.add(edge.targetId);
+      activeNodeId = null;
+    }
+  }
+  if (options.selectedTableEdgeId) {
+    const edge = scene.tableEdges.find(
+      (candidate) => candidate.id === options.selectedTableEdgeId,
+    );
+    if (edge) focusedTableEdgeIds.add(edge.id);
+    activeNodeId = null;
+  }
+
+  return {
+    focusedNodeIds,
+    focusedEntityEdgeIds,
+    focusedTableEdgeIds,
+    activeNodeId,
+    hasFocus:
+      activeNodeId != null ||
+      focusedEntityEdgeIds.size > 0 ||
+      focusedTableEdgeIds.size > 0,
+  };
+}
+
+function drawGrid(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+): void {
+  semanticLayer(context, 1, () => {
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "#0d1926";
+    context.fillRect(0, 0, width, height);
+    context.strokeStyle = "#213243";
+    context.lineWidth = 0.7;
+    for (let x = 0; x <= width; x += GRID_SIZE) {
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x, height);
+      context.stroke();
+    }
+    for (let y = 0; y <= height; y += GRID_SIZE) {
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+      context.stroke();
+    }
+  });
+}
+
+function drawCurve(
+  context: CanvasRenderingContext2D,
+  edge: SceneEdge,
+  stroke: string,
+  width: number,
+): void {
+  context.beginPath();
+  context.moveTo(edge.geometry.from.x, edge.geometry.from.y);
+  context.quadraticCurveTo?.(
+    edge.geometry.control.x,
+    edge.geometry.control.y,
+    edge.geometry.to.x,
+    edge.geometry.to.y,
+  );
+  context.strokeStyle = stroke;
+  context.lineWidth = width;
+  context.setLineDash?.(edge.lineStyle === "dashed" ? [6, 5] : []);
+  context.stroke();
+  context.setLineDash?.([]);
+}
+
+function arrowTip(edge: SceneEdge) {
+  if (edge.direction === "reverse") {
+    return {
+      tip: edge.geometry.from,
+      tangentFrom: edge.geometry.control,
+    };
+  }
+  return {
+    tip: edge.geometry.to,
+    tangentFrom: edge.geometry.control,
+  };
+}
+
+function drawArrowhead(
+  context: CanvasRenderingContext2D,
+  edge: SceneEdge,
+  color: string,
+): void {
+  if (edge.direction === "undirected") return;
+  const { tip, tangentFrom } = arrowTip(edge);
+  const angle = Math.atan2(tip.y - tangentFrom.y, tip.x - tangentFrom.x);
+  const length = 8;
+  const wing = Math.PI / 7;
+  context.beginPath();
+  context.moveTo(tip.x, tip.y);
+  context.lineTo(
+    tip.x - Math.cos(angle - wing) * length,
+    tip.y - Math.sin(angle - wing) * length,
+  );
+  context.lineTo(
+    tip.x - Math.cos(angle + wing) * length,
+    tip.y - Math.sin(angle + wing) * length,
+  );
+  context.closePath?.();
+  context.fillStyle = color;
+  context.fill();
+}
+
+function drawEdges(
+  context: CanvasRenderingContext2D,
+  edges: readonly SceneEdge[],
+  stroke: string,
+  width: number,
+  alpha: number,
+  arrowheads: boolean,
+): void {
+  if (edges.length === 0) return;
+  semanticLayer(context, alpha, () => {
+    for (const edge of edges) {
+      drawCurve(context, edge, stroke, width);
+      if (arrowheads) drawArrowhead(context, edge, stroke);
+    }
+  });
+}
+
+function drawEntityNode(
+  context: CanvasRenderingContext2D,
+  entity: SceneEntityNode,
+  active: boolean,
+): void {
+  context.beginPath();
+  context.arc(
+    entity.screen.x,
+    entity.screen.y,
+    entity.screenRadius,
+    0,
+    Math.PI * 2,
+  );
+  context.fillStyle = active
+    ? ENTITY_SELECTED
+    : entity.color ?? "#7dd3fc";
+  context.fill();
+  if (active) {
+    context.strokeStyle = "#f8fafc";
+    context.lineWidth = 1.5;
+    context.stroke();
+  }
+}
+
+function drawEntityNodes(
+  context: CanvasRenderingContext2D,
+  nodes: readonly SceneEntityNode[],
+  alpha: number,
+  activeNodeId: string | null,
+): void {
+  if (nodes.length === 0) return;
+  semanticLayer(context, alpha, () => {
+    for (const node of nodes) {
+      drawEntityNode(context, node, node.id === activeNodeId);
+    }
+  });
+}
+
+function drawTableNode(
+  context: CanvasRenderingContext2D,
+  table: SceneNode,
+): void {
+  context.beginPath();
+  context.arc(
+    table.screen.x,
+    table.screen.y,
+    table.screenRadius,
+    0,
+    Math.PI * 2,
+  );
+  context.fillStyle = "#112438";
+  context.fill();
+  context.strokeStyle = table.color ?? "#38bdf8";
+  context.lineWidth = 3;
+  context.stroke();
+  context.fillStyle = table.color ?? "#38bdf8";
+  context.font = "600 12px system-ui, sans-serif";
+  context.textBaseline = "middle";
+  context.fillText(
+    table.label,
+    table.screen.x + table.screenRadius + 8,
+    table.screen.y,
+  );
+}
+
+function overlaps(left: Bounds, right: Bounds): boolean {
+  return left.left < right.right &&
+    left.right > right.left &&
+    left.top < right.bottom &&
+    left.bottom > right.top;
+}
+
+function labelBounds(
+  context: CanvasRenderingContext2D,
+  label: SceneLabel,
+): Bounds {
+  const primaryWidth = context.measureText?.(label.primary).width ??
+    label.primary.length * 7;
+  const secondaryWidth = label.secondary
+    ? context.measureText?.(label.secondary).width ?? label.secondary.length * 6
+    : 0;
+  return {
+    left: label.screen.x + 6,
+    top: label.screen.y - 13,
+    right: label.screen.x + 6 + Math.max(primaryWidth, secondaryWidth),
+    bottom: label.screen.y + (label.secondary ? 13 : 2),
+  };
+}
+
+function inViewport(label: SceneLabel, options: DrawGraphOptions): boolean {
+  return label.screen.x >= -LABEL_VIEWPORT_PADDING &&
+    label.screen.x <= options.width + LABEL_VIEWPORT_PADDING &&
+    label.screen.y >= -LABEL_VIEWPORT_PADDING &&
+    label.screen.y <= options.height + LABEL_VIEWPORT_PADDING;
+}
+
+function drawEntityLabel(
+  context: CanvasRenderingContext2D,
+  label: SceneLabel,
+): void {
+  context.fillStyle = "#dbeafe";
+  context.font = "600 11px system-ui, sans-serif";
+  context.textBaseline = "bottom";
+  context.fillText(label.primary, label.screen.x + 6, label.screen.y - 2);
+  if (label.secondary) {
+    context.fillStyle = "#94a3b8";
+    context.font = "9px system-ui, sans-serif";
+    context.textBaseline = "top";
+    context.fillText(label.secondary, label.screen.x + 6, label.screen.y + 1);
+  }
+}
+
+function drawBackgroundLabels(
+  context: CanvasRenderingContext2D,
+  labels: readonly SceneLabel[],
+  options: DrawGraphOptions,
+  occupied: Bounds[],
+  alpha: number,
+): void {
+  semanticLayer(context, alpha, () => {
+    let drawn = 0;
+    for (const label of labels) {
+      if (drawn >= MAX_ENTITY_LABELS || !inViewport(label, options)) continue;
+      const bounds = labelBounds(context, label);
+      if (occupied.some((existing) => overlaps(existing, bounds))) continue;
+      occupied.push(bounds);
+      drawEntityLabel(context, label);
+      drawn += 1;
+    }
+  });
+}
+
+function drawEdgeLabel(
+  context: CanvasRenderingContext2D,
+  label: SceneEdgeLabel,
+  focused: boolean,
+): void {
+  context.font = "600 10px system-ui, sans-serif";
+  context.textBaseline = "middle";
+  if (focused) {
+    context.fillStyle = "rgba(7, 15, 25, 0.92)";
+    context.fillRect(
+      label.screen.x - label.maxWidth / 2 - 5,
+      label.screen.y - 10,
+      label.maxWidth + 10,
+      20,
+    );
+  }
+  context.fillStyle = label.lineStyle === "solid" ? "#dbeafe" : "#94a3b8";
+  context.fillText(
+    label.text,
+    label.screen.x - label.maxWidth / 2,
+    label.screen.y - 5,
+    label.maxWidth,
+  );
+}
+
+export function drawGraphScene(
+  context: CanvasRenderingContext2D,
+  scene: RenderScene,
+  options: DrawGraphOptions,
+): void {
+  const state = focusedDrawState(scene, options);
+  const unrelatedEntityEdges = state.hasFocus
+    ? scene.entityEdges.filter((edge) => !state.focusedEntityEdgeIds.has(edge.id))
+    : scene.entityEdges;
+  const relatedEntityEdges = state.hasFocus
+    ? scene.entityEdges.filter((edge) => state.focusedEntityEdgeIds.has(edge.id))
+    : [];
+  const unrelatedTableEdges = state.hasFocus
+    ? scene.tableEdges.filter((edge) => !state.focusedTableEdgeIds.has(edge.id))
+    : scene.tableEdges;
+  const relatedTableEdges = state.hasFocus
+    ? scene.tableEdges.filter((edge) => state.focusedTableEdgeIds.has(edge.id))
+    : [];
+  const unrelatedNodes = state.hasFocus
+    ? scene.entityDots.filter((node) => !state.focusedNodeIds.has(node.id))
+    : scene.entityDots;
+  const relatedNodes = state.hasFocus
+    ? scene.entityDots.filter(
+      (node) =>
+        state.focusedNodeIds.has(node.id) && node.id !== state.activeNodeId,
+    )
+    : [];
+  const activeNode = state.activeNodeId == null
+    ? null
+    : scene.entityDots.find((node) => node.id === state.activeNodeId) ?? null;
+  const labelsByNode = new Map(
+    scene.entityLabels.map((label) => [label.nodeId, label]),
+  );
+  const activeLabel = activeNode
+    ? labelsByNode.get(activeNode.id) ?? null
+    : null;
+  const occupied: Bounds[] = [];
+  if (activeLabel) occupied.push(labelBounds(context, activeLabel));
+
+  drawGrid(context, options.width, options.height);
+
+  drawEdges(
+    context,
+    unrelatedTableEdges,
+    TABLE_EDGE,
+    1.5,
+    state.hasFocus ? UNRELATED_EDGE_OPACITY : scene.layerOpacity.tableEdges,
+    false,
+  );
+  drawEdges(
+    context,
+    unrelatedEntityEdges,
+    EDGE,
+    1,
+    state.hasFocus ? UNRELATED_EDGE_OPACITY : scene.layerOpacity.entityEdges,
+    scene.zoomLevel === "detail" && !state.hasFocus,
+  );
+
+  drawEntityNodes(
+    context,
+    unrelatedNodes,
+    state.hasFocus ? UNRELATED_NODE_OPACITY : 1,
+    null,
+  );
+  semanticLayer(context, state.hasFocus ? UNRELATED_NODE_OPACITY : 1, () => {
+    for (const table of scene.tableNodes) drawTableNode(context, table);
+  });
+  const unrelatedLabels = scene.entityLabels
+    .filter((label) =>
+      !state.hasFocus || !state.focusedNodeIds.has(label.nodeId)
+    )
+    .sort((left, right) => compareText(left.nodeId, right.nodeId));
+  drawBackgroundLabels(
+    context,
+    unrelatedLabels,
+    options,
+    occupied,
+    state.hasFocus ? UNRELATED_NODE_OPACITY : 1,
+  );
+
+  drawEntityNodes(context, relatedNodes, 0.82, null);
+  drawEdges(
+    context,
+    relatedTableEdges,
+    TABLE_EDGE,
+    FOCUS_EDGE_WIDTH,
+    1,
+    true,
+  );
+  drawEdges(
+    context,
+    relatedEntityEdges,
+    ENTITY_SELECTED,
+    FOCUS_EDGE_WIDTH,
+    1,
+    true,
+  );
+
+  if (activeNode) drawEntityNodes(context, [activeNode], 1, activeNode.id);
+
+  const relatedLabels = scene.entityLabels
+    .filter((label) =>
+      state.focusedNodeIds.has(label.nodeId) &&
+      label.nodeId !== state.activeNodeId
+    )
+    .sort((left, right) => compareText(left.nodeId, right.nodeId));
+  drawBackgroundLabels(context, relatedLabels, options, occupied, 0.9);
+  if (activeLabel) {
+    semanticLayer(context, 1, () => drawEntityLabel(context, activeLabel));
+  }
+
+  semanticLayer(context, 1, () => {
+    for (const label of scene.edgeLabels) {
+      const focused = label.kind === "entity"
+        ? state.focusedEntityEdgeIds.has(label.edgeId)
+        : state.focusedTableEdgeIds.has(label.edgeId);
+      if (!state.hasFocus || focused) drawEdgeLabel(context, label, focused);
+    }
+  });
+}

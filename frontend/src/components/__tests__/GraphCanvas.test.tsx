@@ -24,8 +24,8 @@ const graph: SemanticGraphData = {
 
 function canvasContext() {
   return {
-    arc: vi.fn(), beginPath: vi.fn(), clearRect: vi.fn(), fill: vi.fn(), fillRect: vi.fn(), fillText: vi.fn(), lineTo: vi.fn(), moveTo: vi.fn(), restore: vi.fn(), save: vi.fn(), setLineDash: vi.fn(), setTransform: vi.fn(), stroke: vi.fn(), strokeRect: vi.fn(),
-    fillStyle: "", font: "", lineWidth: 1, strokeStyle: "", textBaseline: "alphabetic" as CanvasTextBaseline,
+    arc: vi.fn(), beginPath: vi.fn(), clearRect: vi.fn(), closePath: vi.fn(), fill: vi.fn(), fillRect: vi.fn(), fillText: vi.fn(), lineTo: vi.fn(), measureText: vi.fn((text: string) => ({ width: text.length * 7 })), moveTo: vi.fn(), quadraticCurveTo: vi.fn(), restore: vi.fn(), save: vi.fn(), setLineDash: vi.fn(), setTransform: vi.fn(), stroke: vi.fn(), strokeRect: vi.fn(),
+    fillStyle: "", font: "", globalAlpha: 1, lineWidth: 1, strokeStyle: "", textAlign: "start" as CanvasTextAlign, textBaseline: "alphabetic" as CanvasTextBaseline,
   } as unknown as CanvasRenderingContext2D;
 }
 
@@ -40,11 +40,12 @@ class LayoutWorker {
     requestId: number;
     graph: SemanticGraphData;
     viewport: { width: number; height: number };
+    seedOffset?: number;
   }[] = [];
   constructor() {
     LayoutWorker.instances.push(this);
   }
-  postMessage(message: { requestId: number; graph: SemanticGraphData; viewport: { width: number; height: number } }) {
+  postMessage(message: { requestId: number; graph: SemanticGraphData; viewport: { width: number; height: number }; seedOffset?: number }) {
     this.messages.push(message);
     if (LayoutWorker.autoReply) this.reply(message);
   }
@@ -912,5 +913,172 @@ describe("GraphCanvas", () => {
         String(message).includes("unmounted component"),
       ),
     ).toBe(false);
+  });
+
+  it("draws meaningful presentation labels when backend display names are zero", async () => {
+    const context = canvasContext();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context);
+    act(() => setGraph({
+      ...graph,
+      table_nodes: graph.table_nodes.map((table) => ({
+        ...table,
+        display_name: "0",
+      })),
+      entity_nodes: graph.entity_nodes.map((entity) => ({
+        ...entity,
+        display_name: "0",
+      })),
+    }));
+
+    render(<GraphCanvas />);
+    await ready();
+
+    const text = vi.mocked(context.fillText).mock.calls.map(([value]) => value);
+    expect(text).toContain("a");
+    expect(text.some((value) => value !== "0" && value.trim().length > 0)).toBe(true);
+  });
+
+  it("redraws one-hop focus on hover and restores default opacity on pointer leave", async () => {
+    const context = canvasContext();
+    const drawnAlphas: number[] = [];
+    vi.mocked(context.fill).mockImplementation(() => {
+      drawnAlphas.push(context.globalAlpha);
+    });
+    vi.mocked(context.stroke).mockImplementation(() => {
+      drawnAlphas.push(context.globalAlpha);
+    });
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context);
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    const entity = computeGroupedLayout(graph, { width: 960, height: 600 })
+      .entityNodes.find((node) => node.id === "a")!;
+    const point = d3.zoomTransform(canvas).apply([entity.x, entity.y]);
+
+    drawnAlphas.length = 0;
+    fireEvent.pointerMove(canvas, { clientX: point[0], clientY: point[1] });
+    expect(drawnAlphas).toContain(0.16);
+    expect(drawnAlphas).toContain(0.06);
+
+    drawnAlphas.length = 0;
+    fireEvent.pointerLeave(canvas);
+    expect(drawnAlphas).not.toContain(0.16);
+    expect(drawnAlphas).toContain(1);
+    expect(useAnalysisStore.getState().hoveredNodeId).toBeNull();
+  });
+
+  it("rebuilds threshold styling without asking the Worker for a new layout", async () => {
+    render(<GraphCanvas />);
+    await ready();
+    const worker = LayoutWorker.instances[0];
+
+    act(() => useAnalysisStore.getState().setConfidenceThreshold(0.5));
+    await ready();
+
+    expect(worker.messages).toHaveLength(1);
+  });
+
+  it("forwards the incremented relayout seed to the Worker", async () => {
+    render(<GraphCanvas />);
+    await ready();
+    const worker = LayoutWorker.instances[0];
+
+    act(() => useAnalysisStore.getState().requestRelayout());
+    await ready();
+
+    expect(worker.messages).toHaveLength(2);
+    expect(worker.messages[0].seedOffset).toBe(0);
+    expect(worker.messages[1].seedOffset).toBe(1);
+  });
+
+  it("pins a dragged node in scene coordinates without requesting layout and suppresses its click", async () => {
+    const context = canvasContext();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context);
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    const setPointerCapture = vi.fn();
+    const releasePointerCapture = vi.fn();
+    Object.defineProperties(canvas, {
+      setPointerCapture: { value: setPointerCapture },
+      releasePointerCapture: { value: releasePointerCapture },
+      hasPointerCapture: { value: () => true },
+    });
+    const worker = LayoutWorker.instances[0];
+    const node = computeGroupedLayout(graph, { width: 960, height: 600 })
+      .entityNodes.find((entity) => entity.id === "a")!;
+    const start = d3.zoomTransform(canvas).apply([node.x, node.y]);
+    const target = [start[0] + 80, start[1] + 45];
+    vi.mocked(context.arc).mockClear();
+
+    fireEvent.pointerDown(canvas, {
+      pointerId: 7,
+      clientX: start[0],
+      clientY: start[1],
+      button: 0,
+    });
+    fireEvent.pointerMove(canvas, {
+      pointerId: 7,
+      clientX: target[0],
+      clientY: target[1],
+      buttons: 1,
+    });
+    fireEvent.pointerUp(canvas, {
+      pointerId: 7,
+      clientX: target[0],
+      clientY: target[1],
+    });
+    fireEvent.click(canvas, { clientX: target[0], clientY: target[1] });
+
+    expect(setPointerCapture).toHaveBeenCalledWith(7);
+    expect(releasePointerCapture).toHaveBeenCalledWith(7);
+    expect(worker.messages).toHaveLength(1);
+    expect(vi.mocked(context.arc).mock.calls.some(
+      ([x, y]) => Math.abs(x - target[0]) < 1 && Math.abs(y - target[1]) < 1,
+    )).toBe(true);
+    expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
+  });
+
+  it("clears pinned node overrides when relayout starts", async () => {
+    const context = canvasContext();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context);
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    Object.defineProperties(canvas, {
+      setPointerCapture: { value: vi.fn() },
+      releasePointerCapture: { value: vi.fn() },
+      hasPointerCapture: { value: () => true },
+    });
+    const node = computeGroupedLayout(graph, { width: 960, height: 600 })
+      .entityNodes.find((entity) => entity.id === "a")!;
+    const start = d3.zoomTransform(canvas).apply([node.x, node.y]);
+    fireEvent.pointerDown(canvas, {
+      pointerId: 9,
+      clientX: start[0],
+      clientY: start[1],
+      button: 0,
+    });
+    fireEvent.pointerMove(canvas, {
+      pointerId: 9,
+      clientX: start[0] + 80,
+      clientY: start[1] + 45,
+      buttons: 1,
+    });
+    fireEvent.pointerUp(canvas, {
+      pointerId: 9,
+      clientX: start[0] + 80,
+      clientY: start[1] + 45,
+    });
+
+    act(() => useAnalysisStore.getState().requestRelayout());
+    await ready();
+    vi.mocked(context.arc).mockClear();
+    act(() => useAnalysisStore.getState().setHoveredNode("a"));
+
+    const restored = d3.zoomTransform(canvas).apply([node.x, node.y]);
+    expect(vi.mocked(context.arc).mock.calls.some(
+      ([x, y]) => Math.abs(x - restored[0]) < 1 && Math.abs(y - restored[1]) < 1,
+    )).toBe(true);
   });
 });

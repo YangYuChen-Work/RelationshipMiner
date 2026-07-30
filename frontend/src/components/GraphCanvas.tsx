@@ -1,11 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import * as d3 from "d3";
 import {
   createLayoutClient,
   type LayoutClient,
   StaleLayoutRequestError,
 } from "../graph/layoutClient";
+import { buildGraphFocusIndex, resolveGraphFocus, type GraphFocus } from "../graph/focus";
+import {
+  ENTITY_COLLISION_RADIUS,
+  moveLayoutEntity,
+  type GraphLayout,
+} from "../graph/layout";
 import { projectGraph } from "../graph/projection";
+import { drawGraphScene } from "../graph/renderer";
 import { buildScene, type GraphTransform, type RenderScene } from "../graph/scene";
 import { hitTest, type HitTarget } from "../graph/hitTest";
 import { visibleEntityRelations } from "../graph/semantics";
@@ -13,12 +27,6 @@ import { useAnalysisStore } from "../store/analysis";
 
 const FALLBACK_WIDTH = 960;
 const FALLBACK_HEIGHT = 600;
-const GRID_SIZE = 24;
-const ENTITY_SELECTED = "#2dd4bf";
-const EDGE = "#52677a";
-const TABLE_EDGE = "#8fa0b0";
-const MAX_ENTITY_LABELS = 500;
-const LABEL_VIEWPORT_PADDING = 24;
 const MIN_ZOOM = 0.02;
 const MAX_ZOOM = 2.5;
 const CANVAS_CONTEXT_ERROR =
@@ -75,16 +83,17 @@ function fitTransform(
   const minY = Math.min(...points.map((point) => point.y));
   const maxX = Math.max(...points.map((point) => point.x));
   const maxY = Math.max(...points.map((point) => point.y));
-  const worldPadding = 72;
+  const horizontalPadding = ENTITY_COLLISION_RADIUS * 2;
+  const verticalPadding = ENTITY_COLLISION_RADIUS;
   const k = Math.max(
     MIN_ZOOM,
     Math.min(
       2,
       Math.min(
         Math.max(1, viewport.width - 96) /
-          Math.max(1, maxX - minX + worldPadding * 2),
+          Math.max(1, maxX - minX + horizontalPadding * 2),
         Math.max(1, viewport.height - 96) /
-          Math.max(1, maxY - minY + worldPadding * 2),
+          Math.max(1, maxY - minY + verticalPadding * 2),
       ),
     ),
   );
@@ -125,123 +134,6 @@ function pointFromEvent(canvas: HTMLCanvasElement, event: PointerEvent | MouseEv
   return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 }
 
-function drawLine(
-  context: CanvasRenderingContext2D,
-  edge: RenderScene["entityEdges"][number],
-  stroke: string,
-  width: number,
-) {
-  context.beginPath();
-  context.moveTo(edge.from.screen.x, edge.from.screen.y);
-  context.lineTo(edge.to.screen.x, edge.to.screen.y);
-  context.strokeStyle = stroke;
-  context.lineWidth = width;
-  context.setLineDash?.(edge.lineStyle === "dashed" ? [6, 5] : []);
-  context.stroke();
-  context.setLineDash?.([]);
-}
-
-function drawScene(
-  context: CanvasRenderingContext2D,
-  scene: RenderScene,
-  width: number,
-  height: number,
-  selectedNodeId: string | null,
-  hoveredNodeId: string | null,
-) {
-  context.save();
-  context.clearRect(0, 0, width, height);
-  context.fillStyle = "#0d1926";
-  context.fillRect(0, 0, width, height);
-  context.strokeStyle = "#213243";
-  context.lineWidth = 0.7;
-  for (let x = 0; x <= width; x += GRID_SIZE) {
-    context.beginPath();
-    context.moveTo(x, 0);
-    context.lineTo(x, height);
-    context.stroke();
-  }
-  for (let y = 0; y <= height; y += GRID_SIZE) {
-    context.beginPath();
-    context.moveTo(0, y);
-    context.lineTo(width, y);
-    context.stroke();
-  }
-
-  // Aggregate table relations, then entity relations establish the z-order.
-  scene.tableEdges.forEach((edge) => drawLine(context, edge, TABLE_EDGE, 1.5));
-  scene.entityEdges.forEach((edge) => drawLine(context, edge, EDGE, 1));
-
-  for (const entity of scene.entityDots) {
-    context.beginPath();
-    context.arc(entity.screen.x, entity.screen.y, entity.screenRadius, 0, Math.PI * 2);
-    context.fillStyle = entity.id === selectedNodeId
-      ? ENTITY_SELECTED
-      : entity.color ?? "#7dd3fc";
-    context.fill();
-    if (entity.id === hoveredNodeId || entity.id === selectedNodeId) {
-      context.strokeStyle = "#f8fafc";
-      context.lineWidth = 1.5;
-      context.stroke();
-    }
-  }
-
-  // Table anchors are circular category hubs rather than enclosing rectangles.
-  for (const table of scene.tableNodes) {
-    context.beginPath();
-    context.arc(table.screen.x, table.screen.y, table.screenRadius, 0, Math.PI * 2);
-    context.fillStyle = "#112438";
-    context.fill();
-    context.strokeStyle = table.color ?? "#38bdf8";
-    context.lineWidth = 3;
-    context.stroke();
-    context.fillStyle = table.color ?? "#38bdf8";
-    context.font = "600 12px system-ui, sans-serif";
-    context.textBaseline = "middle";
-    context.fillText(
-      table.label,
-      table.screen.x + table.screenRadius + 8,
-      table.screen.y,
-    );
-  }
-
-  context.font = "600 10px system-ui, sans-serif";
-  context.textBaseline = "middle";
-  for (const label of scene.edgeLabels) {
-    context.fillStyle = label.lineStyle === "solid" ? "#dbeafe" : "#94a3b8";
-    context.fillText(
-      label.text,
-      label.screen.x - label.maxWidth / 2,
-      label.screen.y - 5,
-      label.maxWidth,
-    );
-  }
-
-  context.fillStyle = "#dbeafe";
-  context.font = "11px system-ui, sans-serif";
-  context.textBaseline = "bottom";
-  scene.entityLabels
-    .filter((label) =>
-      label.screen.x >= -LABEL_VIEWPORT_PADDING &&
-      label.screen.x <= width + LABEL_VIEWPORT_PADDING &&
-      label.screen.y >= -LABEL_VIEWPORT_PADDING &&
-      label.screen.y <= height + LABEL_VIEWPORT_PADDING,
-    )
-    .sort((left, right) => {
-      const leftPriority =
-        left.nodeId === selectedNodeId ? 0 : left.nodeId === hoveredNodeId ? 1 : 2;
-      const rightPriority =
-        right.nodeId === selectedNodeId ? 0 : right.nodeId === hoveredNodeId ? 1 : 2;
-      return leftPriority - rightPriority ||
-        compareText(left.nodeId, right.nodeId);
-    })
-    .slice(0, MAX_ENTITY_LABELS)
-    .forEach((label) =>
-      context.fillText(label.text, label.screen.x + 6, label.screen.y - 5),
-    );
-  context.restore();
-}
-
 export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -251,7 +143,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const scheduledGenerationRef = useRef<number | null>(null);
   const sceneSourceRef = useRef<{
     graph: NonNullable<ReturnType<typeof useAnalysisStore.getState>["graph"]>;
-    layout: Awaited<ReturnType<LayoutClient["layoutGraph"]>>;
+    layout: GraphLayout;
   } | null>(null);
   const sceneInputsRef = useRef<{
     graph: NonNullable<ReturnType<typeof useAnalysisStore.getState>["graph"]>;
@@ -265,8 +157,22 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const animationFrameRef = useRef<number | null>(null);
   const lastHitRef = useRef<HitTarget | null>(null);
   const lastHitGenerationRef = useRef<number | null>(null);
-  const selectedNodeRef = useRef<string | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
+  const focusRef = useRef<GraphFocus>({
+    activeNodeId: null,
+    nodeIds: new Set(),
+    edgeIds: new Set(),
+  });
+  const selectedEntityEdgeRef = useRef<string | null>(null);
+  const selectedTableEdgeRef = useRef<string | null>(null);
+  const reduceMotionRef = useRef(false);
+  const pinnedPositionsRef = useRef(new Map<string, { x: number; y: number }>());
+  const draggingNodeRef = useRef<string | null>(null);
+  const draggingPointerRef = useRef<number | null>(null);
+  const dragStartPointRef = useRef<{ x: number; y: number } | null>(null);
+  const dragMovedRef = useRef(false);
+  const suppressClickRef = useRef(false);
+  const pinRelayoutRequestRef = useRef(0);
   const keyboardTargetRef = useRef<KeyboardTarget | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<HTMLCanvasElement, unknown> | null>(null);
   const layoutClientRef = useRef<LayoutClient | null>(null);
@@ -279,6 +185,11 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const [searchQuery, setSearchQuery] = useState("");
   const [sceneGeneration, setSceneGeneration] = useState(0);
   const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
+  const [reduceMotion, setReduceMotion] = useState(
+    () => typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
 
   const graph = useAnalysisStore((state) => state.graph);
   const showIsolatedNodes = useAnalysisStore((state) => state.showIsolatedNodes);
@@ -293,6 +204,12 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const warnings = useAnalysisStore((state) => state.warnings);
   const hoveredNodeId = useAnalysisStore((state) => state.hoveredNodeId);
   const selectedNodeId = useAnalysisStore((state) => state.selectedNodeId);
+  const selectedEntityEdgeId = useAnalysisStore(
+    (state) => state.selectedEntityEdgeId,
+  );
+  const selectedTableEdgeId = useAnalysisStore(
+    (state) => state.selectedTableEdgeId,
+  );
   const confidenceThreshold = useAnalysisStore((state) => state.confidenceThreshold);
   const confidenceThresholdRef = useRef(confidenceThreshold);
   confidenceThresholdRef.current = confidenceThreshold;
@@ -304,6 +221,22 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const requestNodeFocus = useAnalysisStore((state) => state.requestNodeFocus);
   const selectEntityEdge = useAnalysisStore((state) => state.selectEntityEdge);
   const selectTableEdge = useAnalysisStore((state) => state.selectTableEdge);
+  const focusIndex = useMemo(
+    () => buildGraphFocusIndex(
+      projectedGraph?.entity_edges ?? [],
+      confidenceThreshold,
+    ),
+    [confidenceThreshold, projectedGraph],
+  );
+  const graphFocus = useMemo(
+    // Selection owns the active presentation until it is cleared.
+    () => resolveGraphFocus(focusIndex, selectedNodeId, hoveredNodeId),
+    [focusIndex, hoveredNodeId, selectedNodeId],
+  );
+  focusRef.current = graphFocus;
+  selectedEntityEdgeRef.current = selectedEntityEdgeId;
+  selectedTableEdgeRef.current = selectedTableEdgeId;
+  reduceMotionRef.current = reduceMotion;
   const searchableEntities = useMemo(
     () => [...(projectedGraph?.entity_nodes ?? [])].sort((left, right) =>
       compareText(left.id, right.id),
@@ -356,7 +289,14 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       if (!canvas || !scene || inputs?.generation !== generation) return;
       const context = acquireCanvasContext(canvas);
       if (!context) return;
-      drawScene(context, scene, viewportRef.current.width, viewportRef.current.height, selectedNodeRef.current, hoveredNodeRef.current);
+      drawGraphScene(context, scene, {
+        width: viewportRef.current.width,
+        height: viewportRef.current.height,
+        focus: focusRef.current,
+        selectedEntityEdgeId: selectedEntityEdgeRef.current,
+        selectedTableEdgeId: selectedTableEdgeRef.current,
+        reduceMotion: reduceMotionRef.current,
+      });
       drawnGenerationRef.current = generation;
       if (keyboardTargetRef.current) {
         lastHitGenerationRef.current = generation;
@@ -367,10 +307,25 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   }, [acquireCanvasContext]);
 
   useEffect(() => {
-    selectedNodeRef.current = selectedNodeId;
     hoveredNodeRef.current = hoveredNodeId;
     invalidate();
-  }, [hoveredNodeId, invalidate, selectedNodeId]);
+  }, [
+    graphFocus,
+    hoveredNodeId,
+    invalidate,
+    reduceMotion,
+    selectedEntityEdgeId,
+    selectedTableEdgeId,
+  ]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = (event: MediaQueryListEvent) => setReduceMotion(event.matches);
+    setReduceMotion(query.matches);
+    query.addEventListener?.("change", update);
+    return () => query.removeEventListener?.("change", update);
+  }, []);
 
   const commitScene = useCallback((
     sourceGraph: NonNullable<typeof graph>,
@@ -467,6 +422,14 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       setLayoutError(null);
       return;
     }
+    if (pinRelayoutRequestRef.current !== relayoutRequest) {
+      pinRelayoutRequestRef.current = relayoutRequest;
+      pinnedPositionsRef.current.clear();
+      draggingNodeRef.current = null;
+      draggingPointerRef.current = null;
+      dragMovedRef.current = false;
+      suppressClickRef.current = false;
+    }
     let active = true;
     sceneSourceRef.current = null;
     retireScene();
@@ -482,7 +445,11 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       (next) => {
         const currentProjection = projectedGraphRef.current;
         if (active && currentProjection) {
-          const initialTransform = fitTransform(next, viewport);
+          let positionedLayout = next;
+          for (const [nodeId, point] of pinnedPositionsRef.current) {
+            positionedLayout = moveLayoutEntity(positionedLayout, nodeId, point);
+          }
+          const initialTransform = fitTransform(positionedLayout, viewport);
           transformRef.current = initialTransform;
           if (zoomRef.current && canvasRef.current) {
             d3.select(canvasRef.current).call(
@@ -490,9 +457,12 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
               initialTransform,
             );
           }
-          sceneSourceRef.current = { graph: currentProjection, layout: next };
-          commitScene(currentProjection, next);
-          setLayout(next);
+          sceneSourceRef.current = {
+            graph: currentProjection,
+            layout: positionedLayout,
+          };
+          commitScene(currentProjection, positionedLayout);
+          setLayout(positionedLayout);
         }
       },
       (error: unknown) => {
@@ -511,6 +481,11 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     if (!canvas) return;
     const zoom = d3.zoom<HTMLCanvasElement, unknown>()
       .scaleExtent([MIN_ZOOM, MAX_ZOOM])
+      .filter((event) =>
+        draggingNodeRef.current === null &&
+        (!event.ctrlKey || event.type === "wheel") &&
+        !event.button
+      )
       .on("zoom", (event) => {
         transformRef.current = event.transform;
         rebuildCurrentScene();
@@ -557,11 +532,102 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     layoutClientRef.current = null;
   }, []);
 
+  const interactiveScene = useCallback(() => {
+    const scene = sceneRef.current;
+    const inputs = sceneInputsRef.current;
+    return scene &&
+      inputs?.generation === sceneGenerationRef.current &&
+      drawnGenerationRef.current === inputs.generation &&
+      inputs?.graph === projectedGraphRef.current &&
+      inputs.confidenceThreshold === confidenceThresholdRef.current &&
+      inputs.fitViewRequest === useAnalysisStore.getState().fitViewRequest &&
+      inputs.relayoutRequest === useAnalysisStore.getState().relayoutRequest &&
+      sameTransform(inputs.transform, transformRef.current)
+      ? scene
+      : null;
+  }, []);
+
   const applyHit = useCallback((target: HitTarget | null) => {
     lastHitRef.current = target;
     lastHitGenerationRef.current = target ? drawnGenerationRef.current : null;
-    setHoveredNode(target?.kind === "entity-node" ? target.id : null);
+    const nextHoveredId =
+      target?.kind === "entity-node" ? target.id : null;
+    if (nextHoveredId !== hoveredNodeRef.current) {
+      hoveredNodeRef.current = nextHoveredId;
+      setHoveredNode(nextHoveredId);
+    }
   }, [setHoveredNode]);
+
+  const beginNodeDrag = useCallback((
+    canvas: HTMLCanvasElement,
+    event: ReactPointerEvent<HTMLCanvasElement>,
+  ) => {
+    if (event.button !== 0) return;
+    const scene = interactiveScene();
+    if (!scene) return;
+    const point = pointFromEvent(canvas, event.nativeEvent);
+    const target = hitTest(scene, point);
+    if (target?.kind !== "entity-node") return;
+    draggingNodeRef.current = target.id;
+    draggingPointerRef.current = event.pointerId;
+    dragStartPointRef.current = point;
+    dragMovedRef.current = false;
+    suppressClickRef.current = false;
+    canvas.setPointerCapture?.(event.pointerId);
+    event.stopPropagation();
+  }, [interactiveScene]);
+
+  const moveDraggedNode = useCallback((
+    canvas: HTMLCanvasElement,
+    event: ReactPointerEvent<HTMLCanvasElement>,
+  ): boolean => {
+    const nodeId = draggingNodeRef.current;
+    if (nodeId == null || draggingPointerRef.current !== event.pointerId) {
+      return false;
+    }
+    const source = sceneSourceRef.current;
+    if (!source) return true;
+    const screen = pointFromEvent(canvas, event.nativeEvent);
+    const transform = transformRef.current;
+    const world = {
+      x: (screen.x - transform.x) / transform.k,
+      y: (screen.y - transform.y) / transform.k,
+    };
+    if (!Number.isFinite(world.x) || !Number.isFinite(world.y)) return true;
+    const start = dragStartPointRef.current;
+    if (start && Math.hypot(screen.x - start.x, screen.y - start.y) >= 3) {
+      dragMovedRef.current = true;
+    }
+    pinnedPositionsRef.current.set(nodeId, world);
+    const nextLayout = moveLayoutEntity(source.layout, nodeId, world);
+    sceneSourceRef.current = { ...source, layout: nextLayout };
+    setLayout(nextLayout);
+    commitScene(source.graph, nextLayout);
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }, [commitScene]);
+
+  const finishNodeDrag = useCallback((
+    canvas: HTMLCanvasElement,
+    pointerId: number,
+  ): boolean => {
+    if (
+      draggingNodeRef.current == null ||
+      draggingPointerRef.current !== pointerId
+    ) {
+      return false;
+    }
+    if (canvas.hasPointerCapture?.(pointerId)) {
+      canvas.releasePointerCapture?.(pointerId);
+    }
+    suppressClickRef.current = dragMovedRef.current;
+    draggingNodeRef.current = null;
+    draggingPointerRef.current = null;
+    dragStartPointRef.current = null;
+    dragMovedRef.current = false;
+    return true;
+  }, []);
 
   const keyboardTargets = useCallback((): KeyboardTarget[] => {
     if (!projectedGraph || !layout) return [];
@@ -779,21 +845,6 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     currentInputs.fitViewRequest === fitViewRequest &&
     currentInputs.relayoutRequest === relayoutRequest &&
     sameTransform(currentInputs.transform, transformRef.current);
-  const interactiveScene = () => {
-    const scene = sceneRef.current;
-    const inputs = sceneInputsRef.current;
-    return scene &&
-      inputs?.generation === sceneGenerationRef.current &&
-      drawnGenerationRef.current === inputs.generation &&
-      inputs?.graph === projectedGraphRef.current &&
-      inputs.confidenceThreshold === confidenceThresholdRef.current &&
-      inputs.fitViewRequest === useAnalysisStore.getState().fitViewRequest &&
-      inputs.relayoutRequest === useAnalysisStore.getState().relayoutRequest &&
-      sameTransform(inputs.transform, transformRef.current)
-      ? scene
-      : null;
-  };
-
   return (
     <div ref={containerRef} role="group" aria-label={graphSummary(entityCount, tableCount, edgeCount, fullEntityCount, fullEdgeCount)} className="relative h-full min-h-[420px] overflow-hidden rounded-xl border border-slate-700/70 bg-[#0d1926]">
       <canvas
@@ -811,12 +862,27 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
             setKeyboardTarget(keyboardTargets()[0] ?? null);
           }
         }}
+        onPointerDownCapture={(event) => {
+          beginNodeDrag(event.currentTarget, event);
+        }}
         onPointerMove={(event) => {
+          if (moveDraggedNode(event.currentTarget, event)) return;
           const scene = interactiveScene();
           applyHit(scene ? hitTest(scene, pointFromEvent(event.currentTarget, event.nativeEvent)) : null);
         }}
         onPointerLeave={() => applyHit(null)}
+        onPointerUp={(event) => {
+          finishNodeDrag(event.currentTarget, event.pointerId);
+        }}
+        onPointerCancel={(event) => {
+          finishNodeDrag(event.currentTarget, event.pointerId);
+          applyHit(null);
+        }}
         onClick={(event) => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
           const scene = interactiveScene();
           const target = scene
             ? hitTest(
