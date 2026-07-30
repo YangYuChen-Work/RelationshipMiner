@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import * as d3 from "d3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SemanticGraphData } from "../../api/analysis";
@@ -6,6 +6,8 @@ import { quadraticPoint } from "../../graph/edgeGeometry";
 import { computeGroupedLayout } from "../../graph/layout";
 import { buildScene } from "../../graph/scene";
 import { useAnalysisStore } from "../../store/analysis";
+import { makeNebulaGraph } from "../../test/nebulaFixtures";
+import { NebulaVisualHarness } from "../../test/NebulaVisualHarness";
 import GraphCanvas from "../GraphCanvas";
 
 const graph: SemanticGraphData = {
@@ -915,27 +917,157 @@ describe("GraphCanvas", () => {
     ).toBe(false);
   });
 
-  it("draws meaningful presentation labels when backend display names are zero", async () => {
+  it("loads the requested visual fixture and exposes only deterministic focus controls", async () => {
+    window.history.replaceState({}, "", "/visual-test.html?size=200");
+
+    render(<NebulaVisualHarness />);
+    await ready();
+
+    expect(useAnalysisStore.getState().graph?.entity_nodes).toHaveLength(200);
+    expect(screen.getByText("200 entities")).toBeInTheDocument();
+    const controls = screen.getByRole("group", {
+      name: "Visual test controls",
+    });
+    expect(within(controls).getAllByRole("button").map((button) => button.textContent))
+      .toEqual(["Hover bridge", "Select bridge", "Clear focus"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hover bridge" }));
+    expect(useAnalysisStore.getState().hoveredNodeId).toBe("entity-049");
+    expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Select bridge" }));
+    expect(useAnalysisStore.getState().hoveredNodeId).toBeNull();
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("entity-049");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear focus" }));
+    expect(useAnalysisStore.getState().hoveredNodeId).toBeNull();
+    expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
+  });
+
+  it.each([20, 200] as const)(
+    "draws meaningful initial labels for the shared %i-node fixture without zero primaries",
+    async (entityCount) => {
     const context = canvasContext();
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context);
-    act(() => setGraph({
-      ...graph,
-      table_nodes: graph.table_nodes.map((table) => ({
-        ...table,
-        display_name: "0",
-      })),
-      entity_nodes: graph.entity_nodes.map((entity) => ({
-        ...entity,
-        display_name: "0",
-      })),
-    }));
+      const nebula = makeNebulaGraph({ entityCount });
+      act(() => setGraph(nebula));
 
     render(<GraphCanvas />);
     await ready();
 
     const text = vi.mocked(context.fillText).mock.calls.map(([value]) => value);
-    expect(text).toContain("a");
-    expect(text.some((value) => value !== "0" && value.trim().length > 0)).toBe(true);
+      expect(text).not.toContain("0");
+      expect(text).toContain("总装测试");
+
+      const layout = computeGroupedLayout(nebula, { width: 960, height: 600 });
+      const scene = buildScene({
+        graph: nebula,
+        layout,
+        transform: { k: 0.8, x: 0, y: 0 },
+        confidenceThreshold: 0,
+      });
+      const zeroBackedIds = new Set(
+        nebula.entity_nodes
+          .filter((entity) => entity.display_name === "0")
+          .map((entity) => entity.id),
+      );
+      const zeroBackedPrimaries = scene.entityDots
+        .filter((node) => zeroBackedIds.has(node.id))
+        .map((node) => node.presentation.primary);
+      expect(zeroBackedPrimaries).toHaveLength(entityCount / 10);
+      expect(zeroBackedPrimaries.every((primary) => primary !== "0")).toBe(true);
+    },
+    15_000,
+  );
+
+  it("keeps shared-fixture semantic layers and one-hop focus out of layout work", async () => {
+    const context = canvasContext();
+    const drawnAlphas: number[] = [];
+    vi.mocked(context.fill).mockImplementation(() => {
+      drawnAlphas.push(context.globalAlpha);
+    });
+    vi.mocked(context.stroke).mockImplementation(() => {
+      drawnAlphas.push(context.globalAlpha);
+    });
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context);
+    const nebula = makeNebulaGraph({ entityCount: 200 });
+    act(() => setGraph(nebula));
+
+    render(<GraphCanvas />);
+    await ready();
+    const worker = LayoutWorker.instances[0];
+    const layout = computeGroupedLayout(nebula, { width: 960, height: 600 });
+    const overview = buildScene({
+      graph: nebula,
+      layout,
+      transform: { k: 0.4, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+    const work = buildScene({
+      graph: nebula,
+      layout,
+      transform: { k: 0.8, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+
+    expect(overview.layerOpacity.tableEdges)
+      .toBeGreaterThan(overview.layerOpacity.entityEdges);
+    expect(work.layerOpacity.entityEdges)
+      .toBeGreaterThan(work.layerOpacity.tableEdges);
+
+    drawnAlphas.length = 0;
+    act(() => useAnalysisStore.getState().setHoveredNode("entity-000"));
+    expect(drawnAlphas).toContain(0.16);
+    expect(drawnAlphas).toContain(0.06);
+    expect(worker.messages).toHaveLength(1);
+
+    drawnAlphas.length = 0;
+    act(() => {
+      useAnalysisStore.getState().setHoveredNode(null);
+      useAnalysisStore.getState().setSelectedNode("entity-000");
+    });
+    expect(drawnAlphas).toContain(0.16);
+    expect(drawnAlphas).toContain(0.06);
+    expect(worker.messages).toHaveLength(1);
+  }, 15_000);
+
+  it("keeps routine relationship text from colliding with entity identities in the mobile fixture", () => {
+    const nebula = makeNebulaGraph({ entityCount: 20 });
+    const scene = buildScene({
+      graph: nebula,
+      layout: computeGroupedLayout(nebula, { width: 366, height: 700 }),
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+    const entityBounds = scene.entityLabels.map((label) => ({
+      left: label.screen.x + 6,
+      right: label.screen.x + 6 +
+        Math.max(label.primary.length * 7, label.secondary.length * 6),
+      top: label.screen.y - 13,
+      bottom: label.screen.y + 13,
+    }));
+    const routineEdgeLabels = scene.edgeLabels.filter(
+      (label) =>
+        label.kind === "entity" &&
+        label.text !== "cross_table_bridge" &&
+        label.text !== "self_check",
+    );
+    const overlapCount = routineEdgeLabels.reduce((count, label) => {
+      const bounds = {
+        left: label.screen.x - label.maxWidth / 2 - 8,
+        right: label.screen.x + label.maxWidth / 2 + 8,
+        top: label.screen.y - 10,
+        bottom: label.screen.y + 10,
+      };
+      return count + entityBounds.filter((entity) =>
+        bounds.left < entity.right &&
+        bounds.right > entity.left &&
+        bounds.top < entity.bottom &&
+        bounds.bottom > entity.top
+      ).length;
+    }, 0);
+
+    expect(overlapCount).toBe(0);
   });
 
   it("redraws one-hop focus on hover and restores default opacity on pointer leave", async () => {

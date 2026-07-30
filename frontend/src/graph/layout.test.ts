@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SemanticGraphData } from "../api/analysis";
+import { makeNebulaGraph } from "../test/nebulaFixtures";
 import {
   compactLayoutGraph,
   computeFallbackScatterLayout,
@@ -107,6 +108,116 @@ function paddedBounds(
 }
 
 describe("computeNebulaLayout", () => {
+  it.each([20, 200] as const)(
+    "builds the shared %i-node fixture with the required semantic topology",
+    (entityCount) => {
+      const graph = makeNebulaGraph({ entityCount });
+      const strengths = graph.entity_edges.flatMap((edge) =>
+        edge.relations.map((relation) => relation.strength)
+      );
+      const crossTableEdges = graph.entity_edges.filter((edge) => {
+        const source = graph.entity_nodes.find((node) => node.id === edge.source);
+        const target = graph.entity_nodes.find((node) => node.id === edge.target);
+        return source?.table_id !== target?.table_id;
+      });
+      const zeroBacked = graph.entity_nodes.filter(
+        (entity) => entity.display_name === "0",
+      );
+
+      expect(graph.table_nodes).toHaveLength(4);
+      expect(new Set(strengths)).toEqual(new Set(["strong", "weak"]));
+      expect(crossTableEdges.length).toBeGreaterThanOrEqual(2);
+      expect(graph.entity_edges.some((edge) => edge.source === edge.target))
+        .toBe(true);
+      expect(zeroBacked).toHaveLength(entityCount / 10);
+      expect(zeroBacked.every((entity) =>
+        typeof entity.dimensions.name === "string" ||
+        typeof entity.dimensions.item_code === "string"
+      )).toBe(true);
+    },
+  );
+
+  it.each([20, 200] as const)(
+    "lays out the shared %i-node nebula deterministically without ring-like table groups",
+    (entityCount) => {
+      const graph = makeNebulaGraph({ entityCount });
+      const compact = compactLayoutGraph(graph);
+      const viewport = { width: 1_280, height: 720 };
+      const first = computeNebulaLayout(compact, viewport);
+      const second = computeNebulaLayout(compact, viewport);
+
+      expect(second).toEqual(first);
+      expect(first.entityNodes).toHaveLength(entityCount);
+      for (const table of graph.table_nodes) {
+        expect(circularityRatio(first, table.id)).toBeLessThanOrEqual(0.7);
+      }
+    },
+    15_000,
+  );
+
+  it.each([20, 200] as const)(
+    "keeps the two shared %i-node fixture components separated by whitespace",
+    (entityCount) => {
+      const graph = makeNebulaGraph({ entityCount });
+      const layout = computeNebulaLayout(
+        compactLayoutGraph(graph),
+        { width: 1_280, height: 720 },
+      );
+      const first = paddedBounds(
+        layout.entityNodes.filter((node) =>
+          node.tableId === "table-0" || node.tableId === "table-1"
+        ),
+        20,
+      );
+      const second = paddedBounds(
+        layout.entityNodes.filter((node) =>
+          node.tableId === "table-2" || node.tableId === "table-3"
+        ),
+        20,
+      );
+
+      expect(
+        first.right <= second.left ||
+          second.right <= first.left ||
+          first.bottom <= second.top ||
+          second.bottom <= first.top,
+      ).toBe(true);
+    },
+    15_000,
+  );
+
+  it.each([20, 200] as const)(
+    "places strong shared-fixture relations closer than weak relations at %i nodes",
+    (entityCount) => {
+      const graph = makeNebulaGraph({ entityCount });
+      const layout = computeNebulaLayout(
+        compactLayoutGraph(graph),
+        { width: 1_280, height: 720 },
+      );
+      const positions = new Map(
+        layout.entityNodes.map((node) => [node.id, node]),
+      );
+      const distances = (strength: "strong" | "weak") =>
+        graph.entity_edges
+          .filter((edge) =>
+            edge.source !== edge.target &&
+            edge.relations.some((relation) => relation.strength === strength)
+          )
+          .map((edge) =>
+            pointDistance(
+              positions.get(edge.source)!,
+              positions.get(edge.target)!,
+            )
+          );
+      const average = (values: readonly number[]) =>
+        values.reduce((sum, value) => sum + value, 0) / values.length;
+
+      expect(average(distances("strong")))
+        .toBeLessThan(average(distances("weak")));
+    },
+    15_000,
+  );
+
   it("returns finite deterministic coordinates and changes only for a new seed", () => {
     const graph = layoutGraphFixture(2, 20, [
       { id: "edge-0", source: "entity-0", target: "entity-2", weight: 1 },
