@@ -70,14 +70,47 @@ function input(k: number, confidenceThreshold = 0) {
 
 describe("buildScene", () => {
   it("uses the exact semantic zoom boundaries", () => {
-    expect(buildScene(input(0.649)).tableNodes).toHaveLength(4);
-    expect(buildScene(input(0.649)).entityDots).toHaveLength(0);
-    expect(buildScene(input(0.649)).entityLabels).toHaveLength(0);
+    const overview = buildScene(input(0.4));
+    const work = buildScene(input(0.8));
+    const detail = buildScene(input(1.2));
 
-    expect(buildScene(input(0.65)).entityDots).toHaveLength(4);
-    expect(buildScene(input(0.65)).entityLabels).toHaveLength(0);
-    expect(buildScene(input(1.199)).entityLabels).toHaveLength(0);
-    expect(buildScene(input(1.2)).entityLabels).toHaveLength(4);
+    expect(overview.entityDots).toHaveLength(4);
+    expect(overview.entityLabels).toHaveLength(4);
+    expect(work.entityDots).toHaveLength(4);
+    expect(work.entityLabels).toHaveLength(4);
+    expect(detail.entityLabels).toHaveLength(4);
+    expect(overview.layerOpacity.tableEdges).toBeGreaterThan(
+      overview.layerOpacity.entityEdges,
+    );
+    expect(work.layerOpacity.entityEdges).toBeGreaterThan(
+      work.layerOpacity.tableEdges,
+    );
+    expect(detail.entityEdges[0].direction).toBe("forward");
+    expect(detail.entityLabels[0].secondary).toContain("关系");
+  });
+
+  it("retains a meaningful presentation and resolves mixed directions as undirected", () => {
+    const mixedGraph: SemanticGraphData = {
+      ...graph,
+      entity_nodes: [{
+        ...graph.entity_nodes[0],
+        display_name: "0",
+        dimensions: { item_code: "ORDER-001" },
+      }, ...graph.entity_nodes.slice(1)],
+      entity_edges: [{
+        ...graph.entity_edges[0],
+        relations: [
+          ...graph.entity_edges[0].relations,
+          { ...graph.entity_edges[0].relations[0], direction: "target_to_source" },
+        ],
+      }, ...graph.entity_edges.slice(1)],
+    };
+
+    const scene = buildScene({ ...input(0.8), graph: mixedGraph });
+    expect(scene.entityDots.find((node) => node.id === "order-1")?.presentation?.primary)
+      .toBe("ORDER-001");
+    expect(scene.entityEdges.find((edge) => edge.id === "weak-edge")?.direction)
+      .toBe("undirected");
   });
 
   it("keeps world coordinates separate from transformed screen coordinates", () => {
@@ -132,10 +165,11 @@ describe("buildScene", () => {
     );
   });
 
-  it("keeps table relation labels at overview zoom while suppressing entity labels", () => {
+  it("keeps table relation labels at overview zoom with connected entity markers", () => {
     const scene = buildScene(input(0.5));
 
-    expect(scene.entityDots).toHaveLength(0);
+    expect(scene.entityDots).toHaveLength(4);
+    expect(scene.entityLabels).toHaveLength(4);
     expect(scene.edgeLabels.length).toBeGreaterThan(0);
     expect(scene.edgeLabels.every((label) => label.kind === "table")).toBe(true);
     expect(scene.edgeLabels.map((label) => label.text)).toContain("created");

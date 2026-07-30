@@ -1,5 +1,6 @@
 import type {
   EntityEdgeData,
+  EntityRelationData,
   EntityNodeData,
   SemanticGraphData,
   TableEdgeData,
@@ -11,16 +12,23 @@ import type {
   LayoutEntityNode,
   LayoutTableNode,
 } from "./layout";
+import {
+  buildQuadraticGeometry,
+  quadraticPoint,
+  semanticZoomLevel,
+  type QuadraticGeometry,
+  type SemanticZoomLevel,
+  type ScreenBounds,
+} from "./edgeGeometry";
 import { createHitIndex, type SceneHitIndex } from "./hitTest";
+import { presentEntity, type EntityPresentation } from "./presentation";
 import {
   computeEntityDegrees,
   visibleEntityRelations,
 } from "./semantics";
 
-const TABLE_ONLY_ZOOM = 0.65;
 const TABLE_EDGE_LABEL_ZOOM = 0.02;
 const ENTITY_EDGE_LABEL_ZOOM = 0.9;
-const ENTITY_LABEL_ZOOM = 1.2;
 const TABLE_WORLD_RADIUS = 22;
 const ENTITY_BASE_WORLD_RADIUS = 4;
 const MIN_NODE_HIT_RADIUS = 6;
@@ -32,6 +40,11 @@ const EDGE_LABEL_BUCKET_HEIGHT = 32;
 const EDGE_LABEL_MAX_TEXT_WIDTH = 344;
 const EDGE_LABEL_HORIZONTAL_PADDING = 8;
 const UNRESOLVED_MIXED_RELATION_LABEL = "mixed relationships";
+const LAYER_OPACITY = {
+  overview: { tableEdges: 0.58, entityEdges: 0.10 },
+  work: { tableEdges: 0.12, entityEdges: 0.42 },
+  detail: { tableEdges: 0.06, entityEdges: 0.55 },
+} as const;
 const TABLE_PALETTE = [
   "#38bdf8",
   "#2dd4bf",
@@ -83,16 +96,21 @@ export interface SceneNode {
 export interface SceneEntityNode extends SceneNode {
   tableId: string;
   className: string | null;
+  presentation?: EntityPresentation;
+  visibleDegree?: number;
 }
 
 export interface SceneLabel {
   nodeId: string;
   text: string;
+  primary: string;
+  secondary: string;
   world: WorldPoint;
   screen: ScreenPoint;
 }
 
 export type SceneEdgeLineStyle = "solid" | "dashed";
+export type SceneDirection = "forward" | "reverse" | "undirected";
 
 export interface SceneEdge {
   id: string;
@@ -100,6 +118,10 @@ export interface SceneEdge {
   lineStyle: SceneEdgeLineStyle;
   from: ScenePoint;
   to: ScenePoint;
+  sourceId: string;
+  targetId: string;
+  geometry: QuadraticGeometry;
+  direction: SceneDirection;
 }
 
 export interface SceneEdgeLabel {
@@ -114,6 +136,11 @@ export interface SceneEdgeLabel {
 
 export interface RenderScene {
   transform: GraphTransform;
+  zoomLevel: SemanticZoomLevel;
+  layerOpacity: {
+    tableEdges: number;
+    entityEdges: number;
+  };
   tableNodes: SceneNode[];
   tableEdges: SceneEdge[];
   entityDots: SceneEntityNode[];
@@ -201,6 +228,9 @@ function edgeCommand(
   transform: GraphTransform,
   label: string,
   lineStyle: SceneEdgeLineStyle,
+  source: SceneNode,
+  target: SceneNode,
+  direction: SceneDirection,
 ): SceneEdge | null {
   if (!validPoint(edge.from) || !validPoint(edge.to)) return null;
   const from = toScreen(edge.from, transform);
@@ -212,6 +242,16 @@ function edgeCommand(
     lineStyle,
     from: { world: { ...edge.from }, screen: from },
     to: { world: { ...edge.to }, screen: to },
+    sourceId: edge.source,
+    targetId: edge.target,
+    geometry: buildQuadraticGeometry({
+      edgeId: edge.id,
+      from,
+      to,
+      fromBounds: labelBounds(source),
+      toBounds: labelBounds(target),
+    }),
+    direction,
   };
 }
 
@@ -246,6 +286,29 @@ function layoutEdgesFor(
 
 function entityWorldRadius(degree: number): number {
   return ENTITY_BASE_WORLD_RADIUS + Math.min(6, Math.sqrt(Math.max(0, degree)) * 1.8);
+}
+
+function labelBounds(node: SceneNode): ScreenBounds {
+  const labelWidth = Math.max(40, node.label.length * 7);
+  return {
+    left: node.screen.x - node.screenRadius - NODE_HIT_PADDING,
+    top: node.screen.y - Math.max(20, node.screenRadius + 8),
+    right: node.screen.x + node.screenRadius + 8 + labelWidth,
+    bottom: node.screen.y + Math.max(20, node.screenRadius + 8),
+  };
+}
+
+function relationDirection(
+  relations: readonly EntityRelationData[],
+): SceneDirection {
+  const directions = new Set(relations.map((relation) => relation.direction));
+  if (directions.size !== 1) return "undirected";
+  const [direction] = directions;
+  return direction === "source_to_target"
+    ? "forward"
+    : direction === "target_to_source"
+      ? "reverse"
+      : "undirected";
 }
 
 interface LabelBounds {
@@ -314,9 +377,11 @@ function buildEdgeLabels(
       x: (edge.from.world.x + edge.to.world.x) / 2,
       y: (edge.from.world.y + edge.to.world.y) / 2,
     };
+    if (![world.x, world.y].every((value) =>
+      Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER
+    )) continue;
     const screen = {
-      x: (edge.from.screen.x + edge.to.screen.x) / 2,
-      y: (edge.from.screen.y + edge.to.screen.y) / 2,
+      ...quadraticPoint(edge.geometry, 0.5),
     };
     const maxWidth = Math.min(
       EDGE_LABEL_MAX_TEXT_WIDTH,
@@ -357,7 +422,7 @@ function tableEdgeSemantics(
   edge: TableEdgeData,
   entityEdges: ReadonlyMap<string, EntityEdgeData>,
   threshold: number,
-): Pick<SceneEdge, "label" | "lineStyle"> | null {
+): Pick<SceneEdge, "label" | "lineStyle" | "direction"> | null {
   const supportingEdges = edge.supporting_entity_edges.flatMap((id) => {
     const supporting = entityEdges.get(id);
     return supporting ? [supporting] : [];
@@ -372,6 +437,7 @@ function tableEdgeSemantics(
       lineStyle: relations.some((relation) => relation.strength === "strong")
         ? "solid"
         : "dashed",
+      direction: relationDirection(relations),
     };
   }
   if (!tableEdgeVisible(edge, threshold)) return null;
@@ -379,21 +445,22 @@ function tableEdgeSemantics(
     return {
       label: UNRESOLVED_MIXED_RELATION_LABEL,
       lineStyle: "solid",
+      direction: "undirected",
     };
   }
   return {
     label: relationLabel(edge.relation_types),
     lineStyle: edge.strong_count > 0 ? "solid" : "dashed",
+    direction: "undirected",
   };
 }
 
 export function buildScene(input: BuildSceneInput): RenderScene {
   const transform = normalizedTransform(input.transform);
+  const zoomLevel = semanticZoomLevel(transform.k);
   const threshold = normalizedThreshold(input.confidenceThreshold);
   const tableData = byId<TableNodeData>(input.graph.table_nodes);
   const entityData = byId<EntityNodeData>(input.graph.entity_nodes);
-  const layoutTables = byId(input.layout.tableNodes);
-  const layoutEntities = byId(input.layout.entityNodes);
   const graphEntityEdges = byId(input.graph.entity_edges);
   const tableLayouts = layoutEdgesFor(
     input.graph.table_edges,
@@ -405,7 +472,9 @@ export function buildScene(input: BuildSceneInput): RenderScene {
   );
   const degrees = computeEntityDegrees(
     input.graph.entity_nodes,
-    input.graph.entity_edges,
+    input.graph.entity_edges.filter((edge) =>
+      visibleEntityRelations(edge, threshold).length > 0
+    ),
   );
   const tableNodes = input.layout.tableNodes.flatMap((node) => {
     const data = tableData.get(node.id);
@@ -420,10 +489,11 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       : null;
     return command ? [command] : [];
   });
+  const sceneTables = byId(tableNodes);
   const tableEdges = input.graph.table_edges.flatMap((edge) => {
     const layoutEdge = tableLayouts.get(edge.id);
-    const source = layoutTables.get(edge.source_table);
-    const target = layoutTables.get(edge.target_table);
+    const source = sceneTables.get(edge.source_table);
+    const target = sceneTables.get(edge.target_table);
     const semantics = tableEdgeSemantics(edge, graphEntityEdges, threshold);
     if (
       !layoutEdge ||
@@ -438,36 +508,40 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       transform,
       semantics.label,
       semantics.lineStyle,
+      source,
+      target,
+      semantics.direction,
     );
     return command ? [command] : [];
   });
 
-  const showEntities = transform.k >= TABLE_ONLY_ZOOM;
-  const entityDots = showEntities
-    ? input.layout.entityNodes.flatMap((node) => {
+  const entityDots = input.layout.entityNodes.flatMap((node) => {
       const data = entityData.get(node.id);
       if (!data) return [];
+      const visibleDegree = degrees.get(node.id) ?? 0;
+      const presentation = presentEntity(data, visibleDegree);
       const command = nodeCommand(
         node,
-        data.display_name,
+        presentation.primary,
         tableColor(node.tableId),
         transform,
-        entityWorldRadius(degrees.get(node.id) ?? 0),
+        entityWorldRadius(visibleDegree),
       );
       return command
         ? [{
           ...command,
           tableId: node.tableId,
           className: data.class_name,
+          presentation,
+          visibleDegree,
         }]
         : [];
-    })
-    : [];
-  const entityEdges = showEntities
-    ? input.graph.entity_edges.flatMap((edge) => {
+    });
+  const sceneEntities = byId(entityDots);
+  const entityEdges = input.graph.entity_edges.flatMap((edge) => {
       const layoutEdge = entityLayouts.get(edge.id);
-      const source = layoutEntities.get(edge.source);
-      const target = layoutEntities.get(edge.target);
+      const source = sceneEntities.get(edge.source);
+      const target = sceneEntities.get(edge.target);
       const relations = visibleEntityRelations(edge, threshold);
       if (!layoutEdge || !source || !target || relations.length === 0) return [];
       const command = edgeCommand(
@@ -477,22 +551,30 @@ export function buildScene(input: BuildSceneInput): RenderScene {
         relations.some((relation) => relation.strength === "strong")
           ? "solid"
           : "dashed",
+        source,
+        target,
+        relationDirection(relations),
       );
       return command ? [command] : [];
-    })
-    : [];
-  const entityLabels = transform.k >= ENTITY_LABEL_ZOOM
-    ? entityDots.map((node) => ({
+    });
+  const entityLabels = entityDots
+    .filter((node) => zoomLevel !== "overview" ||
+      (transform.k > TABLE_EDGE_LABEL_ZOOM && (node.visibleDegree ?? 0) > 0)
+    )
+    .map((node) => ({
       nodeId: node.id,
-      text: node.label,
+      text: node.presentation!.primary,
+      primary: node.presentation!.primary,
+      secondary: zoomLevel === "overview" ? "" : node.presentation!.secondary,
       world: node.world,
       screen: node.screen,
-    }))
-    : [];
+    }));
   const edgeLabels = buildEdgeLabels(tableEdges, entityEdges, transform);
 
   const sceneWithoutIndex = {
     transform,
+    zoomLevel,
+    layerOpacity: LAYER_OPACITY[zoomLevel],
     tableNodes,
     tableEdges,
     entityDots,
