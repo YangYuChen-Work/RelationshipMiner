@@ -1039,6 +1039,150 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
   });
 
+  it("cancels a node drag without suppressing the next click", async () => {
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    Object.defineProperties(canvas, {
+      setPointerCapture: { value: vi.fn() },
+      releasePointerCapture: { value: vi.fn() },
+      hasPointerCapture: { value: () => true },
+    });
+    const node = computeGroupedLayout(graph, { width: 960, height: 600 })
+      .entityNodes.find((entity) => entity.id === "a")!;
+    const start = d3.zoomTransform(canvas).apply([node.x, node.y]);
+
+    fireEvent.pointerDown(canvas, {
+      pointerId: 21,
+      clientX: start[0],
+      clientY: start[1],
+      button: 0,
+    });
+    fireEvent.pointerMove(canvas, {
+      pointerId: 21,
+      clientX: start[0] + 80,
+      clientY: start[1] + 45,
+      buttons: 1,
+    });
+    fireEvent.pointerCancel(canvas, {
+      pointerId: 21,
+      clientX: start[0] + 80,
+      clientY: start[1] + 45,
+    });
+    fireEvent.click(canvas, { clientX: start[0], clientY: start[1] });
+
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
+  });
+
+  it("restores hover and click interaction when pointer capture is lost", async () => {
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    Object.defineProperties(canvas, {
+      setPointerCapture: { value: vi.fn() },
+      releasePointerCapture: { value: vi.fn() },
+      hasPointerCapture: { value: () => false },
+    });
+    const layout = computeGroupedLayout(graph, { width: 960, height: 600 });
+    const source = layout.entityNodes.find((entity) => entity.id === "a")!;
+    const target = layout.entityNodes.find((entity) => entity.id === "invoice")!;
+    const sourcePoint = d3.zoomTransform(canvas).apply([source.x, source.y]);
+    const targetPoint = d3.zoomTransform(canvas).apply([target.x, target.y]);
+
+    fireEvent.pointerDown(canvas, {
+      pointerId: 22,
+      clientX: sourcePoint[0],
+      clientY: sourcePoint[1],
+      button: 0,
+    });
+    fireEvent.pointerMove(canvas, {
+      pointerId: 22,
+      clientX: sourcePoint[0] + 30,
+      clientY: sourcePoint[1] + 20,
+      buttons: 1,
+    });
+    fireEvent.lostPointerCapture(canvas, { pointerId: 22 });
+    fireEvent.pointerMove(canvas, {
+      pointerId: 22,
+      clientX: targetPoint[0],
+      clientY: targetPoint[1],
+    });
+    fireEvent.click(canvas, {
+      clientX: targetPoint[0],
+      clientY: targetPoint[1],
+    });
+
+    expect(useAnalysisStore.getState().hoveredNodeId).toBe("invoice");
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("invoice");
+  });
+
+  it("keeps 7000-node pointer moves bounded and commits the scene once on release", async () => {
+    const entities = Array.from({ length: 7_000 }, (_, index) => ({
+      id: `entity-${index}`,
+      table_id: "bulk",
+      display_name: `Entity ${index}`,
+      class_name: null,
+      dimensions: {},
+    }));
+    const largeGraph: SemanticGraphData = {
+      table_nodes: [{
+        id: "bulk",
+        display_name: "Bulk",
+        entity_count: entities.length,
+      }],
+      entity_nodes: entities,
+      table_edges: [],
+      entity_edges: [],
+    };
+    act(() => {
+      setGraph(largeGraph);
+      useAnalysisStore.getState().setShowIsolatedNodes(true);
+    });
+    render(<GraphCanvas />);
+    await ready();
+    const canvas = document.querySelector("canvas")!;
+    Object.defineProperties(canvas, {
+      setPointerCapture: { value: vi.fn() },
+      releasePointerCapture: { value: vi.fn() },
+      hasPointerCapture: { value: () => true },
+    });
+    const node = computeGroupedLayout(largeGraph, { width: 960, height: 600 })
+      .entityNodes[0];
+    const start = d3.zoomTransform(canvas).apply([node.x, node.y]);
+    const frames = controlledFrames();
+    const generation = Number(canvas.getAttribute("data-scene-generation"));
+
+    fireEvent.pointerDown(canvas, {
+      pointerId: 23,
+      clientX: start[0],
+      clientY: start[1],
+      button: 0,
+    });
+    const startedAt = performance.now();
+    for (let index = 1; index <= 8; index += 1) {
+      fireEvent.pointerMove(canvas, {
+        pointerId: 23,
+        clientX: start[0] + index * 5,
+        clientY: start[1] + index * 3,
+        buttons: 1,
+      });
+    }
+    const elapsed = performance.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(80);
+    expect(Number(canvas.getAttribute("data-scene-generation"))).toBe(generation);
+    expect(frames.callbacks.size).toBe(1);
+
+    fireEvent.pointerUp(canvas, {
+      pointerId: 23,
+      clientX: start[0] + 40,
+      clientY: start[1] + 24,
+    });
+    expect(Number(canvas.getAttribute("data-scene-generation"))).toBe(
+      generation + 1,
+    );
+  });
+
   it("clears pinned node overrides when relayout starts", async () => {
     const context = canvasContext();
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context);

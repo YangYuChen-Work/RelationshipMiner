@@ -2,12 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import type { SemanticGraphData } from "../api/analysis";
 import { buildGraphFocusIndex, resolveGraphFocus } from "./focus";
 import { computeGroupedLayout } from "./layout";
-import { drawGraphScene } from "./renderer";
+import {
+  createGraphDragPreview,
+  drawGraphDragPreview,
+  drawGraphScene,
+} from "./renderer";
 import { buildScene } from "./scene";
 
 const graph: SemanticGraphData = {
   table_nodes: [
-    { id: "left", display_name: "Left", entity_count: 2 },
+    { id: "left", display_name: "Left", entity_count: 3 },
     { id: "right", display_name: "Right", entity_count: 2 },
   ],
   entity_nodes: [
@@ -15,6 +19,7 @@ const graph: SemanticGraphData = {
     { id: "b", table_id: "right", display_name: "Beta", class_name: "Target", dimensions: {} },
     { id: "c", table_id: "left", display_name: "Gamma", class_name: "Other", dimensions: {} },
     { id: "d", table_id: "right", display_name: "Delta", class_name: "Other", dimensions: {} },
+    { id: "isolated", table_id: "left", display_name: "Solo", class_name: "Isolated", dimensions: {} },
   ],
   table_edges: [{
     id: "left--right",
@@ -65,11 +70,11 @@ const graph: SemanticGraphData = {
   ],
 };
 
-function scene() {
+function scene(scale = 1.4) {
   return buildScene({
     graph,
     layout: computeGroupedLayout(graph, { width: 960, height: 600 }),
-    transform: { k: 1.4, x: 120, y: 80 },
+    transform: { k: scale, x: 120, y: 80 },
     confidenceThreshold: 0,
   });
 }
@@ -83,13 +88,21 @@ interface DrawRecord {
 
 function recordingContext() {
   const records: DrawRecord[] = [];
+  const nodeFills: { x: number; y: number; alpha: number }[] = [];
+  let lastArc: { x: number; y: number } | null = null;
   const context = {
-    arc: vi.fn(),
+    arc: vi.fn((x: number, y: number) => {
+      lastArc = { x, y };
+    }),
     beginPath: vi.fn(),
     clearRect: vi.fn(),
     closePath: vi.fn(),
     fill: vi.fn(function (this: CanvasRenderingContext2D) {
       records.push({ kind: "fill", alpha: this.globalAlpha, lineWidth: this.lineWidth });
+      if (lastArc) {
+        nodeFills.push({ ...lastArc, alpha: this.globalAlpha });
+        lastArc = null;
+      }
     }),
     fillRect: vi.fn(function (this: CanvasRenderingContext2D) {
       records.push({ kind: "fillRect", alpha: this.globalAlpha, lineWidth: this.lineWidth });
@@ -125,7 +138,7 @@ function recordingContext() {
     textAlign: "start" as CanvasTextAlign,
     textBaseline: "alphabetic" as CanvasTextBaseline,
   } as unknown as CanvasRenderingContext2D;
-  return { context, records };
+  return { context, records, nodeFills };
 }
 
 function options(focusNodeId: string | null = null) {
@@ -136,7 +149,6 @@ function options(focusNodeId: string | null = null) {
     focus: resolveGraphFocus(index, focusNodeId, null),
     selectedEntityEdgeId: null,
     selectedTableEdgeId: null,
-    reduceMotion: true,
   };
 }
 
@@ -185,6 +197,24 @@ describe("drawGraphScene", () => {
     expect(context.closePath).toHaveBeenCalled();
   });
 
+  it("draws every arrowhead after active nodes and focused labels", () => {
+    const { context } = recordingContext();
+
+    drawGraphScene(context, scene(), options("a"));
+
+    const finalArrowOrder = Math.max(
+      ...vi.mocked(context.closePath).mock.invocationCallOrder,
+    );
+    const finalLabelOrder = Math.max(
+      ...vi.mocked(context.fillText).mock.invocationCallOrder,
+    );
+    const finalNodeOrder = Math.max(
+      ...vi.mocked(context.arc).mock.invocationCallOrder,
+    );
+    expect(finalArrowOrder).toBeGreaterThan(finalLabelOrder);
+    expect(finalArrowOrder).toBeGreaterThan(finalNodeOrder);
+  });
+
   it("draws both active-node label lines and paints focused relation label backing first", () => {
     const { context, records } = recordingContext();
 
@@ -203,5 +233,67 @@ describe("drawGraphScene", () => {
     );
     expect(backingIndex).toBeGreaterThanOrEqual(0);
     expect(backingIndex).toBeLessThan(relationTextIndex);
+  });
+
+  it.each([
+    ["connected", "a", "Alpha", "Source; "],
+    ["isolated", "isolated", "Solo", "Isolated; "],
+  ])("draws both presentation lines for an active %s overview node", (
+    _kind,
+    nodeId,
+    primary,
+    secondaryPrefix,
+  ) => {
+    const { context, records } = recordingContext();
+
+    drawGraphScene(context, scene(0.2), options(nodeId));
+
+    const texts = records
+      .filter((record) => record.kind === "fillText")
+      .map((record) => record.text);
+    expect(texts).toContain(primary);
+    expect(texts.some((text) => text?.startsWith(secondaryPrefix))).toBe(true);
+  });
+
+  it("keeps both selected table-relationship endpoints fully focused", () => {
+    const currentScene = scene();
+    const { context, nodeFills } = recordingContext();
+    const drawOptions = {
+      ...options(),
+      selectedTableEdgeId: "left--right",
+    };
+
+    drawGraphScene(context, currentScene, drawOptions);
+
+    for (const table of currentScene.tableNodes) {
+      expect(nodeFills).toContainEqual({
+        x: table.screen.x,
+        y: table.screen.y,
+        alpha: 1,
+      });
+    }
+  });
+});
+
+describe("drawGraphDragPreview", () => {
+  it("draws only the moved node and its incident quadratic relationships", () => {
+    const currentScene = scene();
+    const { context } = recordingContext();
+    const incidentCount = currentScene.entityEdges.filter(
+      (edge) => edge.sourceId === "a" || edge.targetId === "a",
+    ).length;
+
+    const preview = createGraphDragPreview(currentScene, "a");
+    expect(preview).not.toBeNull();
+    drawGraphDragPreview(context, preview!, { x: 400, y: 300 });
+
+    expect(context.arc).toHaveBeenCalledWith(
+      400,
+      300,
+      expect.any(Number),
+      0,
+      Math.PI * 2,
+    );
+    expect(context.quadraticCurveTo).toHaveBeenCalledTimes(incidentCount);
   });
 });

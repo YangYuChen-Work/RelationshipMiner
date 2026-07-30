@@ -71,17 +71,16 @@ Tests       37 passed (37)
   `relayoutRequest` as `seedOffset`.
 - Implements pointer-captured entity dragging with Task 3
   `moveLayoutEntity`. Drag motion is inverted through the current D3 transform,
-  updates incident endpoints immutably, commits a local scene, and never asks
-  the Worker for layout.
+  previews without Worker work, and commits an immutable local scene once on
+  release.
 - Persists pinned coordinates across normal scene rebuilds and viewport layout
   responses, suppresses the click immediately following a real drag, and clears
   all pins when an explicit relayout starts.
 - Prevents D3 panning while a node drag is active.
 - Expands fit bounds by two entity collision radii horizontally and one radius
   vertically so two-line labels are not clipped.
-- Tracks `prefers-reduced-motion` with listener cleanup. Focus transitions are
-  intentionally instantaneous, so reduced-motion restoration has no animation
-  path to cancel.
+- Focus transitions are intentionally instantaneous. No motion preference state
+  or animation path is needed.
 
 ## Verification
 
@@ -124,3 +123,91 @@ The integration suite and complete frontend suite passed after the fix.
 ## Concerns
 
 None within Task 6 scope.
+
+## Fix Round 1
+
+### Formal-review findings addressed
+
+1. Arrowheads are collected and drawn in final semantic layers after active
+   nodes and all focused labels. Their curve-specific focus color and opacity
+   are retained.
+2. Active labels are derived directly from
+   `SceneEntityNode.presentation`. Connected and isolated active nodes therefore
+   always draw both primary and secondary presentation lines at overview zoom,
+   even when background semantic labels omit the node or blank the secondary.
+3. A selected table relationship now focuses both endpoint table IDs. Endpoint
+   anchors and labels draw at full opacity while unrelated nodes remain dimmed.
+4. Drag teardown is centralized. Normal pointer-up commits and suppresses only
+   the drag-generated click; pointer cancel and lost pointer capture discard
+   the preview, restore D3/hit interaction, and leave the next click live.
+5. Pointer move no longer maps layout arrays, rebuilds a scene, rebuilds the hit
+   index, or updates React scene generation. It stores the latest screen/world
+   point and coalesces one preview RAF. The preview uses incident relationships
+   cached at pointer-down, redraws the already-built committed scene, and
+   overlays only those relationships plus the moving node and label.
+   `moveLayoutEntity` runs once on pointer-up, followed by the exact scene and
+   hit-index rebuild.
+
+The unused `reduceMotion` option, component state, listener, and renderer
+plumbing were removed because this implementation has no animation.
+
+### RED evidence
+
+Focused command:
+
+```powershell
+npx vitest run src/graph/renderer.test.ts src/components/__tests__/GraphCanvas.test.tsx
+```
+
+Result before production fixes:
+
+```text
+Test Files  2 failed (2)
+Tests       7 failed | 37 passed (44)
+```
+
+Expected failures showed:
+
+- final arrow call order before final label order;
+- missing overview secondary text for a connected active node;
+- missing primary and secondary text for an isolated active node;
+- selected table endpoints drawing at `0.16`;
+- pointer cancel suppressing the next click;
+- lost pointer capture leaving hover/drag interaction stuck;
+- eight 7,000-node pointer moves taking `130.7ms`, above the fixed `80ms`
+  bound.
+
+The new partial-preview API also had an isolated RED before implementation:
+
+```text
+TypeError: drawGraphDragPreview is not a function
+Tests 1 failed | 8 skipped
+```
+
+### GREEN evidence
+
+Focused result:
+
+```text
+Test Files  2 passed (2)
+Tests       45 passed (45)
+```
+
+The 7,000-node regression verifies all eight pointer moves complete below
+`80ms`, scene generation does not change during movement, only one preview RAF
+is queued, and pointer-up increments scene generation exactly once.
+
+Full verification:
+
+```text
+npm run lint   PASS
+npm run build  PASS
+npm test       25 files passed, 226 tests passed
+```
+
+### Concerns
+
+The coalesced preview frame redraws the existing committed scene before drawing
+the cached incident-edge overlay. This work is bounded to one animation frame
+regardless of pointer-event rate and does not rebuild geometry or hit indexes;
+the exact immutable scene is rebuilt once at commit.

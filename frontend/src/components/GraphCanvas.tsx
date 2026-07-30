@@ -19,7 +19,12 @@ import {
   type GraphLayout,
 } from "../graph/layout";
 import { projectGraph } from "../graph/projection";
-import { drawGraphScene } from "../graph/renderer";
+import {
+  createGraphDragPreview,
+  drawGraphDragPreview,
+  drawGraphScene,
+  type GraphDragPreview,
+} from "../graph/renderer";
 import { buildScene, type GraphTransform, type RenderScene } from "../graph/scene";
 import { hitTest, type HitTarget } from "../graph/hitTest";
 import { visibleEntityRelations } from "../graph/semantics";
@@ -165,11 +170,16 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   });
   const selectedEntityEdgeRef = useRef<string | null>(null);
   const selectedTableEdgeRef = useRef<string | null>(null);
-  const reduceMotionRef = useRef(false);
   const pinnedPositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const draggingNodeRef = useRef<string | null>(null);
   const draggingPointerRef = useRef<number | null>(null);
   const dragStartPointRef = useRef<{ x: number; y: number } | null>(null);
+  const dragPreviewRef = useRef<{
+    preview: GraphDragPreview;
+    screen: { x: number; y: number };
+    world: { x: number; y: number };
+  } | null>(null);
+  const dragPreviewFrameRef = useRef<number | null>(null);
   const dragMovedRef = useRef(false);
   const suppressClickRef = useRef(false);
   const pinRelayoutRequestRef = useRef(0);
@@ -185,11 +195,6 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const [searchQuery, setSearchQuery] = useState("");
   const [sceneGeneration, setSceneGeneration] = useState(0);
   const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
-  const [reduceMotion, setReduceMotion] = useState(
-    () => typeof window !== "undefined" &&
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  );
 
   const graph = useAnalysisStore((state) => state.graph);
   const showIsolatedNodes = useAnalysisStore((state) => state.showIsolatedNodes);
@@ -236,7 +241,6 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   focusRef.current = graphFocus;
   selectedEntityEdgeRef.current = selectedEntityEdgeId;
   selectedTableEdgeRef.current = selectedTableEdgeId;
-  reduceMotionRef.current = reduceMotion;
   const searchableEntities = useMemo(
     () => [...(projectedGraph?.entity_nodes ?? [])].sort((left, right) =>
       compareText(left.id, right.id),
@@ -295,7 +299,6 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         focus: focusRef.current,
         selectedEntityEdgeId: selectedEntityEdgeRef.current,
         selectedTableEdgeId: selectedTableEdgeRef.current,
-        reduceMotion: reduceMotionRef.current,
       });
       drawnGenerationRef.current = generation;
       if (keyboardTargetRef.current) {
@@ -313,19 +316,9 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     graphFocus,
     hoveredNodeId,
     invalidate,
-    reduceMotion,
     selectedEntityEdgeId,
     selectedTableEdgeId,
   ]);
-
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = (event: MediaQueryListEvent) => setReduceMotion(event.matches);
-    setReduceMotion(query.matches);
-    query.addEventListener?.("change", update);
-    return () => query.removeEventListener?.("change", update);
-  }, []);
 
   const commitScene = useCallback((
     sourceGraph: NonNullable<typeof graph>,
@@ -427,8 +420,17 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       pinnedPositionsRef.current.clear();
       draggingNodeRef.current = null;
       draggingPointerRef.current = null;
+      dragStartPointRef.current = null;
+      dragPreviewRef.current = null;
       dragMovedRef.current = false;
       suppressClickRef.current = false;
+      if (
+        dragPreviewFrameRef.current !== null &&
+        dragPreviewFrameRef.current !== -1
+      ) {
+        cancelAnimationFrame(dragPreviewFrameRef.current);
+      }
+      dragPreviewFrameRef.current = null;
     }
     let active = true;
     sceneSourceRef.current = null;
@@ -526,7 +528,14 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     if (animationFrameRef.current !== null && animationFrameRef.current !== -1) {
       cancelAnimationFrame(animationFrameRef.current);
     }
+    if (
+      dragPreviewFrameRef.current !== null &&
+      dragPreviewFrameRef.current !== -1
+    ) {
+      cancelAnimationFrame(dragPreviewFrameRef.current);
+    }
     animationFrameRef.current = null;
+    dragPreviewFrameRef.current = null;
     scheduledGenerationRef.current = null;
     layoutClientRef.current?.dispose();
     layoutClientRef.current = null;
@@ -558,6 +567,35 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     }
   }, [setHoveredNode]);
 
+  const scheduleDragPreview = useCallback(() => {
+    if (dragPreviewFrameRef.current !== null) return;
+    dragPreviewFrameRef.current = -1;
+    const frame = requestAnimationFrame(() => {
+      dragPreviewFrameRef.current = null;
+      const canvas = canvasRef.current;
+      const scene = sceneRef.current;
+      const preview = dragPreviewRef.current;
+      if (!canvas || !scene || !preview) return;
+      const context = acquireCanvasContext(canvas);
+      if (!context) return;
+      drawGraphScene(context, scene, {
+        width: viewportRef.current.width,
+        height: viewportRef.current.height,
+        focus: focusRef.current,
+        selectedEntityEdgeId: selectedEntityEdgeRef.current,
+        selectedTableEdgeId: selectedTableEdgeRef.current,
+      });
+      drawGraphDragPreview(
+        context,
+        preview.preview,
+        preview.screen,
+      );
+    });
+    if (dragPreviewFrameRef.current === -1) {
+      dragPreviewFrameRef.current = frame;
+    }
+  }, [acquireCanvasContext]);
+
   const beginNodeDrag = useCallback((
     canvas: HTMLCanvasElement,
     event: ReactPointerEvent<HTMLCanvasElement>,
@@ -568,9 +606,20 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     const point = pointFromEvent(canvas, event.nativeEvent);
     const target = hitTest(scene, point);
     if (target?.kind !== "entity-node") return;
+    const preview = createGraphDragPreview(scene, target.id);
+    if (!preview) return;
+    const transform = transformRef.current;
     draggingNodeRef.current = target.id;
     draggingPointerRef.current = event.pointerId;
     dragStartPointRef.current = point;
+    dragPreviewRef.current = {
+      preview,
+      screen: point,
+      world: {
+        x: (point.x - transform.x) / transform.k,
+        y: (point.y - transform.y) / transform.k,
+      },
+    };
     dragMovedRef.current = false;
     suppressClickRef.current = false;
     canvas.setPointerCapture?.(event.pointerId);
@@ -585,8 +634,6 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     if (nodeId == null || draggingPointerRef.current !== event.pointerId) {
       return false;
     }
-    const source = sceneSourceRef.current;
-    if (!source) return true;
     const screen = pointFromEvent(canvas, event.nativeEvent);
     const transform = transformRef.current;
     const world = {
@@ -598,19 +645,23 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     if (start && Math.hypot(screen.x - start.x, screen.y - start.y) >= 3) {
       dragMovedRef.current = true;
     }
-    pinnedPositionsRef.current.set(nodeId, world);
-    const nextLayout = moveLayoutEntity(source.layout, nodeId, world);
-    sceneSourceRef.current = { ...source, layout: nextLayout };
-    setLayout(nextLayout);
-    commitScene(source.graph, nextLayout);
+    const preview = dragPreviewRef.current;
+    if (preview) {
+      dragPreviewRef.current = { ...preview, screen, world };
+      scheduleDragPreview();
+    }
     event.preventDefault();
     event.stopPropagation();
     return true;
-  }, [commitScene]);
+  }, [scheduleDragPreview]);
 
-  const finishNodeDrag = useCallback((
+  const resetNodeDrag = useCallback((
     canvas: HTMLCanvasElement,
     pointerId: number,
+    options: {
+      commit: boolean;
+      suppressClick: boolean;
+    },
   ): boolean => {
     if (
       draggingNodeRef.current == null ||
@@ -618,16 +669,42 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     ) {
       return false;
     }
-    if (canvas.hasPointerCapture?.(pointerId)) {
-      canvas.releasePointerCapture?.(pointerId);
+    const nodeId = draggingNodeRef.current;
+    const moved = dragMovedRef.current;
+    const preview = dragPreviewRef.current;
+    if (
+      dragPreviewFrameRef.current !== null &&
+      dragPreviewFrameRef.current !== -1
+    ) {
+      cancelAnimationFrame(dragPreviewFrameRef.current);
     }
-    suppressClickRef.current = dragMovedRef.current;
+    dragPreviewFrameRef.current = null;
     draggingNodeRef.current = null;
     draggingPointerRef.current = null;
     dragStartPointRef.current = null;
+    dragPreviewRef.current = null;
     dragMovedRef.current = false;
+    suppressClickRef.current = options.suppressClick && moved;
+    if (canvas.hasPointerCapture?.(pointerId)) {
+      canvas.releasePointerCapture?.(pointerId);
+    }
+
+    const source = sceneSourceRef.current;
+    if (options.commit && moved && preview && source) {
+      pinnedPositionsRef.current.set(nodeId, preview.world);
+      const nextLayout = moveLayoutEntity(
+        source.layout,
+        nodeId,
+        preview.world,
+      );
+      sceneSourceRef.current = { ...source, layout: nextLayout };
+      setLayout(nextLayout);
+      commitScene(source.graph, nextLayout);
+    } else {
+      invalidate();
+    }
     return true;
-  }, []);
+  }, [commitScene, invalidate]);
 
   const keyboardTargets = useCallback((): KeyboardTarget[] => {
     if (!projectedGraph || !layout) return [];
@@ -872,10 +949,23 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         }}
         onPointerLeave={() => applyHit(null)}
         onPointerUp={(event) => {
-          finishNodeDrag(event.currentTarget, event.pointerId);
+          resetNodeDrag(event.currentTarget, event.pointerId, {
+            commit: true,
+            suppressClick: true,
+          });
         }}
         onPointerCancel={(event) => {
-          finishNodeDrag(event.currentTarget, event.pointerId);
+          resetNodeDrag(event.currentTarget, event.pointerId, {
+            commit: false,
+            suppressClick: false,
+          });
+          applyHit(null);
+        }}
+        onLostPointerCapture={(event) => {
+          resetNodeDrag(event.currentTarget, event.pointerId, {
+            commit: false,
+            suppressClick: false,
+          });
           applyHit(null);
         }}
         onClick={(event) => {

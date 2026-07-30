@@ -6,6 +6,7 @@ import type {
   SceneEntityNode,
   SceneLabel,
   SceneNode,
+  ScreenPoint,
 } from "./scene";
 
 const GRID_SIZE = 24;
@@ -24,7 +25,6 @@ export interface DrawGraphOptions {
   readonly focus: GraphFocus;
   readonly selectedEntityEdgeId: string | null;
   readonly selectedTableEdgeId: string | null;
-  readonly reduceMotion: boolean;
 }
 
 interface Bounds {
@@ -36,10 +36,16 @@ interface Bounds {
 
 interface DrawState {
   readonly focusedNodeIds: ReadonlySet<string>;
+  readonly focusedTableNodeIds: ReadonlySet<string>;
   readonly focusedEntityEdgeIds: ReadonlySet<string>;
   readonly focusedTableEdgeIds: ReadonlySet<string>;
   readonly activeNodeId: string | null;
   readonly hasFocus: boolean;
+}
+
+export interface GraphDragPreview {
+  readonly node: SceneEntityNode;
+  readonly incidentEdges: readonly SceneEdge[];
 }
 
 function compareText(left: string, right: string): number {
@@ -64,6 +70,7 @@ function focusedDrawState(
   options: DrawGraphOptions,
 ): DrawState {
   const focusedNodeIds = new Set(options.focus.nodeIds);
+  const focusedTableNodeIds = new Set<string>();
   const focusedEntityEdgeIds = new Set(options.focus.edgeIds);
   const focusedTableEdgeIds = new Set<string>();
   let activeNodeId = options.focus.activeNodeId;
@@ -83,12 +90,17 @@ function focusedDrawState(
     const edge = scene.tableEdges.find(
       (candidate) => candidate.id === options.selectedTableEdgeId,
     );
-    if (edge) focusedTableEdgeIds.add(edge.id);
+    if (edge) {
+      focusedTableEdgeIds.add(edge.id);
+      focusedTableNodeIds.add(edge.sourceId);
+      focusedTableNodeIds.add(edge.targetId);
+    }
     activeNodeId = null;
   }
 
   return {
     focusedNodeIds,
+    focusedTableNodeIds,
     focusedEntityEdgeIds,
     focusedTableEdgeIds,
     activeNodeId,
@@ -190,14 +202,24 @@ function drawEdges(
   stroke: string,
   width: number,
   alpha: number,
-  arrowheads: boolean,
 ): void {
   if (edges.length === 0) return;
   semanticLayer(context, alpha, () => {
     for (const edge of edges) {
       drawCurve(context, edge, stroke, width);
-      if (arrowheads) drawArrowhead(context, edge, stroke);
     }
+  });
+}
+
+function drawArrowheads(
+  context: CanvasRenderingContext2D,
+  edges: readonly SceneEdge[],
+  color: string,
+  alpha: number,
+): void {
+  if (edges.length === 0) return;
+  semanticLayer(context, alpha, () => {
+    for (const edge of edges) drawArrowhead(context, edge, color);
   });
 }
 
@@ -379,6 +401,14 @@ export function drawGraphScene(
   const unrelatedNodes = state.hasFocus
     ? scene.entityDots.filter((node) => !state.focusedNodeIds.has(node.id))
     : scene.entityDots;
+  const unrelatedTableNodes = state.hasFocus
+    ? scene.tableNodes.filter(
+      (node) => !state.focusedTableNodeIds.has(node.id),
+    )
+    : scene.tableNodes;
+  const relatedTableNodes = state.hasFocus
+    ? scene.tableNodes.filter((node) => state.focusedTableNodeIds.has(node.id))
+    : [];
   const relatedNodes = state.hasFocus
     ? scene.entityDots.filter(
       (node) =>
@@ -388,11 +418,15 @@ export function drawGraphScene(
   const activeNode = state.activeNodeId == null
     ? null
     : scene.entityDots.find((node) => node.id === state.activeNodeId) ?? null;
-  const labelsByNode = new Map(
-    scene.entityLabels.map((label) => [label.nodeId, label]),
-  );
   const activeLabel = activeNode
-    ? labelsByNode.get(activeNode.id) ?? null
+    ? {
+      nodeId: activeNode.id,
+      text: activeNode.presentation.primary,
+      primary: activeNode.presentation.primary,
+      secondary: activeNode.presentation.secondary,
+      world: activeNode.world,
+      screen: activeNode.screen,
+    }
     : null;
   const occupied: Bounds[] = [];
   if (activeLabel) occupied.push(labelBounds(context, activeLabel));
@@ -405,7 +439,6 @@ export function drawGraphScene(
     TABLE_EDGE,
     1.5,
     state.hasFocus ? UNRELATED_EDGE_OPACITY : scene.layerOpacity.tableEdges,
-    false,
   );
   drawEdges(
     context,
@@ -413,7 +446,6 @@ export function drawGraphScene(
     EDGE,
     1,
     state.hasFocus ? UNRELATED_EDGE_OPACITY : scene.layerOpacity.entityEdges,
-    scene.zoomLevel === "detail" && !state.hasFocus,
   );
 
   drawEntityNodes(
@@ -423,7 +455,7 @@ export function drawGraphScene(
     null,
   );
   semanticLayer(context, state.hasFocus ? UNRELATED_NODE_OPACITY : 1, () => {
-    for (const table of scene.tableNodes) drawTableNode(context, table);
+    for (const table of unrelatedTableNodes) drawTableNode(context, table);
   });
   const unrelatedLabels = scene.entityLabels
     .filter((label) =>
@@ -439,13 +471,15 @@ export function drawGraphScene(
   );
 
   drawEntityNodes(context, relatedNodes, 0.82, null);
+  semanticLayer(context, 1, () => {
+    for (const table of relatedTableNodes) drawTableNode(context, table);
+  });
   drawEdges(
     context,
     relatedTableEdges,
     TABLE_EDGE,
     FOCUS_EDGE_WIDTH,
     1,
-    true,
   );
   drawEdges(
     context,
@@ -453,7 +487,6 @@ export function drawGraphScene(
     ENTITY_SELECTED,
     FOCUS_EDGE_WIDTH,
     1,
-    true,
   );
 
   if (activeNode) drawEntityNodes(context, [activeNode], 1, activeNode.id);
@@ -477,4 +510,83 @@ export function drawGraphScene(
       if (!state.hasFocus || focused) drawEdgeLabel(context, label, focused);
     }
   });
+
+  if (scene.zoomLevel === "detail" && !state.hasFocus) {
+    drawArrowheads(
+      context,
+      unrelatedEntityEdges,
+      EDGE,
+      scene.layerOpacity.entityEdges,
+    );
+  }
+  drawArrowheads(context, relatedTableEdges, TABLE_EDGE, 1);
+  drawArrowheads(context, relatedEntityEdges, ENTITY_SELECTED, 1);
+}
+
+export function createGraphDragPreview(
+  scene: RenderScene,
+  nodeId: string,
+): GraphDragPreview | null {
+  const node = scene.entityDots.find((candidate) => candidate.id === nodeId);
+  if (!node) return null;
+  return {
+    node,
+    incidentEdges: scene.entityEdges.filter(
+      (edge) => edge.sourceId === nodeId || edge.targetId === nodeId,
+    ),
+  };
+}
+
+function shiftedPreviewEdge(
+  edge: SceneEdge,
+  nodeId: string,
+  delta: ScreenPoint,
+): SceneEdge {
+  const shiftsFrom = edge.sourceId === nodeId;
+  const shiftsTo = edge.targetId === nodeId;
+  const controlFactor = (shiftsFrom ? 0.5 : 0) + (shiftsTo ? 0.5 : 0);
+  const shift = (point: ScreenPoint, factor: number): ScreenPoint => ({
+    x: point.x + delta.x * factor,
+    y: point.y + delta.y * factor,
+  });
+  return {
+    ...edge,
+    geometry: {
+      ...edge.geometry,
+      from: shift(edge.geometry.from, shiftsFrom ? 1 : 0),
+      control: shift(edge.geometry.control, controlFactor),
+      to: shift(edge.geometry.to, shiftsTo ? 1 : 0),
+    },
+  };
+}
+
+export function drawGraphDragPreview(
+  context: CanvasRenderingContext2D,
+  preview: GraphDragPreview,
+  screen: ScreenPoint,
+): void {
+  const delta = {
+    x: screen.x - preview.node.screen.x,
+    y: screen.y - preview.node.screen.y,
+  };
+  const edges = preview.incidentEdges.map((edge) =>
+    shiftedPreviewEdge(edge, preview.node.id, delta)
+  );
+  drawEdges(context, edges, ENTITY_SELECTED, FOCUS_EDGE_WIDTH, 1);
+  const node = {
+    ...preview.node,
+    screen: { ...screen },
+  };
+  drawEntityNodes(context, [node], 1, node.id);
+  semanticLayer(context, 1, () =>
+    drawEntityLabel(context, {
+      nodeId: node.id,
+      text: node.presentation.primary,
+      primary: node.presentation.primary,
+      secondary: node.presentation.secondary,
+      world: node.world,
+      screen: node.screen,
+    })
+  );
+  drawArrowheads(context, edges, ENTITY_SELECTED, 1);
 }
