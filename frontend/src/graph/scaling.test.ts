@@ -302,6 +302,43 @@ describe("7000-entity graph scaling", () => {
     );
   }, 10_000);
 
+  it("keeps linked fallback components visible at minimum overview zoom", () => {
+    const mixedGraph = mixedComponentGraph(false);
+    const layout = computeFallbackScatterLayout(mixedGraph, VIEWPORT);
+    const allPoints = [...layout.tableNodes, ...layout.entityNodes];
+    const left = Math.min(...allPoints.map((point) => point.x));
+    const right = Math.max(...allPoints.map((point) => point.x));
+    const top = Math.min(...allPoints.map((point) => point.y));
+    const bottom = Math.max(...allPoints.map((point) => point.y));
+    const width = right - left;
+    const height = bottom - top;
+    const scale = Math.max(
+      0.02,
+      Math.min(
+        2,
+        (VIEWPORT.width - 96) / (width + 144),
+        (VIEWPORT.height - 96) / (height + 144),
+      ),
+    );
+    const centerX = (left + right) / 2;
+    const centerY = (top + bottom) / 2;
+    const linkedNodeIds = new Set(
+      mixedGraph.entity_edges.flatMap((edge) => [edge.source, edge.target]),
+    );
+    const visibleLinkedNodes = layout.entityNodes
+      .filter((node) => linkedNodeIds.has(node.id))
+      .filter((node) => {
+        const screenX = VIEWPORT.width / 2 + (node.x - centerX) * scale;
+        const screenY = VIEWPORT.height / 2 + (node.y - centerY) * scale;
+        return screenX >= 48 && screenX <= VIEWPORT.width - 48 &&
+          screenY >= 48 && screenY <= VIEWPORT.height - 48;
+      });
+
+    expect.soft(width).toBeLessThanOrEqual(43_056);
+    expect.soft(height).toBeLessThanOrEqual(25_056);
+    expect.soft(visibleLinkedNodes).toHaveLength(60);
+  }, 10_000);
+
   it("renders through one canvas without per-entity DOM nodes", async () => {
     const { container } = render(createElement(GraphCanvas));
 

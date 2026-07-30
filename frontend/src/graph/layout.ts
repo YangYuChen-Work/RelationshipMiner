@@ -463,36 +463,66 @@ function translatedBounds(
   };
 }
 
-function expandedEnvelope(
-  envelope: ComponentBound | undefined,
-  bounds: ComponentBound,
-): ComponentBound {
-  if (!envelope) return { ...bounds };
+interface ScalarInterval {
+  start: number;
+  end: number;
+}
+
+function axisOverlapInterval(
+  movingStart: number,
+  movingEnd: number,
+  obstacleStart: number,
+  obstacleEnd: number,
+  velocity: number,
+): ScalarInterval | null {
+  if (Math.abs(velocity) < 0.000_001) {
+    return movingEnd > obstacleStart && obstacleEnd > movingStart
+      ? {
+        start: Number.NEGATIVE_INFINITY,
+        end: Number.POSITIVE_INFINITY,
+      }
+      : null;
+  }
+  const first = (obstacleStart - movingEnd) / velocity;
+  const second = (obstacleEnd - movingStart) / velocity;
   return {
-    left: Math.min(envelope.left, bounds.left),
-    right: Math.max(envelope.right, bounds.right),
-    top: Math.min(envelope.top, bounds.top),
-    bottom: Math.max(envelope.bottom, bounds.bottom),
+    start: Math.min(first, second),
+    end: Math.max(first, second),
   };
 }
 
-function escapeComponentEnvelope(
+function compactComponentTranslation(
   bounds: ComponentBound,
-  envelope: ComponentBound,
+  occupiedBounds: readonly ComponentBound[],
   direction: LayoutPoint,
 ): LayoutPoint {
-  const epsilon = 1;
-  const escapeX = Math.abs(direction.x) < 0.000_001
-    ? Number.POSITIVE_INFINITY
-    : direction.x > 0
-    ? (envelope.right - bounds.left + epsilon) / direction.x
-    : (bounds.right - envelope.left + epsilon) / -direction.x;
-  const escapeY = Math.abs(direction.y) < 0.000_001
-    ? Number.POSITIVE_INFINITY
-    : direction.y > 0
-    ? (envelope.bottom - bounds.top + epsilon) / direction.y
-    : (bounds.bottom - envelope.top + epsilon) / -direction.y;
-  const distance = Math.min(escapeX, escapeY);
+  const forbidden = occupiedBounds.flatMap((obstacle) => {
+    const x = axisOverlapInterval(
+      bounds.left,
+      bounds.right,
+      obstacle.left,
+      obstacle.right,
+      direction.x,
+    );
+    const y = axisOverlapInterval(
+      bounds.top,
+      bounds.bottom,
+      obstacle.top,
+      obstacle.bottom,
+      direction.y,
+    );
+    if (!x || !y) return [];
+    const start = Math.max(0, x.start, y.start);
+    const end = Math.min(x.end, y.end);
+    return end > start ? [{ start, end }] : [];
+  }).sort((left, right) => left.start - right.start || left.end - right.end);
+  const epsilon = 0.001;
+  let distance = 0;
+  for (const interval of forbidden) {
+    if (interval.end <= distance) continue;
+    if (interval.start > distance + epsilon) break;
+    distance = interval.end + epsilon;
+  }
   return {
     x: direction.x * distance,
     y: direction.y * distance,
@@ -571,6 +601,37 @@ function locallySeparateComponentBounds(
   return false;
 }
 
+function compactOversizedComponents(
+  components: readonly Component[],
+  positions: ReadonlyMap<string, SimulationEntity>,
+): boolean {
+  let compacted = false;
+  for (const component of components) {
+    if (component.nodeIds.length < 2) continue;
+    const members = component.nodeIds
+      .map((id) => positions.get(id))
+      .filter((node): node is SimulationEntity => Boolean(node));
+    const left = Math.min(...members.map((node) => node.x));
+    const right = Math.max(...members.map((node) => node.x));
+    const top = Math.min(...members.map((node) => node.y));
+    const bottom = Math.max(...members.map((node) => node.y));
+    const largestExtent = Math.max(right - left, bottom - top);
+    const targetExtent = tableScatterSpan(members.length);
+    const scale = Math.min(1, targetExtent / Math.max(1, largestExtent));
+    if (scale >= 1) continue;
+    compacted = true;
+    const centerX = members.reduce((sum, node) => sum + node.x, 0) /
+      members.length;
+    const centerY = members.reduce((sum, node) => sum + node.y, 0) /
+      members.length;
+    for (const node of members) {
+      node.x = centerX + (node.x - centerX) * scale;
+      node.y = centerY + (node.y - centerY) * scale;
+    }
+  }
+  return compacted;
+}
+
 function separateComponentBounds(
   components: readonly Component[],
   nodes: SimulationEntity[],
@@ -582,6 +643,9 @@ function separateComponentBounds(
     return;
   }
   const positions = new Map(nodes.map((node) => [node.id, node]));
+  if (compactOversizedComponents(components, positions)) {
+    relaxPointCollisions(nodes, ENTITY_COLLISION_RADIUS * 2, 96);
+  }
   if (
     components.length <= 64 &&
     locallySeparateComponentBounds(components, positions)
@@ -591,7 +655,6 @@ function separateComponentBounds(
   const cellSize = ENTITY_COLLISION_RADIUS * 4;
   const occupiedBounds: ComponentBound[] = [];
   const cells = new Map<string, number[]>();
-  let envelope: ComponentBound | undefined;
 
   const forEachCell = (
     bounds: ComponentBound,
@@ -614,7 +677,6 @@ function separateComponentBounds(
       if (bucket) bucket.push(index);
       else cells.set(key, [index]);
     });
-    envelope = expandedEnvelope(envelope, bounds);
   };
   const overlapsOccupied = (bounds: ComponentBound) => {
     const seen = new Set<number>();
@@ -645,7 +707,11 @@ function separateComponentBounds(
       continue;
     }
     const direction = stableUnitVector(`${component.id}:organic-pack`);
-    const delta = escapeComponentEnvelope(bounds, envelope!, direction);
+    const delta = compactComponentTranslation(
+      bounds,
+      occupiedBounds,
+      direction,
+    );
     const movedBounds = translatedBounds(bounds, delta.x, delta.y);
     translateComponent(component, positions, delta.x, delta.y);
     insert(movedBounds);
