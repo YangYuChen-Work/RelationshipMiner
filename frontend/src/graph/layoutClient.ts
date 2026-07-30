@@ -10,6 +10,7 @@ interface LayoutWorkerRequest {
   requestId: number;
   graph: LayoutGraph;
   viewport: Viewport;
+  seedOffset?: number;
 }
 
 interface LayoutWorkerResponse {
@@ -67,6 +68,7 @@ export class LayoutClient {
   layoutGraph(
     graph: SemanticGraphData | LayoutGraph,
     viewport: Viewport,
+    seedOffset?: number,
   ): Promise<GraphLayout> {
     if (this.disposed) return Promise.reject(new LayoutClientDisposedError());
     if (this.unavailableError) return Promise.reject(this.unavailableError);
@@ -83,6 +85,7 @@ export class LayoutClient {
         requestId,
         graph: compactLayoutGraph(graph),
         viewport: { ...viewport },
+        seedOffset,
       };
       this.postQueuedRequest();
     });
@@ -183,9 +186,10 @@ let sharedClient: LayoutClient | null = null;
 export function layoutGraph(
   graph: SemanticGraphData | LayoutGraph,
   viewport: Viewport,
+  seedOffset?: number,
 ) {
   sharedClient ??= new LayoutClient();
-  return sharedClient.layoutGraph(graph, viewport);
+  return sharedClient.layoutGraph(graph, viewport, seedOffset);
 }
 
 export function resetLayoutGraph() {

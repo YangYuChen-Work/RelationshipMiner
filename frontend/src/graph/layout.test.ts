@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { SemanticGraphData } from "../api/analysis";
-import { computeGroupedLayout } from "./layout";
+import {
+  compactLayoutGraph,
+  computeFallbackScatterLayout,
+  computeNebulaLayout,
+  ENTITY_COLLISION_RADIUS,
+  moveLayoutEntity,
+  type GraphLayout,
+  type LayoutGraph,
+} from "./layout";
 import {
   createLayoutClient,
   LayoutClient,
@@ -25,167 +33,338 @@ function graphFixture(): SemanticGraphData {
       { id: "missing-table", source_table: "orders", target_table: "missing", relation_types: [], strong_count: 0, weak_count: 0, entity_edge_count: 0, average_confidence: 0, supporting_entity_edges: [] },
     ],
     entity_edges: [
-      { id: "order-user", source: "order-1", target: "user-1", relations: [] },
+      {
+        id: "order-user",
+        source: "order-1",
+        target: "user-1",
+        relations: [{
+          source: "order-1",
+          target: "user-1",
+          relation_type: "owns",
+          direction: "source_to_target",
+          strength: "strong",
+          confidence: 1,
+          explanation: "Orders belong to users.",
+          evidence: [],
+          model_id: null,
+          task_id: null,
+        }],
+      },
       { id: "missing-entity", source: "order-1", target: "missing", relations: [] },
     ],
   };
 }
 
-describe("computeGroupedLayout", () => {
-  it("places separated table anchors with their entities orbiting instead of emitting table rectangles", () => {
-    const layout = computeGroupedLayout(graphFixture(), { width: 1200, height: 800 });
+function layoutGraphFixture(
+  tableCount: number,
+  entityCount: number,
+  edges: LayoutGraph["entity_edges"] = [],
+): LayoutGraph {
+  return {
+    table_nodes: Array.from({ length: tableCount }, (_, index) => ({
+      id: `table-${index}`,
+      display_name: `Table ${index}`,
+    })),
+    entity_nodes: Array.from({ length: entityCount }, (_, index) => ({
+      id: `entity-${index}`,
+      table_id: `table-${index % tableCount}`,
+      class_name: null,
+    })),
+    table_edges: [],
+    entity_edges: edges,
+  };
+}
 
-    expect(layout.tableNodes).toHaveLength(2);
-    expect(Math.hypot(
-      layout.tableNodes[0].x - layout.tableNodes[1].x,
-      layout.tableNodes[0].y - layout.tableNodes[1].y,
-    )).toBeGreaterThanOrEqual(240);
-    for (const entity of layout.entityNodes) {
-      const anchor = layout.tableNodes.find((table) => table.id === entity.tableId)!;
-      expect(Math.hypot(entity.x - anchor.x, entity.y - anchor.y)).toBeGreaterThan(0);
-    }
-    expect(layout.tableEdges).toHaveLength(1);
-    expect(layout.entityEdges).toHaveLength(1);
-    const orders = layout.tableNodes.find((node) => node.id === "orders")!;
-    const users = layout.tableNodes.find((node) => node.id === "users")!;
-    const order = layout.entityNodes.find((entity) => entity.id === "order-1")!;
-    const user = layout.entityNodes.find((entity) => entity.id === "user-1")!;
-    expect(layout.tableEdges[0]).toMatchObject({
-      source: "orders",
-      target: "users",
-      from: { x: orders.x, y: orders.y },
-      to: { x: users.x, y: users.y },
-    });
-    expect(layout.entityEdges[0]).toMatchObject({
-      source: "order-1",
-      target: "user-1",
-      from: { x: order.x, y: order.y },
-      to: { x: user.x, y: user.y },
-    });
-  });
+function pointDistance(
+  left: { x: number; y: number },
+  right: { x: number; y: number },
+) {
+  return Math.hypot(left.x - right.x, left.y - right.y);
+}
 
-  it("orders known process classes before stable fallback table IDs", () => {
-    const tables = ["zeta", "Assembly", "MEStep", "MEOperation", "MEProcess", "alpha"];
-    const graph: SemanticGraphData = {
-      table_nodes: tables.map((id) => ({
-        id,
-        display_name: id,
-        entity_count: 0,
-      })),
-      entity_nodes: [],
-      table_edges: [],
-      entity_edges: [],
-    };
+function circularityRatio(layout: GraphLayout, tableId: string): number {
+  const table = layout.tableNodes.find((node) => node.id === tableId)!;
+  const radii = layout.entityNodes
+    .filter((node) => node.tableId === tableId)
+    .map((node) => Math.round(pointDistance(node, table)));
+  const counts = new Map<number, number>();
+  for (const radius of radii) {
+    counts.set(radius, (counts.get(radius) ?? 0) + 1);
+  }
+  return Math.max(0, ...counts.values()) / radii.length;
+}
+
+function paddedBounds(
+  nodes: readonly { x: number; y: number }[],
+  padding: number,
+) {
+  return {
+    left: Math.min(...nodes.map((node) => node.x)) - padding,
+    right: Math.max(...nodes.map((node) => node.x)) + padding,
+    top: Math.min(...nodes.map((node) => node.y)) - padding,
+    bottom: Math.max(...nodes.map((node) => node.y)) + padding,
+  };
+}
+
+describe("computeNebulaLayout", () => {
+  it("returns finite deterministic coordinates and changes only for a new seed", () => {
+    const graph = layoutGraphFixture(2, 20, [
+      { id: "edge-0", source: "entity-0", target: "entity-2", weight: 1 },
+      { id: "edge-1", source: "entity-1", target: "entity-3", weight: 0.35 },
+    ]);
+    const viewport = { width: 1280, height: 720 };
+    const layout = computeNebulaLayout(graph, viewport);
 
     expect(
-      computeGroupedLayout(graph, { width: 1800, height: 600 })
-        .tableNodes.map((node) => node.id),
-    ).toEqual([
-      "MEProcess",
-      "MEOperation",
-      "MEStep",
-      "Assembly",
-      "alpha",
-      "zeta",
-    ]);
+      layout.entityNodes.every(({ x, y }) =>
+        Number.isFinite(x) && Number.isFinite(y)
+      ),
+    ).toBe(true);
+    expect(computeNebulaLayout(graph, viewport)).toEqual(layout);
+    expect(computeNebulaLayout(graph, viewport, { seedOffset: 1 }))
+      .not.toEqual(layout);
   });
 
-  it("is stable under input reordering", () => {
-    const first = graphFixture();
-    const second = {
-      ...first,
-      table_nodes: [...first.table_nodes].reverse(),
-      entity_nodes: [...first.entity_nodes].reverse(),
-      table_edges: [...first.table_edges].reverse(),
-      entity_edges: [...first.entity_edges].reverse(),
-    };
-    expect(computeGroupedLayout(first, { width: 800, height: 600 })).toEqual(
-      computeGroupedLayout(second, { width: 800, height: 600 }),
+  it("pulls strongly connected pairs closer than unrelated pairs on average", () => {
+    const strongEdges = Array.from({ length: 6 }, (_, index) => ({
+      id: `strong-${index}`,
+      source: `entity-${index * 2}`,
+      target: `entity-${index * 2 + 1}`,
+      weight: 1,
+    }));
+    const graph = layoutGraphFixture(1, 12, strongEdges);
+    const layout = computeNebulaLayout(graph, { width: 1280, height: 720 });
+    const positions = new Map(layout.entityNodes.map((node) => [node.id, node]));
+    const average = (values: readonly number[]) =>
+      values.reduce((sum, value) => sum + value, 0) / values.length;
+    const strongDistances = strongEdges.map((edge) =>
+      pointDistance(positions.get(edge.source)!, positions.get(edge.target)!)
+    );
+    const unrelatedDistances = Array.from({ length: 6 }, (_, index) =>
+      pointDistance(
+        positions.get(`entity-${index * 2}`)!,
+        positions.get(`entity-${(index * 2 + 5) % 12}`)!,
+      )
+    );
+
+    expect(average(strongDistances)).toBeLessThan(
+      average(unrelatedDistances),
     );
   });
 
-  it("places all 7,000 entities on finite expanding rings around ten anchors", () => {
-    const largeGraph: SemanticGraphData = {
-      table_nodes: Array.from({ length: 10 }, (_, index) => ({ id: `table-${index}`, display_name: `Table ${index}`, entity_count: 700 })),
-      entity_nodes: Array.from({ length: 7_000 }, (_, index) => ({ id: `entity-${index}`, table_id: `table-${index % 10}`, display_name: `Entity ${index}`, class_name: null, dimensions: {} })),
-      table_edges: [],
-      entity_edges: [],
-    };
-    const layout = computeGroupedLayout(largeGraph, { width: 1600, height: 900 });
-    expect(layout.tableNodes).toHaveLength(10);
-    expect(layout.entityNodes).toHaveLength(7_000);
-    expect(layout.entityNodes.every((node) => Number.isFinite(node.x) && Number.isFinite(node.y))).toBe(true);
-    const firstAnchor = layout.tableNodes.find((node) => node.id === "table-0")!;
-    const radii = layout.entityNodes
-      .filter((node) => node.tableId === firstAnchor.id)
-      .map((node) => Math.hypot(node.x - firstAnchor.x, node.y - firstAnchor.y));
-    expect(Math.max(...radii)).toBeGreaterThan(Math.min(...radii));
+  it("avoids placing a table group on a shared rounded radius", () => {
+    const graph = layoutGraphFixture(1, 20);
+    const layout = computeNebulaLayout(graph, { width: 1280, height: 720 });
+
+    expect(circularityRatio(layout, "table-0")).toBeLessThanOrEqual(0.7);
   });
 
-  it("uses additional rings for a non-square 701-entity cluster", () => {
-    const graph: SemanticGraphData = {
-      table_nodes: [{ id: "only", display_name: "Only", entity_count: 701 }],
-      entity_nodes: Array.from({ length: 701 }, (_, index) => ({
-        id: `entity-${index}`,
-        table_id: "only",
-        display_name: `Entity ${index}`,
-        class_name: null,
-        dimensions: {},
+  it("keeps a representative 20-node fixture outside label collision range", () => {
+    const graph = layoutGraphFixture(1, 20);
+    const layout = computeNebulaLayout(graph, { width: 1280, height: 720 });
+    let minimumDistance = Number.POSITIVE_INFINITY;
+    for (let left = 0; left < layout.entityNodes.length; left += 1) {
+      for (let right = left + 1; right < layout.entityNodes.length; right += 1) {
+        minimumDistance = Math.min(
+          minimumDistance,
+          pointDistance(layout.entityNodes[left], layout.entityNodes[right]),
+        );
+      }
+    }
+
+    expect(minimumDistance).toBeGreaterThanOrEqual(
+      ENTITY_COLLISION_RADIUS * 2 - 2,
+    );
+  });
+
+  it("separates padded bounds for disconnected components", () => {
+    const edges = [
+      { id: "a-0", source: "entity-0", target: "entity-1", weight: 1 },
+      { id: "a-1", source: "entity-1", target: "entity-2", weight: 1 },
+      { id: "b-0", source: "entity-3", target: "entity-4", weight: 1 },
+      { id: "b-1", source: "entity-4", target: "entity-5", weight: 1 },
+    ];
+    const layout = computeNebulaLayout(
+      layoutGraphFixture(1, 6, edges),
+      { width: 1280, height: 720 },
+    );
+    const byId = new Map(layout.entityNodes.map((node) => [node.id, node]));
+    const first = paddedBounds(
+      ["entity-0", "entity-1", "entity-2"].map((id) => byId.get(id)!),
+      20,
+    );
+    const second = paddedBounds(
+      ["entity-3", "entity-4", "entity-5"].map((id) => byId.get(id)!),
+      20,
+    );
+
+    expect(
+      first.right <= second.left ||
+        second.right <= first.left ||
+        first.bottom <= second.top ||
+        second.bottom <= first.top,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["nebula", computeNebulaLayout],
+    ["fallback", computeFallbackScatterLayout],
+  ])("separates more than 256 disconnected multi-node components in %s", (
+    _label,
+    computeLayout,
+  ) => {
+    const componentCount = 257;
+    const graph = layoutGraphFixture(
+      1,
+      componentCount * 2,
+      Array.from({ length: componentCount }, (_, index) => ({
+        id: `component-edge-${index}`,
+        source: `entity-${index * 2}`,
+        target: `entity-${index * 2 + 1}`,
+        weight: 1,
       })),
-      table_edges: [],
-      entity_edges: [],
+    );
+    const layout = computeLayout(graph, { width: 4_000, height: 3_000 });
+    const byId = new Map(layout.entityNodes.map((node) => [node.id, node]));
+    const bounds = Array.from({ length: componentCount }, (_, index) =>
+      paddedBounds(
+        [
+          byId.get(`entity-${index * 2}`)!,
+          byId.get(`entity-${index * 2 + 1}`)!,
+        ],
+        20,
+      )
+    );
+    let overlapCount = 0;
+    for (let left = 0; left < bounds.length; left += 1) {
+      for (let right = left + 1; right < bounds.length; right += 1) {
+        const first = bounds[left];
+        const second = bounds[right];
+        const overlaps = first.right > second.left &&
+          second.right > first.left &&
+          first.bottom > second.top &&
+          second.bottom > first.top;
+        if (overlaps) overlapCount += 1;
+      }
+    }
+
+    expect(overlapCount).toBe(0);
+  }, 15_000);
+
+  it("is independent of input ordering after sorting each output collection", () => {
+    const graph = layoutGraphFixture(2, 12, [
+      { id: "edge-0", source: "entity-0", target: "entity-1", weight: 1 },
+      { id: "edge-1", source: "entity-2", target: "entity-3", weight: 0.35 },
+    ]);
+    const permuted: LayoutGraph = {
+      table_nodes: [...graph.table_nodes].reverse(),
+      entity_nodes: [...graph.entity_nodes].reverse(),
+      table_edges: [...graph.table_edges].reverse(),
+      entity_edges: [...graph.entity_edges].reverse(),
     };
-    const layout = computeGroupedLayout(graph, { width: 1, height: 1 });
-    expect(layout.entityNodes).toHaveLength(701);
-    expect(new Set(layout.entityNodes.map((entity) =>
-      Math.round(Math.hypot(
-        entity.x - layout.tableNodes[0].x,
-        entity.y - layout.tableNodes[0].y,
-      )),
-    )).size).toBeGreaterThan(1);
+    const sortLayout = (layout: GraphLayout): GraphLayout => ({
+      tableNodes: [...layout.tableNodes].sort((a, b) => a.id.localeCompare(b.id)),
+      entityNodes: [...layout.entityNodes].sort((a, b) => a.id.localeCompare(b.id)),
+      tableEdges: [...layout.tableEdges].sort((a, b) => a.id.localeCompare(b.id)),
+      entityEdges: [...layout.entityEdges].sort((a, b) => a.id.localeCompare(b.id)),
+    });
+
+    expect(sortLayout(computeNebulaLayout(graph, { width: 800, height: 600 })))
+      .toEqual(
+        sortLayout(
+          computeNebulaLayout(permuted, { width: 800, height: 600 }),
+        ),
+      );
   });
 
-  it("returns finite output for empty, unknown-owned, tiny, and zero viewports", () => {
-    const empty: SemanticGraphData = {
-      table_nodes: [],
-      entity_nodes: [],
-      table_edges: [],
-      entity_edges: [],
-    };
-    expect(computeGroupedLayout(empty, { width: 0, height: 0 })).toEqual({
+  it("provides a deterministic non-circular fallback scatter", () => {
+    const graph = layoutGraphFixture(1, 20);
+    const first = computeFallbackScatterLayout(
+      graph,
+      { width: 1280, height: 720 },
+      { seedOffset: 4 },
+    );
+
+    expect(
+      computeFallbackScatterLayout(
+        graph,
+        { width: 1280, height: 720 },
+        { seedOffset: 4 },
+      ),
+    ).toEqual(first);
+    expect(circularityRatio(first, "table-0")).toBeLessThanOrEqual(0.7);
+  });
+
+  it("moves one entity and only its incident edge endpoints without mutation", () => {
+    const layout = computeNebulaLayout(
+      layoutGraphFixture(1, 4, [
+        { id: "edge-0", source: "entity-0", target: "entity-1", weight: 1 },
+        { id: "edge-1", source: "entity-2", target: "entity-0", weight: 1 },
+        { id: "edge-2", source: "entity-2", target: "entity-3", weight: 1 },
+      ]),
+      { width: 800, height: 600 },
+    );
+    const before = structuredClone(layout);
+    const moved = moveLayoutEntity(layout, "entity-0", { x: 17, y: 29 });
+
+    expect(layout).toEqual(before);
+    expect(moved).not.toBe(layout);
+    expect(moved.tableNodes).toEqual(layout.tableNodes);
+    expect(moved.tableEdges).toEqual(layout.tableEdges);
+    expect(moved.entityNodes.filter((node) => node.id !== "entity-0"))
+      .toEqual(layout.entityNodes.filter((node) => node.id !== "entity-0"));
+    expect(moved.entityNodes.find((node) => node.id === "entity-0"))
+      .toMatchObject({ x: 17, y: 29 });
+    expect(moved.entityEdges.find((edge) => edge.id === "edge-0")?.from)
+      .toEqual({ x: 17, y: 29 });
+    expect(moved.entityEdges.find((edge) => edge.id === "edge-1")?.to)
+      .toEqual({ x: 17, y: 29 });
+    expect(moved.entityEdges.find((edge) => edge.id === "edge-2"))
+      .toEqual(layout.entityEdges.find((edge) => edge.id === "edge-2"));
+  });
+
+  it("returns finite output for empty, unknown-owned, and zero viewports", () => {
+    const empty = layoutGraphFixture(0, 0);
+    expect(computeNebulaLayout(empty, { width: 0, height: 0 })).toEqual({
       tableNodes: [],
       entityNodes: [],
       tableEdges: [],
       entityEdges: [],
     });
+    const base = layoutGraphFixture(1, 2);
+    const graph: LayoutGraph = {
+      ...base,
+      entity_nodes: [
+        ...base.entity_nodes,
+        { id: "orphan", table_id: "unknown", class_name: null },
+      ],
+    };
+    const layout = computeNebulaLayout(graph, { width: 0, height: 0 });
 
-    const graph = graphFixture();
-    graph.entity_nodes.push({
-      id: "orphan",
-      table_id: "unknown",
-      display_name: "Orphan",
-      class_name: null,
-      dimensions: {},
-    });
-    const layout = computeGroupedLayout(graph, { width: 0, height: 0 });
-    expect(layout.entityNodes.some((entity) => entity.id === "orphan")).toBe(false);
-    const numericValues = [
-      ...layout.tableNodes.flatMap((node) => [node.x, node.y]),
-      ...layout.entityNodes.flatMap((entity) => [entity.x, entity.y]),
-      ...layout.tableEdges.flatMap((edge) => [
-        edge.from.x,
-        edge.from.y,
-        edge.to.x,
-        edge.to.y,
-      ]),
-      ...layout.entityEdges.flatMap((edge) => [
-        edge.from.x,
-        edge.from.y,
-        edge.to.x,
-        edge.to.y,
-      ]),
-    ];
-    expect(numericValues.every(Number.isFinite)).toBe(true);
+    expect(layout.entityNodes.some((node) => node.id === "orphan")).toBe(false);
+    expect(
+      layout.entityNodes.every(({ x, y }) =>
+        Number.isFinite(x) && Number.isFinite(y)
+      ),
+    ).toBe(true);
+  });
+
+  it("recenters a table-only layout in viewport coordinates", () => {
+    const layout = computeNebulaLayout(
+      layoutGraphFixture(3, 0),
+      { width: 1_000, height: 600 },
+    );
+    const horizontalCenter = (
+      Math.min(...layout.tableNodes.map((node) => node.x)) +
+      Math.max(...layout.tableNodes.map((node) => node.x))
+    ) / 2;
+    const verticalCenter = (
+      Math.min(...layout.tableNodes.map((node) => node.y)) +
+      Math.max(...layout.tableNodes.map((node) => node.y))
+    ) / 2;
+
+    expect(horizontalCenter).toBeCloseTo(500);
+    expect(verticalCenter).toBeCloseTo(300);
   });
 
   it.each([
@@ -194,11 +373,53 @@ describe("computeGroupedLayout", () => {
     ["table edge", "table_edges"],
     ["entity edge", "entity_edges"],
   ] as const)("rejects duplicate %s IDs", (label, collection) => {
-    const graph = graphFixture();
-    graph[collection].push(graph[collection][0] as never);
+    const fixture = layoutGraphFixture(2, 2, [
+      { id: "edge-0", source: "entity-0", target: "entity-1", weight: 1 },
+    ]);
+    const base: LayoutGraph = {
+      ...fixture,
+      table_edges: [{
+        id: "table-edge-0",
+        source_table: "table-0",
+        target_table: "table-1",
+      }],
+    };
+    const graph = {
+      ...base,
+      [collection]: [...base[collection], base[collection][0]],
+    } as LayoutGraph;
     expect(() =>
-      computeGroupedLayout(graph, { width: 800, height: 600 }),
+      computeNebulaLayout(graph, { width: 800, height: 600 }),
     ).toThrow(new RegExp(`Duplicate ${label} id`));
+  });
+});
+
+describe("compactLayoutGraph", () => {
+  it("assigns strong and all-weak entity edge weights", () => {
+    const graph = graphFixture();
+    graph.entity_edges.push({
+      id: "weak-only",
+      source: "order-2",
+      target: "user-2",
+      relations: [{
+        source: "order-2",
+        target: "user-2",
+        relation_type: "resembles",
+        direction: "undirected",
+        strength: "weak",
+        confidence: 0.5,
+        explanation: "Weak semantic similarity.",
+        evidence: [],
+        model_id: null,
+        task_id: null,
+      }],
+    });
+
+    expect(compactLayoutGraph(graph).entity_edges).toEqual([
+      { id: "order-user", source: "order-1", target: "user-1", weight: 1 },
+      { id: "missing-entity", source: "order-1", target: "missing", weight: 0.35 },
+      { id: "weak-only", source: "order-2", target: "user-2", weight: 0.35 },
+    ]);
   });
 });
 
@@ -231,6 +452,33 @@ class FakeWorker {
 }
 
 describe("LayoutClient", () => {
+  it("forwards an explicit relayout seed to the Worker", async () => {
+    const worker = new FakeWorker();
+    const client = new LayoutClient(worker as unknown as Worker);
+    const pending = client.layoutGraph(
+      graphFixture(),
+      { width: 800, height: 600 },
+      3,
+    );
+    const request = worker.messages[0] as {
+      requestId: number;
+      graph: LayoutGraph;
+      seedOffset?: number;
+    };
+
+    expect(request).toMatchObject({
+      graph: expect.any(Object),
+      seedOffset: 3,
+    });
+    const layout = computeNebulaLayout(
+      request.graph,
+      { width: 800, height: 600 },
+      { seedOffset: request.seedOffset },
+    );
+    worker.reply({ requestId: request.requestId, layout });
+    await expect(pending).resolves.toBe(layout);
+  });
+
   it("creates isolated clients whose disposal does not terminate a sibling", async () => {
     const firstWorker = new FakeWorker();
     const secondWorker = new FakeWorker();
@@ -243,7 +491,10 @@ describe("LayoutClient", () => {
     expect(secondWorker.terminateCount).toBe(0);
 
     const request = secondWorker.messages[0] as { requestId: number };
-    const layout = computeGroupedLayout(graphFixture(), { width: 800, height: 600 });
+    const layout = computeNebulaLayout(
+      compactLayoutGraph(graphFixture()),
+      { width: 800, height: 600 },
+    );
     secondWorker.reply({ requestId: request.requestId, layout });
     await expect(pending).resolves.toBe(layout);
   });
@@ -257,7 +508,10 @@ describe("LayoutClient", () => {
     const third = client.layoutGraph(graph, { width: 320, height: 240 });
     const secondRejection = second.catch((error: unknown) => error);
 
-    const firstLayout = computeGroupedLayout(graph, { width: 800, height: 600 });
+    const firstLayout = computeNebulaLayout(
+      compactLayoutGraph(graph),
+      { width: 800, height: 600 },
+    );
     const firstRequest = worker.messages[0] as { requestId: number };
     expect(worker.messages).toHaveLength(1);
     worker.reply({ requestId: firstRequest.requestId, layout: firstLayout });
@@ -270,7 +524,10 @@ describe("LayoutClient", () => {
     };
     expect(worker.messages).toHaveLength(2);
     expect(thirdRequest.viewport).toEqual({ width: 320, height: 240 });
-    const thirdLayout = computeGroupedLayout(graph, thirdRequest.viewport);
+    const thirdLayout = computeNebulaLayout(
+      compactLayoutGraph(graph),
+      thirdRequest.viewport,
+    );
     worker.reply({ requestId: thirdRequest.requestId, layout: thirdLayout });
     await expect(third).resolves.toBe(thirdLayout);
   });
@@ -338,8 +595,8 @@ describe("LayoutClient", () => {
         },
       ],
       entity_edges: [
-        { id: "order-user", source: "order-1", target: "user-1" },
-        { id: "missing-entity", source: "order-1", target: "missing" },
+        { id: "order-user", source: "order-1", target: "user-1", weight: 1 },
+        { id: "missing-entity", source: "order-1", target: "missing", weight: 0.35 },
       ],
     });
     expect(posted).not.toContain("dimension-value");
@@ -347,8 +604,8 @@ describe("LayoutClient", () => {
     expect(posted).not.toContain("explanation-value");
     expect(posted).not.toContain("support-");
 
-    const layout = computeGroupedLayout(
-      request.graph as never,
+    const layout = computeNebulaLayout(
+      request.graph as unknown as LayoutGraph,
       request.viewport,
     );
     worker.reply({ requestId: request.requestId, layout });
@@ -368,16 +625,19 @@ describe("LayoutClient", () => {
     await staleRejection;
     worker.reply({
       requestId: staleRequest.requestId,
-      layout: computeGroupedLayout(graph, { width: 800, height: 600 }),
+      layout: computeNebulaLayout(
+        compactLayoutGraph(graph),
+        { width: 800, height: 600 },
+      ),
     });
 
     const current = client.layoutGraph(graph, { width: 800, height: 600 });
     const currentRequest = worker.messages[1] as { requestId: number };
     expect(currentRequest.requestId).toBeGreaterThan(staleRequest.requestId);
-    const currentLayout = computeGroupedLayout(graph, {
-      width: 800,
-      height: 600,
-    });
+    const currentLayout = computeNebulaLayout(
+      compactLayoutGraph(graph),
+      { width: 800, height: 600 },
+    );
     worker.reply({ requestId: currentRequest.requestId, layout: currentLayout });
     await expect(current).resolves.toBe(currentLayout);
   });

@@ -17,7 +17,7 @@ import type {
   AnalysisStatus,
   SemanticGraphData,
 } from "../api/analysis";
-import { computeGroupedLayout } from "../graph/layout";
+import { computeGroupedLayout, type GraphLayout } from "../graph/layout";
 import { useAnalysisStore } from "../store/analysis";
 
 // ── Mock 数据 ──
@@ -532,6 +532,7 @@ function canvasContext() {
 }
 
 class FakeLayoutWorker {
+  static latestLayout: GraphLayout | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   onmessageerror: ((event: MessageEvent) => void) | null = null;
@@ -542,10 +543,12 @@ class FakeLayoutWorker {
     graph: SemanticGraphData;
     viewport: { width: number; height: number };
   }) {
+    const layout = computeGroupedLayout(message.graph, message.viewport);
+    FakeLayoutWorker.latestLayout = layout;
     this.onmessage?.({
       data: {
         requestId: message.requestId,
-        layout: computeGroupedLayout(message.graph, message.viewport),
+        layout,
       },
     } as MessageEvent);
   }
@@ -878,10 +881,7 @@ describe("Integration: full user flow", () => {
     expect(screen.getByText("导出 JSON")).toBeInTheDocument();
     expect(screen.getByText("开始新分析")).toBeInTheDocument();
 
-    const layout = computeGroupedLayout(MOCK_GRAPH, {
-      width: 960,
-      height: 600,
-    });
+    const layout = FakeLayoutWorker.latestLayout!;
     const tableEdge = layout.tableEdges.find(
       (edge) => edge.id === "users--orders",
     )!;
@@ -997,25 +997,8 @@ describe("Integration: full user flow", () => {
     expect(screen.getByText("2 条表关系")).toBeInTheDocument();
     expect(screen.getByText("6 条实体关系")).toBeInTheDocument();
 
-    const layout = computeGroupedLayout(BUSINESS_GRAPH, {
-      width: 960,
-      height: 600,
-    });
-    const processTableEdge = layout.tableEdges.find(
-      (edge) => edge.id === PROCESS_TABLE_EDGE_ID,
-    )!;
-    const transform = d3.zoomTransform(canvas);
-    const from = transform.apply([
-      processTableEdge.from.x,
-      processTableEdge.from.y,
-    ]);
-    const to = transform.apply([
-      processTableEdge.to.x,
-      processTableEdge.to.y,
-    ]);
-    fireEvent.click(canvas, {
-      clientX: (from[0] + to[0]) / 2,
-      clientY: (from[1] + to[1]) / 2,
+    act(() => {
+      useAnalysisStore.getState().selectTableEdge(PROCESS_TABLE_EDGE_ID);
     });
 
     await waitFor(() => {

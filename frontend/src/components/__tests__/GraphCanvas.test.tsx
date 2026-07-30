@@ -280,6 +280,7 @@ describe("GraphCanvas", () => {
     const canvas = screen.getByRole("img", { name: /语义关系图/ });
     fireEvent.focus(canvas);
     fireEvent.keyDown(canvas, { key: "ArrowDown" });
+    fireEvent.keyDown(canvas, { key: "ArrowDown" });
     expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
     const callbacks = new Map<number, FrameRequestCallback>();
     const cancelled = new Set<number>();
@@ -317,7 +318,7 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
   });
 
-  it("uses the projected graph for worker layout, counts, search, and readiness identity", async () => {
+  it("keeps worker layout stable while projection changes counts and search", async () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = document.querySelector("canvas")!;
@@ -325,10 +326,12 @@ describe("GraphCanvas", () => {
 
     expect(firstWorker.messages[0].graph.entity_nodes.map((node) => node.id)).toEqual([
       "a",
+      "b",
       "invoice",
     ]);
     expect(firstWorker.messages[0].graph.entity_nodes).toEqual([
       { id: "a", table_id: "accounts", class_name: "Account" },
+      { id: "b", table_id: "accounts", class_name: "Account" },
       { id: "invoice", table_id: "billing", class_name: "Invoice" },
     ]);
     expect(firstWorker.messages[0].graph.table_edges).toEqual([
@@ -339,7 +342,7 @@ describe("GraphCanvas", () => {
       },
     ]);
     expect(firstWorker.messages[0].graph.entity_edges).toEqual([
-      { id: "a--invoice", source: "a", target: "invoice" },
+      { id: "a--invoice", source: "a", target: "invoice", weight: 1 },
     ]);
     expect(canvas.getAttribute("aria-label")).toContain("2 个实体");
     const search = screen.getByRole("searchbox", { name: /查找实体/ });
@@ -348,14 +351,9 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
 
     act(() => useAnalysisStore.getState().setShowIsolatedNodes(true));
-    await waitFor(() => expect(firstWorker.messages).toHaveLength(2));
     await ready();
 
-    expect(firstWorker.messages[1].graph.entity_nodes.map((node) => node.id)).toEqual([
-      "a",
-      "b",
-      "invoice",
-    ]);
+    expect(firstWorker.messages).toHaveLength(1);
     expect(canvas.getAttribute("aria-label")).toContain("3 个实体");
     fireEvent.keyDown(search, { key: "Enter" });
     expect(useAnalysisStore.getState().selectedNodeId).toBe("b");
@@ -623,6 +621,7 @@ describe("GraphCanvas", () => {
 
     fireEvent.focus(canvas);
     fireEvent.keyDown(canvas, { key: "ArrowDown" });
+    fireEvent.keyDown(canvas, { key: "ArrowDown" });
     expect(container.querySelector("[aria-live='polite']")).toHaveTextContent(
       "Account A",
     );
@@ -643,6 +642,7 @@ describe("GraphCanvas", () => {
     expect(d3.zoomTransform(canvas).k).toBe(0.02);
 
     fireEvent.focus(canvas);
+    fireEvent.keyDown(canvas, { key: "ArrowDown" });
     fireEvent.keyDown(canvas, { key: "ArrowDown" });
     expect(container.querySelector("[aria-live='polite']")).toHaveTextContent(
       "Account A",
@@ -666,13 +666,13 @@ describe("GraphCanvas", () => {
     fireEvent.keyDown(canvas, { key: "Enter" });
 
     const focused = d3.zoomTransform(canvas);
-    const accounts = computeGroupedLayout(graph, {
+    const billing = computeGroupedLayout(graph, {
       width: 960,
       height: 600,
-    }).tableNodes.find((node) => node.id === "accounts")!;
+    }).tableNodes.find((node) => node.id === "billing")!;
     expect(focused).not.toEqual(displaced);
-    expect(focused.apply([accounts.x, accounts.y])[0]).toBeCloseTo(480);
-    expect(focused.apply([accounts.x, accounts.y])[1]).toBeCloseTo(300);
+    expect(focused.apply([billing.x, billing.y])[0]).toBeCloseTo(480);
+    expect(focused.apply([billing.x, billing.y])[1]).toBeCloseTo(300);
   });
 
   it("selects a table edge as the focus for its supporting entity relations", async () => {

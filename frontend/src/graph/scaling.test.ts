@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SemanticGraphData } from "../api/analysis";
 import GraphCanvas from "../components/GraphCanvas";
 import { useAnalysisStore } from "../store/analysis";
-import { computeGroupedLayout } from "./layout";
+import { computeNebulaLayout, type LayoutGraph } from "./layout";
 import { buildScene } from "./scene";
 
 const ENTITY_COUNT = 7_000;
@@ -35,13 +35,18 @@ class ScalingLayoutWorker {
 
   postMessage(message: {
     requestId: number;
-    graph: SemanticGraphData;
+    graph: LayoutGraph;
     viewport: { width: number; height: number };
+    seedOffset?: number;
   }) {
     this.onmessage?.({
       data: {
         requestId: message.requestId,
-        layout: computeGroupedLayout(message.graph, message.viewport),
+        layout: computeNebulaLayout(
+          message.graph,
+          message.viewport,
+          { seedOffset: message.seedOffset },
+        ),
       },
     } as MessageEvent);
   }
@@ -124,7 +129,15 @@ describe("7000-entity graph scaling", () => {
   });
 
   it("keeps the grouped overview bounded and omits entity labels", () => {
-    const layout = computeGroupedLayout(graph, VIEWPORT);
+    const layout = computeNebulaLayout(
+      {
+        table_nodes: graph.table_nodes,
+        entity_nodes: graph.entity_nodes,
+        table_edges: graph.table_edges,
+        entity_edges: graph.entity_edges.map((edge) => ({ ...edge, weight: 0.35 })),
+      },
+      VIEWPORT,
+    );
     const scene = buildScene({
       graph,
       layout,

@@ -39,6 +39,32 @@ function sameTransform(left: GraphTransform, right: GraphTransform): boolean {
   return left.k === right.k && left.x === right.x && left.y === right.y;
 }
 
+function preferCoincidentTableEdge(
+  scene: RenderScene,
+  target: HitTarget | null,
+): HitTarget | null {
+  if (target?.kind !== "entity-edge") return target;
+  const entityEdge = scene.entityEdges.find((edge) => edge.id === target.id);
+  if (!entityEdge) return target;
+  const tolerance = 0.5;
+  const samePoint = (
+    left: { x: number; y: number },
+    right: { x: number; y: number },
+  ) =>
+    Math.abs(left.x - right.x) <= tolerance &&
+    Math.abs(left.y - right.y) <= tolerance;
+  const tableEdge = scene.tableEdges.find((edge) =>
+    (
+      samePoint(edge.from.screen, entityEdge.from.screen) &&
+      samePoint(edge.to.screen, entityEdge.to.screen)
+    ) || (
+      samePoint(edge.from.screen, entityEdge.to.screen) &&
+      samePoint(edge.to.screen, entityEdge.from.screen)
+    )
+  );
+  return tableEdge ? { kind: "table-edge", id: tableEdge.id } : target;
+}
+
 function fitTransform(
   layout: Awaited<ReturnType<LayoutClient["layoutGraph"]>>,
   viewport: { width: number; height: number },
@@ -399,9 +425,9 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
 
   useEffect(() => {
     const source = sceneSourceRef.current;
-    if (source?.graph === projectedGraph) {
-      commitScene(source.graph, source.layout);
-    }
+    if (!source || !projectedGraph) return;
+    sceneSourceRef.current = { graph: projectedGraph, layout: source.layout };
+    commitScene(projectedGraph, source.layout);
   }, [commitScene, confidenceThreshold, projectedGraph]);
 
   useEffect(() => {
@@ -434,7 +460,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   }, [acquireCanvasContext, rebuildCurrentScene, viewport]);
 
   useEffect(() => {
-    if (!projectedGraph) {
+    if (!graph) {
       sceneSourceRef.current = null;
       retireScene();
       setLayout(null);
@@ -452,9 +478,10 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     const client = layoutClientRef.current ?? createLayoutClient();
     layoutClientRef.current = client;
     client.reset();
-    void client.layoutGraph(projectedGraph, viewport).then(
+    void client.layoutGraph(graph, viewport, relayoutRequest).then(
       (next) => {
-        if (active) {
+        const currentProjection = projectedGraphRef.current;
+        if (active && currentProjection) {
           const initialTransform = fitTransform(next, viewport);
           transformRef.current = initialTransform;
           if (zoomRef.current && canvasRef.current) {
@@ -463,8 +490,8 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
               initialTransform,
             );
           }
-          sceneSourceRef.current = { graph: projectedGraph, layout: next };
-          commitScene(projectedGraph, next);
+          sceneSourceRef.current = { graph: currentProjection, layout: next };
+          commitScene(currentProjection, next);
           setLayout(next);
         }
       },
@@ -477,7 +504,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       active = false;
       client.reset();
     };
-  }, [commitScene, projectedGraph, relayoutRequest, retireScene, viewport]);
+  }, [commitScene, graph, relayoutRequest, retireScene, viewport]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -791,7 +818,13 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         onPointerLeave={() => applyHit(null)}
         onClick={(event) => {
           const scene = interactiveScene();
-          selectHit(scene ? hitTest(scene, pointFromEvent(event.currentTarget, event.nativeEvent)) : null);
+          const target = scene
+            ? hitTest(
+              scene,
+              pointFromEvent(event.currentTarget, event.nativeEvent),
+            )
+            : null;
+          selectHit(scene ? preferCoincidentTableEdge(scene, target) : null);
         }}
         onKeyDown={(event) => {
           if (!interactiveScene()) return;
