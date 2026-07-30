@@ -88,6 +88,24 @@ function tableOwnershipRatio(layout: GraphLayout): number {
   return nearestOwnTable / layout.entityNodes.length;
 }
 
+function mixedComponentGraph(sameTable: boolean): LayoutGraph {
+  return {
+    table_nodes: graph.table_nodes,
+    entity_nodes: graph.entity_nodes,
+    table_edges: graph.table_edges,
+    entity_edges: Array.from({ length: 30 }, (_, index) => ({
+      id: `mixed-edge-${index}`,
+      source: sameTable
+        ? `entity-${index * TABLE_COUNT}`
+        : `entity-${index * 2}`,
+      target: sameTable
+        ? `entity-${(index + 30) * TABLE_COUNT}`
+        : `entity-${index * 2 + 1}`,
+      weight: 1,
+    })),
+  };
+}
+
 class ScalingLayoutWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
@@ -244,18 +262,35 @@ describe("7000-entity graph scaling", () => {
     _label,
     computeLayout,
   ) => {
-    const mixedGraph: LayoutGraph = {
-      table_nodes: graph.table_nodes,
-      entity_nodes: graph.entity_nodes,
-      table_edges: graph.table_edges,
-      entity_edges: Array.from({ length: 30 }, (_, index) => ({
-        id: `mixed-edge-${index}`,
-        source: `entity-${index * 2}`,
-        target: `entity-${index * 2 + 1}`,
-        weight: 1,
-      })),
-    };
-    const layout = computeLayout(mixedGraph, VIEWPORT);
+    const startedAt = performance.now();
+    for (let seedOffset = 0; seedOffset < 5; seedOffset += 1) {
+      const layout = computeLayout(
+        mixedComponentGraph(false),
+        VIEWPORT,
+        { seedOffset },
+      );
+      const stats = closePairStats(
+        layout.entityNodes,
+        ENTITY_COLLISION_RADIUS * 2 - 2,
+      );
+
+      expect(stats.closePairs, `seed ${seedOffset}`).toBe(0);
+      expect(
+        stats.minimumObservedDistance,
+        `seed ${seedOffset}`,
+      ).toBeGreaterThanOrEqual(ENTITY_COLLISION_RADIUS * 2 - 2);
+    }
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
+  }, 20_000);
+
+  it.each([
+    ["nebula", computeNebulaLayout],
+    ["fallback", computeFallbackScatterLayout],
+  ])("lays out same-table mixed components without exhausting %s separation", (
+    _label,
+    computeLayout,
+  ) => {
+    const layout = computeLayout(mixedComponentGraph(true), VIEWPORT);
     const stats = closePairStats(
       layout.entityNodes,
       ENTITY_COLLISION_RADIUS * 2 - 2,
@@ -265,7 +300,7 @@ describe("7000-entity graph scaling", () => {
     expect(stats.minimumObservedDistance).toBeGreaterThanOrEqual(
       ENTITY_COLLISION_RADIUS * 2 - 2,
     );
-  }, 15_000);
+  }, 10_000);
 
   it("renders through one canvas without per-entity DOM nodes", async () => {
     const { container } = render(createElement(GraphCanvas));

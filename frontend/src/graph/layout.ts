@@ -441,44 +441,134 @@ function translateComponent(
   }
 }
 
-function expandComponentCenters(
+type ComponentBound = ReturnType<typeof componentBounds>;
+
+function boundsOverlap(left: ComponentBound, right: ComponentBound): boolean {
+  return left.right > right.left &&
+    right.right > left.left &&
+    left.bottom > right.top &&
+    right.bottom > left.top;
+}
+
+function translatedBounds(
+  bounds: ComponentBound,
+  deltaX: number,
+  deltaY: number,
+): ComponentBound {
+  return {
+    left: bounds.left + deltaX,
+    right: bounds.right + deltaX,
+    top: bounds.top + deltaY,
+    bottom: bounds.bottom + deltaY,
+  };
+}
+
+function expandedEnvelope(
+  envelope: ComponentBound | undefined,
+  bounds: ComponentBound,
+): ComponentBound {
+  if (!envelope) return { ...bounds };
+  return {
+    left: Math.min(envelope.left, bounds.left),
+    right: Math.max(envelope.right, bounds.right),
+    top: Math.min(envelope.top, bounds.top),
+    bottom: Math.max(envelope.bottom, bounds.bottom),
+  };
+}
+
+function escapeComponentEnvelope(
+  bounds: ComponentBound,
+  envelope: ComponentBound,
+  direction: LayoutPoint,
+): LayoutPoint {
+  const epsilon = 1;
+  const escapeX = Math.abs(direction.x) < 0.000_001
+    ? Number.POSITIVE_INFINITY
+    : direction.x > 0
+    ? (envelope.right - bounds.left + epsilon) / direction.x
+    : (bounds.right - envelope.left + epsilon) / -direction.x;
+  const escapeY = Math.abs(direction.y) < 0.000_001
+    ? Number.POSITIVE_INFINITY
+    : direction.y > 0
+    ? (envelope.bottom - bounds.top + epsilon) / direction.y
+    : (bounds.bottom - envelope.top + epsilon) / -direction.y;
+  const distance = Math.min(escapeX, escapeY);
+  return {
+    x: direction.x * distance,
+    y: direction.y * distance,
+  };
+}
+
+function locallySeparateComponentBounds(
   components: readonly Component[],
   positions: ReadonlyMap<string, SimulationEntity>,
-  epoch: number,
-) {
-  const items = components.map((component) => {
-    const bounds = componentBounds(component, positions);
-    return {
-      component,
-      centerX: (bounds.left + bounds.right) / 2,
-      centerY: (bounds.top + bounds.bottom) / 2,
-    };
-  });
-  const centerX = items.reduce((sum, item) => sum + item.centerX, 0) /
-    items.length;
-  const centerY = items.reduce((sum, item) => sum + item.centerY, 0) /
-    items.length;
-  const expansion = 1.18 + Math.min(epoch, 4) * 0.015;
-  const jitterScale = COMPONENT_BOUNDS_PADDING * (0.4 + epoch * 0.12);
-  const hasSingleton = items.some(
-    ({ component }) => component.nodeIds.length === 1,
-  );
-  for (const item of items) {
-    if (hasSingleton && item.component.nodeIds.length === 1) {
-      continue;
+): boolean {
+  const cellSize = ENTITY_COLLISION_RADIUS * 4;
+  for (let pass = 0; pass < 32; pass += 1) {
+    const initialBounds = components.map((component) =>
+      componentBounds(component, positions)
+    );
+    let overlapFound = false;
+    for (let leftIndex = 0; leftIndex < components.length; leftIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < components.length;
+        rightIndex += 1
+      ) {
+        const leftComponent = components[leftIndex];
+        const rightComponent = components[rightIndex];
+        const leftIsSingleton = leftComponent.nodeIds.length === 1;
+        const rightIsSingleton = rightComponent.nodeIds.length === 1;
+        if (leftIsSingleton && rightIsSingleton) continue;
+        const initialLeft = initialBounds[leftIndex];
+        const initialRight = initialBounds[rightIndex];
+        const sharesSpatialCell =
+          Math.floor(initialLeft.left / cellSize) <=
+              Math.floor(initialRight.right / cellSize) &&
+          Math.floor(initialRight.left / cellSize) <=
+              Math.floor(initialLeft.right / cellSize) &&
+          Math.floor(initialLeft.top / cellSize) <=
+              Math.floor(initialRight.bottom / cellSize) &&
+          Math.floor(initialRight.top / cellSize) <=
+              Math.floor(initialLeft.bottom / cellSize);
+        if (!sharesSpatialCell) continue;
+
+        const left = componentBounds(leftComponent, positions);
+        const right = componentBounds(rightComponent, positions);
+        const overlapX = Math.min(left.right, right.right) -
+          Math.max(left.left, right.left);
+        const overlapY = Math.min(left.bottom, right.bottom) -
+          Math.max(left.top, right.top);
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        overlapFound = true;
+        const separateX = overlapX <= overlapY;
+        const leftCenter = separateX
+          ? left.left + left.right
+          : left.top + left.bottom;
+        const rightCenter = separateX
+          ? right.left + right.right
+          : right.top + right.bottom;
+        const direction = leftCenter <= rightCenter ? 1 : -1;
+        const shift = (separateX ? overlapX : overlapY) + 0.001;
+        const leftShare = leftIsSingleton ? 0 : rightIsSingleton ? 1 : 0.5;
+        const rightShare = rightIsSingleton ? 0 : leftIsSingleton ? 1 : 0.5;
+        translateComponent(
+          leftComponent,
+          positions,
+          separateX ? -direction * shift * leftShare : 0,
+          separateX ? 0 : -direction * shift * leftShare,
+        );
+        translateComponent(
+          rightComponent,
+          positions,
+          separateX ? direction * shift * rightShare : 0,
+          separateX ? 0 : direction * shift * rightShare,
+        );
+      }
     }
-    const jitter = stableUnitVector(
-      `${item.component.id}:organic:${epoch}`,
-    );
-    translateComponent(
-      item.component,
-      positions,
-      (item.centerX - centerX) * (expansion - 1) +
-        jitter.x * jitterScale,
-      (item.centerY - centerY) * (expansion - 1) +
-        jitter.y * jitterScale,
-    );
+    if (!overlapFound) return true;
   }
+  return false;
 }
 
 function separateComponentBounds(
@@ -492,115 +582,74 @@ function separateComponentBounds(
     return;
   }
   const positions = new Map(nodes.map((node) => [node.id, node]));
-  const cellSize = ENTITY_COLLISION_RADIUS * 4;
-  for (let pass = 0; pass < 384; pass += 1) {
-    const bounds = components.map((component) =>
-      componentBounds(component, positions)
-    );
-    const cells = new Map<string, number[]>();
-    for (let index = 0; index < bounds.length; index += 1) {
-      const bound = bounds[index];
-      const leftCell = Math.floor(bound.left / cellSize);
-      const rightCell = Math.floor(bound.right / cellSize);
-      const topCell = Math.floor(bound.top / cellSize);
-      const bottomCell = Math.floor(bound.bottom / cellSize);
-      for (let cellX = leftCell; cellX <= rightCell; cellX += 1) {
-        for (let cellY = topCell; cellY <= bottomCell; cellY += 1) {
-          const key = `${cellX},${cellY}`;
-          const bucket = cells.get(key);
-          if (bucket) bucket.push(index);
-          else cells.set(key, [index]);
-        }
-      }
-    }
-    const pairKeys = new Set<number>();
-    for (const bucket of cells.values()) {
-      for (let left = 0; left < bucket.length; left += 1) {
-        for (let right = left + 1; right < bucket.length; right += 1) {
-          const leftIndex = Math.min(bucket[left], bucket[right]);
-          const rightIndex = Math.max(bucket[left], bucket[right]);
-          pairKeys.add(leftIndex * components.length + rightIndex);
-        }
-      }
-    }
-
-    let overlapFound = false;
-    for (const pairKey of [...pairKeys].sort((left, right) => left - right)) {
-      const leftIndex = Math.floor(pairKey / components.length);
-      const rightIndex = pairKey % components.length;
-      const leftComponent = components[leftIndex];
-      const rightComponent = components[rightIndex];
-      const leftIsSingleton = leftComponent.nodeIds.length === 1;
-      const rightIsSingleton = rightComponent.nodeIds.length === 1;
-      if (leftIsSingleton && rightIsSingleton) continue;
-      const left = componentBounds(leftComponent, positions);
-      const right = componentBounds(rightComponent, positions);
-      const overlapX = Math.min(left.right, right.right) -
-        Math.max(left.left, right.left);
-      const overlapY = Math.min(left.bottom, right.bottom) -
-        Math.max(left.top, right.top);
-      if (overlapX <= 0 || overlapY <= 0) continue;
-      overlapFound = true;
-      if (overlapX <= overlapY) {
-        const direction = (left.left + left.right) <=
-            (right.left + right.right)
-          ? 1
-          : -1;
-        const shift = overlapX + 0.001;
-        if (!leftIsSingleton && !rightIsSingleton) {
-          translateComponent(
-            leftComponent,
-            positions,
-            -direction * shift / 2,
-            0,
-          );
-          translateComponent(
-            rightComponent,
-            positions,
-            direction * shift / 2,
-            0,
-          );
-        } else if (!leftIsSingleton) {
-          translateComponent(leftComponent, positions, -direction * shift, 0);
-        } else {
-          translateComponent(rightComponent, positions, direction * shift, 0);
-        }
-      } else {
-        const direction = (left.top + left.bottom) <=
-            (right.top + right.bottom)
-          ? 1
-          : -1;
-        const shift = overlapY + 0.001;
-        if (!leftIsSingleton && !rightIsSingleton) {
-          translateComponent(
-            leftComponent,
-            positions,
-            0,
-            -direction * shift / 2,
-          );
-          translateComponent(
-            rightComponent,
-            positions,
-            0,
-            direction * shift / 2,
-          );
-        } else if (!leftIsSingleton) {
-          translateComponent(leftComponent, positions, 0, -direction * shift);
-        } else {
-          translateComponent(rightComponent, positions, 0, direction * shift);
-        }
-      }
-    }
-    if (!overlapFound) return;
-    if ((pass + 1) % 32 === 0) {
-      expandComponentCenters(
-        components,
-        positions,
-        Math.floor(pass / 32),
-      );
-    }
+  if (
+    components.length <= 64 &&
+    locallySeparateComponentBounds(components, positions)
+  ) {
+    return;
   }
-  throw new Error("Unable to separate graph component bounds.");
+  const cellSize = ENTITY_COLLISION_RADIUS * 4;
+  const occupiedBounds: ComponentBound[] = [];
+  const cells = new Map<string, number[]>();
+  let envelope: ComponentBound | undefined;
+
+  const forEachCell = (
+    bounds: ComponentBound,
+    visit: (key: string) => void,
+  ) => {
+    const leftCell = Math.floor(bounds.left / cellSize);
+    const rightCell = Math.floor(bounds.right / cellSize);
+    const topCell = Math.floor(bounds.top / cellSize);
+    const bottomCell = Math.floor(bounds.bottom / cellSize);
+    for (let cellX = leftCell; cellX <= rightCell; cellX += 1) {
+      for (let cellY = topCell; cellY <= bottomCell; cellY += 1) {
+        visit(`${cellX},${cellY}`);
+      }
+    }
+  };
+  const insert = (bounds: ComponentBound) => {
+    const index = occupiedBounds.push(bounds) - 1;
+    forEachCell(bounds, (key) => {
+      const bucket = cells.get(key);
+      if (bucket) bucket.push(index);
+      else cells.set(key, [index]);
+    });
+    envelope = expandedEnvelope(envelope, bounds);
+  };
+  const overlapsOccupied = (bounds: ComponentBound) => {
+    const seen = new Set<number>();
+    let overlaps = false;
+    forEachCell(bounds, (key) => {
+      if (overlaps) return;
+      for (const index of cells.get(key) ?? []) {
+        if (seen.has(index)) continue;
+        seen.add(index);
+        if (boundsOverlap(bounds, occupiedBounds[index])) {
+          overlaps = true;
+          return;
+        }
+      }
+    });
+    return overlaps;
+  };
+
+  for (const component of components) {
+    if (component.nodeIds.length !== 1) continue;
+    insert(componentBounds(component, positions));
+  }
+  for (const component of components) {
+    if (component.nodeIds.length === 1) continue;
+    const bounds = componentBounds(component, positions);
+    if (!overlapsOccupied(bounds)) {
+      insert(bounds);
+      continue;
+    }
+    const direction = stableUnitVector(`${component.id}:organic-pack`);
+    const delta = escapeComponentEnvelope(bounds, envelope!, direction);
+    const movedBounds = translatedBounds(bounds, delta.x, delta.y);
+    translateComponent(component, positions, delta.x, delta.y);
+    insert(movedBounds);
+  }
 }
 
 function recenterDelta(
