@@ -7,6 +7,7 @@ const FIELD_TIERS: readonly [RegExp, number][] = [
 ];
 
 const MAX_VISIBLE_CODE_POINTS = 42;
+const STATUS_FIELD = /(^|_)status($|_)/i;
 
 export interface EntityPresentation {
   primary: string;
@@ -44,6 +45,13 @@ function idSuffix(id: string): string {
   return safelyDecode(separator === -1 ? id : id.slice(separator + 1));
 }
 
+function fallbackPrimary(entity: EntityNodeData): string {
+  return usefulText(idSuffix(entity.id)) ??
+    usefulText(shortClassName(entity.class_name)) ??
+    usefulText(entity.table_id) ??
+    "Entity";
+}
+
 function shortClassName(className: string | null): string | null {
   if (!className) return null;
   const segments = className.split(/[.$/\\]/).filter(Boolean);
@@ -62,8 +70,8 @@ function labelCandidates(entity: EntityNodeData): LabelCandidate[] {
 
   return fields.flatMap(([field, value]) => {
     const text = usefulText(value);
-    if (text == null) return [];
     const normalizedField = field.trim().toLowerCase();
+    if (text == null || STATUS_FIELD.test(normalizedField)) return [];
     return [{ normalizedField, text, tier: fieldTier(normalizedField) }];
   });
 }
@@ -74,7 +82,7 @@ function selectPrimary(entity: EntityNodeData): string {
     (left.normalizedField < right.normalizedField ? -1 : left.normalizedField > right.normalizedField ? 1 : 0) ||
     (left.text < right.text ? -1 : left.text > right.text ? 1 : 0)
   )[0];
-  return candidate?.text ?? idSuffix(entity.id);
+  return candidate?.text ?? fallbackPrimary(entity);
 }
 
 function selectSecondary(
@@ -82,12 +90,13 @@ function selectSecondary(
   primary: string,
   visibleDegree: number,
 ): string {
-  const typeSources = [
-    shortClassName(entity.class_name),
+  const typeSource = [
+    usefulText(shortClassName(entity.class_name)),
     usefulText(entity.table_id),
-    `${visibleDegree} 个关系`,
-  ];
-  return typeSources.find((source) => source != null && source !== primary) ?? "";
+  ].find((source) => source != null && source !== primary);
+  return [typeSource, `${visibleDegree} 个关系`]
+    .filter((source): source is string => source != null)
+    .join("; ");
 }
 
 export function presentEntity(

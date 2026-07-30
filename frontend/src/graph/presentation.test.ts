@@ -60,7 +60,19 @@ describe("presentEntity", () => {
     expect(presentation.primary).toBe("Reflector%20Part%2F42%");
   });
 
-  it("uses a non-duplicate secondary type source", () => {
+  it("decodes a valid URL-encoded ID suffix", () => {
+    const presentation = presentEntity({
+      id: "parts:Reflector%20Part%2F42",
+      table_id: "parts",
+      display_name: "undefined",
+      class_name: null,
+      dimensions: {},
+    }, 3);
+
+    expect(presentation.primary).toBe("Reflector Part/42");
+  });
+
+  it("includes a non-duplicate type source and the relationship count", () => {
     const presentation = presentEntity({
       id: "parts:42",
       table_id: "parts",
@@ -69,8 +81,33 @@ describe("presentEntity", () => {
       dimensions: {},
     }, 3);
 
-    expect(presentation.secondary).toBe("parts");
+    expect(presentation.secondary).toContain("parts");
+    expect(presentation.secondary).toContain("3 个关系");
     expect(presentation.secondary).not.toBe(presentation.primary);
+  });
+
+  it("rejects status-only dimensions as primary labels", () => {
+    const presentation = presentEntity({
+      id: "parts:42",
+      table_id: "parts",
+      display_name: "0",
+      class_name: "com.example.ReflectorPart",
+      dimensions: { status: "active" },
+    }, 3);
+
+    expect(presentation.primary).toBe("42");
+  });
+
+  it.each(["0", "1", "true"])("does not use low-information ID suffix %s", (suffix) => {
+    const presentation = presentEntity({
+      id: `parts:${suffix}`,
+      table_id: "parts",
+      display_name: "0",
+      class_name: "com.example.ReflectorPart",
+      dimensions: { status: 0 },
+    }, 3);
+
+    expect(presentation.primary).toBe("ReflectorPart");
   });
 
   it("caps visible lines while preserving their full accessible label", () => {
@@ -85,6 +122,6 @@ describe("presentEntity", () => {
 
     expect(Array.from(presentation.primary)).toHaveLength(42);
     expect(presentation.primary).toBe("A".repeat(42));
-    expect(presentation.accessibleLabel).toBe(`${fullName}; ReflectorPart`);
+    expect(presentation.accessibleLabel).toBe(`${fullName}; ReflectorPart; 3 个关系`);
   });
 });
