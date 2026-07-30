@@ -1,4 +1,5 @@
 import type { ScreenPoint, RenderScene, SceneEdge, SceneNode } from "./scene";
+import { sampleQuadratic } from "./edgeGeometry";
 
 const GRID_CELL_SIZE = 64;
 const EDGE_HIT_TOLERANCE = 6;
@@ -110,16 +111,18 @@ function addExpandedEdgeCell(
   return true;
 }
 
-function traversedEdgeCells(edge: SceneEdge): Set<string> | null {
-  const from = edge.from.screen;
-  const to = edge.to.screen;
-  if (!finitePoint(from) || !finitePoint(to)) return null;
+function addTraversedSegmentCells(
+  keys: Set<string>,
+  from: ScreenPoint,
+  to: ScreenPoint,
+): boolean {
+  if (!finitePoint(from) || !finitePoint(to)) return false;
 
   let column = cellCoordinate(from.x);
   let row = cellCoordinate(from.y);
   const endColumn = cellCoordinate(to.x);
   const endRow = cellCoordinate(to.y);
-  if (![column, row, endColumn, endRow].every(Number.isSafeInteger)) return null;
+  if (![column, row, endColumn, endRow].every(Number.isSafeInteger)) return false;
 
   const columnDistance = Math.abs(endColumn - column);
   const rowDistance = Math.abs(endRow - row);
@@ -129,7 +132,7 @@ function traversedEdgeCells(edge: SceneEdge): Set<string> | null {
     maxSteps <= 0 ||
     maxSteps > MAX_EDGE_TRAVERSAL_STEPS
   ) {
-    return null;
+    return false;
   }
 
   const dx = to.x - from.x;
@@ -148,11 +151,9 @@ function traversedEdgeCells(edge: SceneEdge): Set<string> | null {
     : stepY < 0
       ? (from.y - row * GRID_CELL_SIZE) / -dy
       : Number.POSITIVE_INFINITY;
-  const keys = new Set<string>();
-
   for (let steps = 0; steps < maxSteps; steps += 1) {
-    if (!addExpandedEdgeCell(keys, column, row)) return null;
-    if (column === endColumn && row === endRow) return keys;
+    if (!addExpandedEdgeCell(keys, column, row)) return false;
+    if (column === endColumn && row === endRow) return true;
 
     if (tMaxX < tMaxY) {
       column += stepX;
@@ -165,7 +166,7 @@ function traversedEdgeCells(edge: SceneEdge): Set<string> | null {
         !addExpandedEdgeCell(keys, column + stepX, row) ||
         !addExpandedEdgeCell(keys, column, row + stepY)
       ) {
-        return null;
+        return false;
       }
       column += stepX;
       row += stepY;
@@ -173,7 +174,16 @@ function traversedEdgeCells(edge: SceneEdge): Set<string> | null {
       tMaxY += tDeltaY;
     }
   }
-  return null;
+  return false;
+}
+
+function traversedEdgeCells(edge: SceneEdge): Set<string> | null {
+  const samples = sampleQuadratic(edge.geometry, 16);
+  const keys = new Set<string>();
+  for (let index = 1; index < samples.length; index += 1) {
+    if (!addTraversedSegmentCells(keys, samples[index - 1], samples[index])) return null;
+  }
+  return keys;
 }
 
 function addEdge(grid: Grid<SceneEdge>, edge: SceneEdge) {
@@ -221,21 +231,34 @@ function containsNode(node: SceneNode, point: ScreenPoint): boolean {
   return dx * dx + dy * dy <= node.hitRadius * node.hitRadius;
 }
 
-function distanceToSegment(point: ScreenPoint, edge: SceneEdge): number {
-  const dx = edge.to.screen.x - edge.from.screen.x;
-  const dy = edge.to.screen.y - edge.from.screen.y;
+function distanceToSegment(
+  point: ScreenPoint,
+  from: ScreenPoint,
+  to: ScreenPoint,
+): number {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
   const lengthSquared = dx * dx + dy * dy;
   if (lengthSquared === 0) {
-    return Math.hypot(point.x - edge.from.screen.x, point.y - edge.from.screen.y);
+    return Math.hypot(point.x - from.x, point.y - from.y);
   }
   const projection = Math.max(
     0,
-    Math.min(1, ((point.x - edge.from.screen.x) * dx + (point.y - edge.from.screen.y) * dy) / lengthSquared),
+    Math.min(1, ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared),
   );
   return Math.hypot(
-    point.x - (edge.from.screen.x + projection * dx),
-    point.y - (edge.from.screen.y + projection * dy),
+    point.x - (from.x + projection * dx),
+    point.y - (from.y + projection * dy),
   );
+}
+
+function distanceToEdge(point: ScreenPoint, edge: SceneEdge): number {
+  const samples = sampleQuadratic(edge.geometry, 16);
+  let distance = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < samples.length; index += 1) {
+    distance = Math.min(distance, distanceToSegment(point, samples[index - 1], samples[index]));
+  }
+  return distance;
 }
 
 function hitNode(
@@ -257,7 +280,7 @@ function hitEdge(
 ): SceneEdge | null {
   for (const edge of [...edges].reverse()) {
     diagnostics.inspectedEdges += 1;
-    if (distanceToSegment(point, edge) <= EDGE_HIT_TOLERANCE) return edge;
+    if (distanceToEdge(point, edge) <= EDGE_HIT_TOLERANCE) return edge;
   }
   return null;
 }

@@ -7,6 +7,7 @@ import {
   hitTest,
   hitTestWithDiagnostics,
 } from "./hitTest";
+import { quadraticPoint } from "./edgeGeometry";
 import { buildScene } from "./scene";
 
 function graphFixture(): SemanticGraphData {
@@ -46,9 +47,86 @@ describe("hitTest", () => {
 
   it("selects entity edges before table edges and returns null outside indexed bounds", () => {
     const rendered = scene();
-    expect(hitTest(rendered, { x: 80, y: 90 })).toEqual({ kind: "entity-edge", id: "entity-edge" });
-    expect(hitTest(rendered, { x: 70, y: 30 })).toEqual({ kind: "table-edge", id: "table-edge" });
+    expect(hitTest(rendered, quadraticPoint(rendered.entityEdges[0].geometry, 0.5))).toEqual({ kind: "entity-edge", id: "entity-edge" });
+    expect(hitTest(rendered, quadraticPoint(rendered.tableEdges[0].geometry, 0.5))).toEqual({ kind: "table-edge", id: "table-edge" });
     expect(hitTest(rendered, { x: 999, y: 999 })).toBeNull();
+  });
+
+  it("hits a quadratic edge away from its source-target chord", () => {
+    const graph = graphFixture();
+    graph.table_edges = [];
+    const layout = layoutFixture();
+    layout.tableNodes = [];
+    layout.tableEdges = [];
+    layout.entityNodes = [
+      { id: "order-1", tableId: "orders", x: -200, y: 0 },
+      { id: "user-1", tableId: "users", x: 200, y: 0 },
+    ];
+    layout.entityEdges = [{
+      id: "entity-edge",
+      source: "order-1",
+      target: "user-1",
+      from: { x: -200, y: 0 },
+      to: { x: 200, y: 0 },
+    }];
+    const rendered = buildScene({
+      graph,
+      layout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+    const edge = rendered.entityEdges[0];
+    edge.geometry = {
+      from: { x: -200, y: 0 },
+      control: { x: 0, y: 120 },
+      to: { x: 200, y: 0 },
+      isLoop: false,
+    };
+    rendered.hitIndex = createHitIndex(rendered);
+
+    expect(hitTest(rendered, quadraticPoint(edge.geometry, 0.5))).toEqual({
+      kind: "entity-edge",
+      id: edge.id,
+    });
+    expect(hitTest(rendered, { x: 0, y: 0 })).toBeNull();
+  });
+
+  it("hits a self-loop curve and misses points outside its edge tolerance", () => {
+    const graph = graphFixture();
+    graph.table_edges = [];
+    graph.entity_edges = [{
+      ...graph.entity_edges[0],
+      id: "self-loop",
+      source: "order-1",
+      target: "order-1",
+      relations: [{
+        ...graph.entity_edges[0].relations[0],
+        source: "order-1",
+        target: "order-1",
+      }],
+    }];
+    const layout = layoutFixture();
+    layout.tableNodes = [];
+    layout.tableEdges = [];
+    layout.entityNodes = [{ id: "order-1", tableId: "orders", x: 0, y: 0 }];
+    layout.entityEdges = [{
+      id: "self-loop",
+      source: "order-1",
+      target: "order-1",
+      from: { x: 0, y: 0 },
+      to: { x: 0, y: 0 },
+    }];
+    const rendered = buildScene({
+      graph,
+      layout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+    const edge = rendered.entityEdges[0];
+    const loopPoint = quadraticPoint(edge.geometry, 0.5);
+
+    expect(hitTest(rendered, loopPoint)).toEqual({ kind: "entity-edge", id: edge.id });
+    expect(hitTest(rendered, { x: loopPoint.x, y: loopPoint.y - 7 })).toBeNull();
   });
 
   it("keeps node targets usable when zoom makes their visual radius very small", () => {
@@ -98,7 +176,7 @@ describe("hitTest", () => {
     });
 
     expect(rendered.hitIndex.entityEdges.size).toBeLessThan(1_000);
-    expect(hitTest(rendered, { x: 500, y: 500 })).toEqual({
+    expect(hitTest(rendered, quadraticPoint(rendered.entityEdges[0].geometry, 0.5))).toEqual({
       kind: "entity-edge",
       id: "diagonal",
     });
@@ -126,10 +204,12 @@ describe("hitTest", () => {
       confidenceThreshold: 0,
     });
 
-    expect(hitTest(rendered, { x: 0, y: -100 })).toEqual({ kind: "entity-edge", id: "horizontal" });
-    expect(hitTest(rendered, { x: 200, y: 0 })).toEqual({ kind: "entity-edge", id: "vertical" });
-    expect(hitTest(rendered, { x: -150, y: 200 })).toEqual({ kind: "entity-edge", id: "zero" });
-    expect(hitTest(rendered, { x: -160, y: -160 })).toEqual({ kind: "entity-edge", id: "negative" });
+    for (const edge of rendered.entityEdges) {
+      expect(hitTest(rendered, quadraticPoint(edge.geometry, 0.5))).toEqual({
+        kind: "entity-edge",
+        id: edge.id,
+      });
+    }
   });
 
   it("safely declines segments whose cell traversal exceeds numeric guards", () => {
@@ -265,7 +345,9 @@ describe("hitTest", () => {
       confidenceThreshold: 0,
     });
 
-    const result = hitTestWithDiagnostics(rendered, { x: 0, y: 0 });
+    const targetEdge = rendered.entityEdges.find((edge) => edge.id === "edge-150");
+    if (!targetEdge) throw new Error("expected edge-150");
+    const result = hitTestWithDiagnostics(rendered, quadraticPoint(targetEdge.geometry, 0.5));
     expect(result.target).toEqual({ kind: "entity-edge", id: "edge-150" });
     expect(result.diagnostics.edgeCandidates).toBeGreaterThan(0);
     expect(result.diagnostics.edgeCandidates).toBeLessThan(30);
