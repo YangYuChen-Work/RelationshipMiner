@@ -211,3 +211,57 @@ The coalesced preview frame redraws the existing committed scene before drawing
 the cached incident-edge overlay. This work is bounded to one animation frame
 regardless of pointer-event rate and does not rebuild geometry or hit indexes;
 the exact immutable scene is rebuilt once at commit.
+
+## Fix Round 2
+
+### Finding addressed
+
+The coalesced preview frame previously redrew the complete committed scene,
+including the dragged node and all incident relationships, before overlaying
+their moved copies. This produced visible ghost node and curve geometry during
+drag.
+
+`GraphDragPreview` now caches an incident-edge ID set at pointer-down. A
+composite `drawGraphScene` call skips the dragged node, its semantic label, and
+those incident edge IDs in the committed pass. It still draws all unrelated
+committed nodes, curves, labels, and table geometry, then draws the moved node
+and incident curves once through the preview overlay. This remains an O(1)
+membership check during the already-required scene traversal and does not
+change pointer-move coalescing or commit behavior.
+
+### RED evidence
+
+Command:
+
+```powershell
+npx vitest run src/graph/renderer.test.ts -t "composites a drag frame"
+```
+
+Result:
+
+```text
+Test Files  1 failed (1)
+Tests       1 failed | 9 skipped (10)
+```
+
+The recording context found one arc at the dragged node's original committed
+coordinates; expected zero. The same composite test also requires the original
+incident quadratic call to be absent, the shifted preview curve and node to
+appear once, and an unrelated committed curve to remain.
+
+### GREEN and verification
+
+```text
+Composite regression       1/1 passed
+Renderer + GraphCanvas     46/46 passed
+Full frontend              25 files, 227/227 passed
+oxlint                     passed
+TypeScript + Vite build    passed
+git diff --check           passed
+```
+
+### Concerns
+
+None. Final pointer-up still performs the sole immutable layout/scene commit;
+cancel and lost capture still discard the preview, and arrowheads remain in the
+final drawing layers.

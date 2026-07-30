@@ -273,6 +273,56 @@ describe("drawGraphScene", () => {
       });
     }
   });
+
+  it("composites a drag frame without the original node or incident curve", () => {
+    const currentScene = scene();
+    const dragged = currentScene.entityDots.find((node) => node.id === "a")!;
+    const incident = currentScene.entityEdges.find(
+      (edge) => edge.sourceId === dragged.id,
+    )!;
+    const unrelated = currentScene.entityEdges.find(
+      (edge) => edge.sourceId !== dragged.id && edge.targetId !== dragged.id,
+    )!;
+    const preview = createGraphDragPreview(currentScene, dragged.id)!;
+    const screen = {
+      x: dragged.screen.x + 100,
+      y: dragged.screen.y + 60,
+    };
+    const { context } = recordingContext();
+    const compositeOptions = {
+      ...options("a"),
+      dragPreview: { preview, screen },
+    };
+
+    drawGraphScene(context, currentScene, compositeOptions);
+
+    const arcs = vi.mocked(context.arc).mock.calls;
+    expect(arcs.filter(([x, y]) =>
+      x === dragged.screen.x && y === dragged.screen.y
+    )).toHaveLength(0);
+    expect(arcs.filter(([x, y]) => x === screen.x && y === screen.y))
+      .toHaveLength(1);
+
+    const curves = vi.mocked(context.quadraticCurveTo).mock.calls;
+    expect(curves).not.toContainEqual([
+      incident.geometry.control.x,
+      incident.geometry.control.y,
+      incident.geometry.to.x,
+      incident.geometry.to.y,
+    ]);
+    expect(curves).toContainEqual([
+      incident.geometry.control.x + 50,
+      incident.geometry.control.y + 30,
+      incident.geometry.to.x,
+      incident.geometry.to.y,
+    ]);
+    expect(curves).toContainEqual([
+      unrelated.geometry.control.x,
+      unrelated.geometry.control.y,
+      unrelated.geometry.to.x,
+      unrelated.geometry.to.y,
+    ]);
+  });
 });
 
 describe("drawGraphDragPreview", () => {

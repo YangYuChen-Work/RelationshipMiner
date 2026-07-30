@@ -21,7 +21,6 @@ import {
 import { projectGraph } from "../graph/projection";
 import {
   createGraphDragPreview,
-  drawGraphDragPreview,
   drawGraphScene,
   type GraphDragPreview,
 } from "../graph/renderer";
@@ -584,12 +583,11 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         focus: focusRef.current,
         selectedEntityEdgeId: selectedEntityEdgeRef.current,
         selectedTableEdgeId: selectedTableEdgeRef.current,
+        dragPreview: {
+          preview: preview.preview,
+          screen: preview.screen,
+        },
       });
-      drawGraphDragPreview(
-        context,
-        preview.preview,
-        preview.screen,
-      );
     });
     if (dragPreviewFrameRef.current === -1) {
       dragPreviewFrameRef.current = frame;

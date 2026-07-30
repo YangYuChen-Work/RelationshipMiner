@@ -19,12 +19,22 @@ const UNRELATED_NODE_OPACITY = 0.16;
 const UNRELATED_EDGE_OPACITY = 0.06;
 const FOCUS_EDGE_WIDTH = 2.2;
 
+export interface GraphDragPreview {
+  readonly node: SceneEntityNode;
+  readonly incidentEdges: readonly SceneEdge[];
+  readonly incidentEdgeIds: ReadonlySet<string>;
+}
+
 export interface DrawGraphOptions {
   readonly width: number;
   readonly height: number;
   readonly focus: GraphFocus;
   readonly selectedEntityEdgeId: string | null;
   readonly selectedTableEdgeId: string | null;
+  readonly dragPreview?: {
+    readonly preview: GraphDragPreview;
+    readonly screen: ScreenPoint;
+  };
 }
 
 interface Bounds {
@@ -41,11 +51,6 @@ interface DrawState {
   readonly focusedTableEdgeIds: ReadonlySet<string>;
   readonly activeNodeId: string | null;
   readonly hasFocus: boolean;
-}
-
-export interface GraphDragPreview {
-  readonly node: SceneEntityNode;
-  readonly incidentEdges: readonly SceneEdge[];
 }
 
 function compareText(left: string, right: string): number {
@@ -386,11 +391,22 @@ export function drawGraphScene(
   options: DrawGraphOptions,
 ): void {
   const state = focusedDrawState(scene, options);
-  const unrelatedEntityEdges = state.hasFocus
-    ? scene.entityEdges.filter((edge) => !state.focusedEntityEdgeIds.has(edge.id))
+  const excludedNodeId = options.dragPreview?.preview.node.id ?? null;
+  const excludedEdgeIds = options.dragPreview?.preview.incidentEdgeIds;
+  const entityEdges = excludedEdgeIds
+    ? scene.entityEdges.filter((edge) => !excludedEdgeIds.has(edge.id))
     : scene.entityEdges;
+  const entityDots = excludedNodeId
+    ? scene.entityDots.filter((node) => node.id !== excludedNodeId)
+    : scene.entityDots;
+  const entityLabels = excludedNodeId
+    ? scene.entityLabels.filter((label) => label.nodeId !== excludedNodeId)
+    : scene.entityLabels;
+  const unrelatedEntityEdges = state.hasFocus
+    ? entityEdges.filter((edge) => !state.focusedEntityEdgeIds.has(edge.id))
+    : entityEdges;
   const relatedEntityEdges = state.hasFocus
-    ? scene.entityEdges.filter((edge) => state.focusedEntityEdgeIds.has(edge.id))
+    ? entityEdges.filter((edge) => state.focusedEntityEdgeIds.has(edge.id))
     : [];
   const unrelatedTableEdges = state.hasFocus
     ? scene.tableEdges.filter((edge) => !state.focusedTableEdgeIds.has(edge.id))
@@ -399,8 +415,8 @@ export function drawGraphScene(
     ? scene.tableEdges.filter((edge) => state.focusedTableEdgeIds.has(edge.id))
     : [];
   const unrelatedNodes = state.hasFocus
-    ? scene.entityDots.filter((node) => !state.focusedNodeIds.has(node.id))
-    : scene.entityDots;
+    ? entityDots.filter((node) => !state.focusedNodeIds.has(node.id))
+    : entityDots;
   const unrelatedTableNodes = state.hasFocus
     ? scene.tableNodes.filter(
       (node) => !state.focusedTableNodeIds.has(node.id),
@@ -410,14 +426,14 @@ export function drawGraphScene(
     ? scene.tableNodes.filter((node) => state.focusedTableNodeIds.has(node.id))
     : [];
   const relatedNodes = state.hasFocus
-    ? scene.entityDots.filter(
+    ? entityDots.filter(
       (node) =>
         state.focusedNodeIds.has(node.id) && node.id !== state.activeNodeId,
     )
     : [];
   const activeNode = state.activeNodeId == null
     ? null
-    : scene.entityDots.find((node) => node.id === state.activeNodeId) ?? null;
+    : entityDots.find((node) => node.id === state.activeNodeId) ?? null;
   const activeLabel = activeNode
     ? {
       nodeId: activeNode.id,
@@ -457,7 +473,7 @@ export function drawGraphScene(
   semanticLayer(context, state.hasFocus ? UNRELATED_NODE_OPACITY : 1, () => {
     for (const table of unrelatedTableNodes) drawTableNode(context, table);
   });
-  const unrelatedLabels = scene.entityLabels
+  const unrelatedLabels = entityLabels
     .filter((label) =>
       !state.hasFocus || !state.focusedNodeIds.has(label.nodeId)
     )
@@ -491,7 +507,7 @@ export function drawGraphScene(
 
   if (activeNode) drawEntityNodes(context, [activeNode], 1, activeNode.id);
 
-  const relatedLabels = scene.entityLabels
+  const relatedLabels = entityLabels
     .filter((label) =>
       state.focusedNodeIds.has(label.nodeId) &&
       label.nodeId !== state.activeNodeId
@@ -511,6 +527,13 @@ export function drawGraphScene(
     }
   });
 
+  if (options.dragPreview) {
+    drawGraphDragPreview(
+      context,
+      options.dragPreview.preview,
+      options.dragPreview.screen,
+    );
+  }
   if (scene.zoomLevel === "detail" && !state.hasFocus) {
     drawArrowheads(
       context,
@@ -529,11 +552,13 @@ export function createGraphDragPreview(
 ): GraphDragPreview | null {
   const node = scene.entityDots.find((candidate) => candidate.id === nodeId);
   if (!node) return null;
+  const incidentEdges = scene.entityEdges.filter(
+    (edge) => edge.sourceId === nodeId || edge.targetId === nodeId,
+  );
   return {
     node,
-    incidentEdges: scene.entityEdges.filter(
-      (edge) => edge.sourceId === nodeId || edge.targetId === nodeId,
-    ),
+    incidentEdges,
+    incidentEdgeIds: new Set(incidentEdges.map((edge) => edge.id)),
   };
 }
 
