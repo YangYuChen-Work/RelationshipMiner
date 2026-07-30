@@ -460,7 +460,7 @@ describe("GraphCanvas", () => {
 
     expect(d3.zoomTransform(canvas).k).toBe(0.02);
     expect(vi.mocked(context.fillText).mock.calls.flat()).toContain("owns");
-    expect(vi.mocked(context.fillText).mock.calls.flat()).not.toContain("Account A");
+    expect(vi.mocked(context.fillText).mock.calls.flat()).toContain("Account A");
   });
 
   it("fits every opted-in entity in a 7000-node radial layout inside the viewport", async () => {

@@ -17,6 +17,61 @@ function isOutside(
 }
 
 describe("edge geometry", () => {
+  it("separates parallel edges deterministically across input order and direction", () => {
+    const compactSourceBounds = { left: 0, top: 0, right: 0, bottom: 0 };
+    const compactTargetBounds = { left: 8, top: 0, right: 8, bottom: 0 };
+    const parallel = [
+      {
+        edgeId: "edge-3",
+        from: { x: 8, y: 0 },
+        to: { x: 0, y: 0 },
+        fromBounds: compactTargetBounds,
+        toBounds: compactSourceBounds,
+      },
+      {
+        edgeId: "edge-1",
+        from: { x: 0, y: 0 },
+        to: { x: 8, y: 0 },
+        fromBounds: compactSourceBounds,
+        toBounds: compactTargetBounds,
+      },
+    ];
+    const build = (inputs: typeof parallel) => {
+      const sortedIds = inputs.map(({ edgeId }) => edgeId).sort();
+      return Object.fromEntries(inputs.map((input) => [
+        input.edgeId,
+        buildQuadraticGeometry({
+          ...input,
+          parallelOrdinal: sortedIds.indexOf(input.edgeId),
+          parallelCount: sortedIds.length,
+        }),
+      ]));
+    };
+
+    const first = build(parallel);
+    const reordered = build([...parallel].reverse());
+
+    expect(first["edge-1"].control).not.toEqual(first["edge-3"].control);
+    expect(reordered).toEqual(first);
+  });
+
+  it("keeps geometry and samples finite near the numeric coordinate limit", () => {
+    const maximum = Number.MAX_VALUE;
+    const nearMaximum = maximum * (1 - Number.EPSILON * 2);
+    const geometry = buildQuadraticGeometry({
+      edgeId: "finite-extreme",
+      from: { x: nearMaximum, y: nearMaximum },
+      to: { x: maximum, y: maximum },
+      fromBounds: { left: nearMaximum, top: nearMaximum, right: nearMaximum, bottom: nearMaximum },
+      toBounds: { left: maximum, top: maximum, right: maximum, bottom: maximum },
+    });
+
+    expect(geometry.isLoop).toBe(false);
+    expect([geometry.from, geometry.control, geometry.to, ...sampleQuadratic(geometry, 8)]
+      .every((point) => Number.isFinite(point.x) && Number.isFinite(point.y)))
+      .toBe(true);
+  });
+
   it("keeps a stable control point for the same edge", () => {
     const input = {
       edgeId: "orders-users",

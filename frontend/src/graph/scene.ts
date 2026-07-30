@@ -96,8 +96,8 @@ export interface SceneNode {
 export interface SceneEntityNode extends SceneNode {
   tableId: string;
   className: string | null;
-  presentation?: EntityPresentation;
-  visibleDegree?: number;
+  presentation: EntityPresentation;
+  visibleDegree: number;
 }
 
 export interface SceneLabel {
@@ -231,6 +231,7 @@ function edgeCommand(
   source: SceneNode,
   target: SceneNode,
   direction: SceneDirection,
+  parallelLane: ParallelLane,
 ): SceneEdge | null {
   if (!validPoint(edge.from) || !validPoint(edge.to)) return null;
   const from = toScreen(edge.from, transform);
@@ -250,6 +251,8 @@ function edgeCommand(
       to,
       fromBounds: labelBounds(source),
       toBounds: labelBounds(target),
+      parallelOrdinal: parallelLane.ordinal,
+      parallelCount: parallelLane.count,
     }),
     direction,
   };
@@ -271,6 +274,36 @@ function byId<T extends { id: string }>(items: readonly T[]): Map<string, T> {
 
 function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+interface ParallelLane {
+  ordinal: number;
+  count: number;
+}
+
+function parallelLanes<T extends { id: string }>(
+  edges: readonly T[],
+  endpoints: (edge: T) => readonly [string, string],
+): Map<string, ParallelLane> {
+  const groups = new Map<string, T[]>();
+  for (const edge of edges) {
+    const [source, target] = endpoints(edge);
+    const pair = compareCodeUnits(source, target) <= 0
+      ? [source, target]
+      : [target, source];
+    const key = JSON.stringify(pair);
+    const group = groups.get(key);
+    if (group) group.push(edge);
+    else groups.set(key, [edge]);
+  }
+  const lanes = new Map<string, ParallelLane>();
+  for (const group of groups.values()) {
+    group.sort((left, right) => compareCodeUnits(left.id, right.id));
+    group.forEach((edge, ordinal) => {
+      lanes.set(edge.id, { ordinal, count: group.length });
+    });
+  }
+  return lanes;
 }
 
 function layoutEdgesFor(
@@ -470,11 +503,35 @@ export function buildScene(input: BuildSceneInput): RenderScene {
     input.graph.entity_edges,
     input.layout.entityEdges,
   );
+  const tableLanes = parallelLanes(
+    input.graph.table_edges,
+    (edge) => [edge.source_table, edge.target_table],
+  );
+  const entityLanes = parallelLanes(
+    input.graph.entity_edges,
+    (edge) => [edge.source, edge.target],
+  );
+  const renderableEntityIds = new Set(
+    input.layout.entityNodes.flatMap((node) => {
+      const world = { x: node.x, y: node.y };
+      if (!entityData.has(node.id) || !validPoint(world)) return [];
+      return validPoint(toScreen(world, transform)) ? [node.id] : [];
+    }),
+  );
+  const renderableVisibleEntityEdges = input.graph.entity_edges.filter((edge) => {
+    const layoutEdge = entityLayouts.get(edge.id);
+    return layoutEdge != null &&
+      renderableEntityIds.has(edge.source) &&
+      renderableEntityIds.has(edge.target) &&
+      validPoint(layoutEdge.from) &&
+      validPoint(layoutEdge.to) &&
+      validPoint(toScreen(layoutEdge.from, transform)) &&
+      validPoint(toScreen(layoutEdge.to, transform)) &&
+      visibleEntityRelations(edge, threshold).length > 0;
+  });
   const degrees = computeEntityDegrees(
     input.graph.entity_nodes,
-    input.graph.entity_edges.filter((edge) =>
-      visibleEntityRelations(edge, threshold).length > 0
-    ),
+    renderableVisibleEntityEdges,
   );
   const tableNodes = input.layout.tableNodes.flatMap((node) => {
     const data = tableData.get(node.id);
@@ -511,6 +568,7 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       source,
       target,
       semantics.direction,
+      tableLanes.get(edge.id) ?? { ordinal: 0, count: 1 },
     );
     return command ? [command] : [];
   });
@@ -554,18 +612,17 @@ export function buildScene(input: BuildSceneInput): RenderScene {
         source,
         target,
         relationDirection(relations),
+        entityLanes.get(edge.id) ?? { ordinal: 0, count: 1 },
       );
       return command ? [command] : [];
     });
   const entityLabels = entityDots
-    .filter((node) => zoomLevel !== "overview" ||
-      (transform.k > TABLE_EDGE_LABEL_ZOOM && (node.visibleDegree ?? 0) > 0)
-    )
+    .filter((node) => zoomLevel !== "overview" || node.visibleDegree > 0)
     .map((node) => ({
       nodeId: node.id,
-      text: node.presentation!.primary,
-      primary: node.presentation!.primary,
-      secondary: zoomLevel === "overview" ? "" : node.presentation!.secondary,
+      text: node.presentation.primary,
+      primary: node.presentation.primary,
+      secondary: zoomLevel === "overview" ? "" : node.presentation.secondary,
       world: node.world,
       screen: node.screen,
     }));

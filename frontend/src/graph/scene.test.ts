@@ -113,6 +113,83 @@ describe("buildScene", () => {
       .toBe("undirected");
   });
 
+  it("separates parallel scene edges deterministically including opposite directions", () => {
+    const parallelEdges = Array.from({ length: 40 }, (_, index) => {
+      const reverse = index % 2 === 1;
+      return {
+        ...graph.entity_edges[0],
+        id: `edge-${index.toString().padStart(2, "0")}`,
+        source: reverse ? "user-1" : "order-1",
+        target: reverse ? "order-1" : "user-1",
+        relations: [{
+          ...graph.entity_edges[0].relations[0],
+          source: reverse ? "user-1" : "order-1",
+          target: reverse ? "order-1" : "user-1",
+          direction: reverse ? "target_to_source" as const : "source_to_target" as const,
+        }],
+      };
+    });
+    const parallelGraph: SemanticGraphData = {
+      ...graph,
+      table_edges: [],
+      entity_edges: parallelEdges,
+    };
+    const parallelLayout: GraphLayout = {
+      ...layout,
+      tableEdges: [],
+      entityEdges: parallelEdges.map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        from: edge.source === "order-1" ? { x: 20, y: 80 } : { x: 120, y: 80 },
+        to: edge.target === "user-1" ? { x: 120, y: 80 } : { x: 20, y: 80 },
+      })),
+    };
+    const geometries = (scene: ReturnType<typeof buildScene>) =>
+      Object.fromEntries(scene.entityEdges.map((edge) => [edge.id, edge.geometry]));
+    const first = geometries(buildScene({ ...input(1.2), graph: parallelGraph, layout: parallelLayout }));
+    const reordered = geometries(buildScene({
+      ...input(1.2),
+      graph: { ...parallelGraph, entity_edges: [...parallelGraph.entity_edges].reverse() },
+      layout: { ...parallelLayout, entityEdges: [...parallelLayout.entityEdges].reverse() },
+    }));
+
+    expect(new Set(Object.values(first).map(({ control }) => `${control.x}:${control.y}`)))
+      .toHaveLength(parallelEdges.length);
+    expect(reordered).toEqual(first);
+  });
+
+  it("counts visible degree from renderable visible entity edges only", () => {
+    const degreeGraph: SemanticGraphData = {
+      table_nodes: [{ id: "table", display_name: "Table", entity_count: 3 }],
+      entity_nodes: [
+        { id: "source", table_id: "table", display_name: "Source", class_name: null, dimensions: {} },
+        { id: "target", table_id: "table", display_name: "Target", class_name: null, dimensions: {} },
+        { id: "ghost", table_id: "table", display_name: "Ghost", class_name: null, dimensions: {} },
+      ],
+      table_edges: [],
+      entity_edges: [
+        { id: "rendered", source: "source", target: "target", relations: [{ ...graph.entity_edges[1].relations[0], source: "source", target: "target" }] },
+        { id: "missing-layout", source: "source", target: "ghost", relations: [{ ...graph.entity_edges[1].relations[0], source: "source", target: "ghost" }] },
+      ],
+    };
+    const degreeLayout: GraphLayout = {
+      tableNodes: [{ id: "table", x: 0, y: 0 }],
+      entityNodes: [
+        { id: "source", tableId: "table", x: 0, y: 50 },
+        { id: "target", tableId: "table", x: 100, y: 50 },
+        { id: "ghost", tableId: "table", x: 200, y: 50 },
+      ],
+      tableEdges: [],
+      entityEdges: [{ id: "rendered", source: "source", target: "target", from: { x: 0, y: 50 }, to: { x: 100, y: 50 } }],
+    };
+
+    const scene = buildScene({ ...input(0.4), graph: degreeGraph, layout: degreeLayout });
+    expect(scene.entityDots.find((node) => node.id === "source")?.visibleDegree).toBe(1);
+    expect(scene.entityDots.find((node) => node.id === "ghost")?.visibleDegree).toBe(0);
+    expect(scene.entityLabels.map((label) => label.nodeId).sort()).toEqual(["source", "target"]);
+  });
+
   it("keeps world coordinates separate from transformed screen coordinates", () => {
     const scene = buildScene(input(2));
     expect(scene.tableNodes[0]).toMatchObject({

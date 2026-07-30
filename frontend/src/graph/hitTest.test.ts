@@ -193,7 +193,17 @@ describe("hitTest", () => {
       hitRadius: Number.MAX_VALUE,
     };
     const index = createHitIndex({
-      entityDots: [{ ...malformedNode, tableId: "table", className: null }],
+      entityDots: [{
+        ...malformedNode,
+        tableId: "table",
+        className: null,
+        presentation: {
+          primary: "Malformed",
+          secondary: "0 个关系",
+          accessibleLabel: "Malformed; 0 个关系",
+        },
+        visibleDegree: 0,
+      }],
       tableNodes: [malformedNode],
       entityEdges: [],
       tableEdges: [],
