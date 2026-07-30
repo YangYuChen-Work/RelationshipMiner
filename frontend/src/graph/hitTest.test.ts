@@ -7,7 +7,7 @@ import {
   hitTest,
   hitTestWithDiagnostics,
 } from "./hitTest";
-import { quadraticPoint } from "./edgeGeometry";
+import { buildQuadraticGeometry, quadraticPoint } from "./edgeGeometry";
 import { buildScene } from "./scene";
 
 function graphFixture(): SemanticGraphData {
@@ -127,6 +127,55 @@ describe("hitTest", () => {
 
     expect(hitTest(rendered, loopPoint)).toEqual({ kind: "entity-edge", id: edge.id });
     expect(hitTest(rendered, { x: loopPoint.x, y: loopPoint.y - 7 })).toBeNull();
+  });
+
+  it("hits high-ordinal self-loop points between fixed sample vertices", () => {
+    const graph = graphFixture();
+    graph.table_edges = [];
+    graph.entity_edges = [{
+      ...graph.entity_edges[0],
+      id: "large-self-loop",
+      source: "order-1",
+      target: "order-1",
+      relations: [{
+        ...graph.entity_edges[0].relations[0],
+        source: "order-1",
+        target: "order-1",
+      }],
+    }];
+    const layout = layoutFixture();
+    layout.tableNodes = [];
+    layout.tableEdges = [];
+    layout.entityNodes = [{ id: "order-1", tableId: "orders", x: 0, y: 0 }];
+    layout.entityEdges = [{
+      id: "large-self-loop",
+      source: "order-1",
+      target: "order-1",
+      from: { x: 0, y: 0 },
+      to: { x: 0, y: 0 },
+    }];
+    const rendered = buildScene({
+      graph,
+      layout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+    const edge = rendered.entityEdges[0];
+    edge.geometry = buildQuadraticGeometry({
+      edgeId: edge.id,
+      from: { x: 0, y: 0 },
+      to: { x: 0, y: 0 },
+      fromBounds: { left: -10, top: -10, right: 10, bottom: 10 },
+      toBounds: { left: -10, top: -10, right: 10, bottom: 10 },
+      parallelOrdinal: 2_500,
+      parallelCount: 2_501,
+    });
+    rendered.hitIndex = createHitIndex(rendered);
+
+    expect(hitTest(rendered, quadraticPoint(edge.geometry, 0.46875))).toEqual({
+      kind: "entity-edge",
+      id: edge.id,
+    });
   });
 
   it("keeps node targets usable when zoom makes their visual radius very small", () => {

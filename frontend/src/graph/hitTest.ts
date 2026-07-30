@@ -3,6 +3,8 @@ import { sampleQuadratic } from "./edgeGeometry";
 
 const GRID_CELL_SIZE = 64;
 const EDGE_HIT_TOLERANCE = 6;
+const MAX_CURVE_DEVIATION = EDGE_HIT_TOLERANCE / 2;
+const MAX_CURVE_SAMPLE_SEGMENTS = 4_096;
 const MAX_NODE_INDEX_RADIUS = 2_804;
 const MAX_INDEX_CELLS_PER_ITEM = 8_192;
 const MAX_EDGE_TRAVERSAL_STEPS = 100_000;
@@ -177,8 +179,35 @@ function addTraversedSegmentCells(
   return false;
 }
 
+function curveSamples(edge: SceneEdge): ScreenPoint[] | null {
+  const { from, control, to } = edge.geometry;
+  if (![from, control, to].every(finitePoint)) return null;
+  const scale = Math.max(
+    1,
+    Math.abs(from.x),
+    Math.abs(from.y),
+    Math.abs(control.x),
+    Math.abs(control.y),
+    Math.abs(to.x),
+    Math.abs(to.y),
+  );
+  const curvature = Math.hypot(
+    from.x / scale - 2 * control.x / scale + to.x / scale,
+    from.y / scale - 2 * control.y / scale + to.y / scale,
+  ) * scale;
+  const segments = Math.max(
+    16,
+    Math.ceil(Math.sqrt(curvature / (4 * MAX_CURVE_DEVIATION))),
+  );
+  if (!Number.isSafeInteger(segments) || segments > MAX_CURVE_SAMPLE_SEGMENTS) {
+    return null;
+  }
+  return sampleQuadratic(edge.geometry, segments);
+}
+
 function traversedEdgeCells(edge: SceneEdge): Set<string> | null {
-  const samples = sampleQuadratic(edge.geometry, 16);
+  const samples = curveSamples(edge);
+  if (!samples) return null;
   const keys = new Set<string>();
   for (let index = 1; index < samples.length; index += 1) {
     if (!addTraversedSegmentCells(keys, samples[index - 1], samples[index])) return null;
@@ -253,7 +282,8 @@ function distanceToSegment(
 }
 
 function distanceToEdge(point: ScreenPoint, edge: SceneEdge): number {
-  const samples = sampleQuadratic(edge.geometry, 16);
+  const samples = curveSamples(edge);
+  if (!samples) return Number.POSITIVE_INFINITY;
   let distance = Number.POSITIVE_INFINITY;
   for (let index = 1; index < samples.length; index += 1) {
     distance = Math.min(distance, distanceToSegment(point, samples[index - 1], samples[index]));
