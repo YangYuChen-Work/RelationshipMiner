@@ -18,6 +18,8 @@ import type {
   SemanticGraphData,
 } from "../api/analysis";
 import { computeGroupedLayout, type GraphLayout } from "../graph/layout";
+import { quadraticPoint } from "../graph/edgeGeometry";
+import { buildScene } from "../graph/scene";
 import { useAnalysisStore } from "../store/analysis";
 
 // ── Mock 数据 ──
@@ -886,17 +888,19 @@ describe("Integration: full user flow", () => {
       (edge) => edge.id === "users--orders",
     )!;
     const transformBeforeTableFocus = d3.zoomTransform(canvas);
-    const tableEdgeFrom = transformBeforeTableFocus.apply([
-      tableEdge.from.x,
-      tableEdge.from.y,
-    ]);
-    const tableEdgeTo = transformBeforeTableFocus.apply([
-      tableEdge.to.x,
-      tableEdge.to.y,
-    ]);
+    const scene = buildScene({
+      graph: useAnalysisStore.getState().graph!,
+      layout,
+      transform: transformBeforeTableFocus,
+      confidenceThreshold: useAnalysisStore.getState().confidenceThreshold,
+    });
+    const tableEdgePoint = quadraticPoint(
+      scene.tableEdges.find((edge) => edge.id === tableEdge.id)!.geometry,
+      0.5,
+    );
     fireEvent.click(canvas, {
-      clientX: (tableEdgeFrom[0] + tableEdgeTo[0]) / 2,
-      clientY: (tableEdgeFrom[1] + tableEdgeTo[1]) / 2,
+      clientX: tableEdgePoint.x,
+      clientY: tableEdgePoint.y,
     });
 
     await waitFor(() => {

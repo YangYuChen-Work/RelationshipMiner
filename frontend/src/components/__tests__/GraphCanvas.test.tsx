@@ -2,7 +2,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import * as d3 from "d3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SemanticGraphData } from "../../api/analysis";
+import { quadraticPoint } from "../../graph/edgeGeometry";
 import { computeGroupedLayout } from "../../graph/layout";
+import { buildScene } from "../../graph/scene";
 import { useAnalysisStore } from "../../store/analysis";
 import GraphCanvas from "../GraphCanvas";
 
@@ -62,6 +64,26 @@ function setGraph(next: SemanticGraphData | null = graph) {
 
 async function ready() {
   await waitFor(() => expect(screen.getByRole("img", { name: /语义关系图/ })).toHaveAttribute("data-scene-ready", "true"));
+}
+
+function edgeMidpoint(
+  canvas: Element,
+  graph: SemanticGraphData,
+  layout: ReturnType<typeof computeGroupedLayout>,
+  edgeId: string,
+  kind: "entity" | "table",
+) {
+  const transform = d3.zoomTransform(canvas);
+  const scene = buildScene({
+    graph,
+    layout,
+    transform,
+    confidenceThreshold: useAnalysisStore.getState().confidenceThreshold,
+  });
+  const edge = (kind === "entity" ? scene.entityEdges : scene.tableEdges)
+    .find((candidate) => candidate.id === edgeId);
+  if (!edge) throw new Error(`expected ${kind} edge ${edgeId}`);
+  return quadraticPoint(edge.geometry, 0.5);
 }
 
 function controlledFrames() {
@@ -598,16 +620,13 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = screen.getByRole("img", { name: /语义关系图/ });
-    const edge = computeGroupedLayout(graph, {
+    const layout = computeGroupedLayout(graph, {
       width: 960,
       height: 600,
-    }).entityEdges.find((candidate) => candidate.id === "a--invoice")!;
-    const point = d3.zoomTransform(canvas).apply([
-      (edge.from.x + edge.to.x) / 2,
-      (edge.from.y + edge.to.y) / 2,
-    ]);
+    });
+    const point = edgeMidpoint(canvas, graph, layout, "a--invoice", "entity");
 
-    fireEvent.click(canvas, { clientX: point[0], clientY: point[1] });
+    fireEvent.click(canvas, { clientX: point.x, clientY: point.y });
 
     expect(useAnalysisStore.getState().selectedEntityEdgeId).toBe("a--invoice");
     expect(useAnalysisStore.getState().selectedTableEdgeId).toBeNull();
@@ -679,10 +698,11 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = screen.getByRole("img", { name: /语义关系图/ });
-    const edge = computeGroupedLayout(graph, { width: 960, height: 600 }).tableEdges[0];
+    const layout = computeGroupedLayout(graph, { width: 960, height: 600 });
+    const edge = layout.tableEdges[0];
     const transform = d3.zoomTransform(canvas);
-    const point = transform.apply([(edge.from.x + edge.to.x) / 2, (edge.from.y + edge.to.y) / 2]);
-    fireEvent.click(canvas, { clientX: point[0], clientY: point[1] });
+    const point = edgeMidpoint(canvas, graph, layout, edge.id, "table");
+    fireEvent.click(canvas, { clientX: point.x, clientY: point.y });
     expect(useAnalysisStore.getState().selectedTableEdgeId).toBe("accounts--billing");
     expect(useAnalysisStore.getState().selectedEntityEdgeId).toBeNull();
 
@@ -738,13 +758,9 @@ describe("GraphCanvas", () => {
     const canvas = document.querySelector("canvas")!;
     const layout = computeGroupedLayout(mixedGraph, { width: 960, height: 600 });
     const tableEdge = layout.tableEdges[0];
-    const before = d3.zoomTransform(canvas);
-    const tablePoint = before.apply([
-      (tableEdge.from.x + tableEdge.to.x) / 2,
-      (tableEdge.from.y + tableEdge.to.y) / 2,
-    ]);
+    const tablePoint = edgeMidpoint(canvas, mixedGraph, layout, tableEdge.id, "table");
 
-    fireEvent.click(canvas, { clientX: tablePoint[0], clientY: tablePoint[1] });
+    fireEvent.click(canvas, { clientX: tablePoint.x, clientY: tablePoint.y });
 
     expect(useAnalysisStore.getState().selectedTableEdgeId).toBe(tableEdge.id);
     const strongEdge = layout.entityEdges.find((edge) => edge.id === "a--invoice")!;
@@ -768,17 +784,15 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = document.querySelector("canvas")!;
-    const edge = computeGroupedLayout(graphWithoutSupport, {
+    const layout = computeGroupedLayout(graphWithoutSupport, {
       width: 960,
       height: 600,
-    }).tableEdges[0];
+    });
+    const edge = layout.tableEdges[0];
     const before = d3.zoomTransform(canvas);
-    const point = before.apply([
-      (edge.from.x + edge.to.x) / 2,
-      (edge.from.y + edge.to.y) / 2,
-    ]);
+    const point = edgeMidpoint(canvas, graphWithoutSupport, layout, edge.id, "table");
 
-    fireEvent.click(canvas, { clientX: point[0], clientY: point[1] });
+    fireEvent.click(canvas, { clientX: point.x, clientY: point.y });
 
     expect(useAnalysisStore.getState().selectedTableEdgeId).toBe(edge.id);
     expect(d3.zoomTransform(canvas)).toEqual(before);
