@@ -1,32 +1,39 @@
-# React + TypeScript + Vite
+﻿# AI Graph Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 前端应用，提供数据库表与字段选择界面、分析进度展示，以及基于 Canvas 2D 的交互式关系星云图谱。
 
-Currently, two official plugins are available:
+## 技术栈
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React 19 + TypeScript 6
+- Canvas 2D 渲染（D3.js 力导向布局 + Web Worker）
+- Tailwind CSS 4
+- Zustand 5 状态管理
 
-## React Compiler
+## 开发
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```powershell
+npm ci
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## 测试
+
+```powershell
+npm test
+npm run test:watch
+```
+
+## 构建
+
+```powershell
+npm run build
+```
+
+## 可视化回归测试
+
+开发用可视化工具，不参与生产构建：
+
+```
+/visual-test.html?size=20   # 20 节点场景
+/visual-test.html?size=200  # 200 节点场景
+```

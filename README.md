@@ -1,142 +1,172 @@
-# ai-graph
+﻿# AI Graph — AI 驱动关系图谱分析
 
-## 环境安装
+Web 应用：连接 MySQL 数据库，选择表与字段，AI 自动发现数据间的隐藏关联，在交互式力导向星云图谱中探索。
 
-本项目使用 uv 管理 Python 3.12 虚拟环境和后端依赖。请在项目根目录执行：
+## 功能概览
+
+- **数据库浏览** — 连接 MySQL 后自动列出全部表与字段
+- **灵活选择** — 勾选表（上限 10 张）与字段，系统自动识别主键、外键和 class_name 字段
+- **三层关系发现** — Schema（外键）、数据（值精确相等）、语义（AI 推断字段匹配）
+- **实时进度** — WebSocket 推送五阶段分析进度
+- **交互式星云图谱** — Canvas 渲染的力导向布局，支持缩放、拖拽、拖拽锁定节点
+- **悬停聚焦** — 鼠标悬停节点时高亮一跳邻域，其余节点/边淡出
+- **节点详情** — 双击节点查看全部字段原始值及关联节点列表
+- **置信度筛选** — 连续滑块（0.0–1.0）动态过滤边
+- **JSON 导出** — 一键下载完整快照（图谱数据 + 原始数据 + 分析配置 + 布局坐标）
+- **友好错误处理** — 数据库连接失败、AI 服务不可用、分析超时均返回中文提示
+
+## 技术栈
+
+| 层 | 技术 |
+|---|---|
+| 前端 | React 19 + TypeScript 6 + Canvas 2D + D3.js + Tailwind CSS 4 + Zustand 5 |
+| 后端 | Python 3.12 + FastAPI + SQLAlchemy + NumPy + Sentence Transformers |
+| AI | DeepSeek API (deepseek-v4-flash) + BAAI/bge-small-zh-v1.5 |
+| 数据库 | MySQL (SQLAlchemy 反射) |
+| 测试 | 481 tests (Pytest 240 + Vitest 241) |
+
+## 快速开始
+
+### 1. 配置环境
+
+```powershell
+cp .env.example .env
+```
+
+编辑 `.env`，填入数据库和 DeepSeek API 配置。
+
+### 2. 安装依赖
+
+需要 Python 3.12，使用 uv 管理后端依赖：
 
 ```powershell
 uv sync
 ```
 
-uv 会读取 `.python-version`，自动使用 Python 3.12 并创建 `.venv`。不要使用全局
-`pip install -r backend/requirements.txt`，否则 Windows 上的默认 Python 3.14 会尝试
-从源码编译旧版 `pydantic-core` 并失败。
-
-## 启动
-
-后端：
-
-```powershell
-# 在项目根目录运行
-uv run --directory backend uvicorn main:app --reload --port 8001
-```
-
-如果终端已经位于 `backend` 目录，则不要再次指定 `--directory backend`：
-
-```powershell
-uv run uvicorn main:app --reload --port 8001
-```
-
-如果命令提示当前激活的 `venv` 与项目的 `.venv` 不匹配，请先执行
-`deactivate`。`uv run` 会自动使用项目根目录的 `.venv`，不要求手动激活环境。
-
-前端：
-
 ```powershell
 cd frontend
 npm ci
+```
+
+### 3. 启动
+
+**后端**（端口 8001）：
+
+```powershell
+uv run --directory backend uvicorn main:app --reload --port 8001
+```
+
+**前端**（端口 5173）：
+
+```powershell
+cd frontend
 npm run dev
 ```
 
-后端健康检查地址为 <http://127.0.0.1:8001/api/health>，前端开发地址为
-<http://127.0.0.1:5173>。
+### 4. 使用
+
+1. 打开 http://127.0.0.1:5173
+2. 左侧面板自动加载数据库表列表
+3. 勾选要分析的表（≤10 张），展开后勾选参与分析的字段
+4. 点击"开始分析"，等待分析完成（≤3 分钟）
+5. 在星云图谱中交互探索关系
 
 ## 测试
 
 ```powershell
+# 后端 (240 tests)
 uv run --directory backend pytest
+
+# 前端 (241 tests)
 cd frontend
 npm test
+
+# 完整验证
+uv run --directory backend pytest; cd frontend; npm test -- --run; npm run build
 ```
 
-## Semantic relationship analysis prerequisites
+## 项目结构
 
-HTTP/WebSocket analysis has one supported production path:
-`RelationshipAnalyzer`. The old `decide_matches` and `compute_relationships`
-helpers are deprecated, non-production pure-function compatibility code only.
-Routers and the production pipeline do not call them, so there is no silent
-legacy fallback.
-
-- Semantic retrieval uses `BAAI/bge-small-zh-v1.5` by default. The first run
-  downloads the model into the Hugging Face cache (set `HF_HOME` to choose its
-  location), and Torch model loading has a cold-start cost. Pre-warm this cache
-  in production.
-- Planning and judgement use DeepSeek `deepseek-v4-flash` with JSON Output.
-  Set `DEEPSEEK_API_KEY`; `DEEPSEEK_MODEL` and `DEEPSEEK_BASE_URL` can override
-  the default model and endpoint.
-- A complete analysis has a single 180-second budget and returns `complete`,
-  `partial`, or `failed`. Timeouts and recoverable stage failures are explicit
-  in the terminal WebSocket `warnings`; analysis never falls back silently.
-- `class_name` metadata is optional. Select only semantic-analysis fields in
-  `dimensions`; the service adds primary/foreign keys internally for identity
-  and deterministic evidence.
-- Around 7,000 entities, model loading, embedding, and LLM judgement need
-  meaningful CPU/memory/network headroom. Keep dimensions focused, pre-warm
-  BGE, and tune `EMBEDDING_BATCH_SIZE` and `LLM_CONCURRENCY` for the host.
-
-### Model and LLM configuration
-
-The production defaults are `EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5`,
-`DEEPSEEK_MODEL=deepseek-v4-flash`, and `LLM_CONCURRENCY=4`. DeepSeek planning
-and judgement always request JSON Output (`response_format=json_object`);
-readiness only checks that the API key and model name are configured and never
-makes a network or paid API call.
-
-```powershell
-$env:HF_HOME = "D:\model-cache\huggingface"
-$env:EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
-$env:DEEPSEEK_API_KEY = Read-Host "Enter DeepSeek API key"
-$env:DEEPSEEK_MODEL = "deepseek-v4-flash"
-$env:LLM_CONCURRENCY = "4"
+```
+ai-graph/
+├── backend/                    # FastAPI 后端
+│   ├── engine/                 # 分析引擎
+│   │   └── semantic/           # 语义分析核心模块
+│   ├── routers/                # API 路由（tables, analyze）
+│   ├── models/                 # Pydantic 数据模型
+│   ├── tests/                  # 后端测试（240 tests）
+│   ├── config.py               # 环境配置加载
+│   ├── database.py             # 数据库连接管理
+│   └── main.py                 # FastAPI 应用入口
+├── frontend/                   # React 前端
+│   ├── src/
+│   │   ├── api/                # 后端 API 客户端
+│   │   ├── components/         # React 组件（13 个）
+│   │   ├── graph/              # 图谱布局、渲染、命中测试
+│   │   ├── store/              # Zustand 状态管理
+│   │   └── test/               # 测试 Fixture
+│   └── visual-test.html        # 可视化回归测试工具
+├── docs/
+│   ├── specs/                  # 产品规格说明
+│   └── superpowers/            # 实现计划与设计文档
+├── scripts/                    # 性能基准测试脚本
+├── .env.example                # 环境变量模板
+├── CONTEXT.md                  # 领域术语表
+├── CHANGELOG.md                # 版本记录
+└── pyproject.toml              # Python 项目配置
 ```
 
-Placeholder values such as `your-key`, `changeme`, and `example` are reported
-as `llm=missing`; use an actual DeepSeek credential.
+## API 端点
 
-On the first analysis, Sentence Transformers downloads the embedding model if
-it is not already cached. With `HF_HOME` set, Hugging Face stores hub files
-under `$env:HF_HOME\hub`; otherwise it uses the platform's default Hugging Face
-cache (normally `~/.cache/huggingface/hub`). Pre-warm that cache before serving
-production traffic:
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/api/health` | GET | 健康检查（就绪/降级） |
+| `/api/tables` | GET | 返回数据库所有表名 |
+| `/api/tables/{name}/fields` | GET | 返回指定表的字段列表 |
+| `/api/analyze` | POST | 提交分析任务，返回 task_id |
+| `/ws/analyze/{task_id}` | WS | 分析进度推送 + 最终图谱数据 |
+| `/api/export/{task_id}` | GET | 导出 JSON 完整快照 |
+
+## 环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `DB_HOST` | localhost | MySQL 主机地址 |
+| `DB_PORT` | 3306 | MySQL 端口 |
+| `DB_USER` | root | 数据库用户名 |
+| `DB_PASSWORD` | | 数据库密码 |
+| `DB_NAME` | test | 数据库名称 |
+| `DEEPSEEK_API_KEY` | | DeepSeek API 密钥（必填） |
+| `DEEPSEEK_MODEL` | deepseek-v4-flash | DeepSeek 模型名称 |
+| `DEEPSEEK_BASE_URL` | https://api.deepseek.com | API 基础地址 |
+| `HF_HOME` | | Hugging Face 模型缓存目录 |
+| `EMBEDDING_MODEL` | BAAI/bge-small-zh-v1.5 | 嵌入模型名称 |
+| `EMBEDDING_BATCH_SIZE` | 256 | 嵌入批处理大小 |
+| `LLM_CONCURRENCY` | 4 | LLM 并发调用数 |
+| `RELATIONSHIP_PLAN_LIMIT` | 20 | 关系计划数量上限 |
+
+## 分析流水线（5 阶段）
+
+1. **数据读取** — SQLAlchemy 全量拉取选中表与字段
+2. **Schema 分析** — 解析外键约束、唯一索引、字段类型元数据
+3. **AI 决策** — DeepSeek 规划关系探测计划、判定语义字段匹配
+4. **关系计算** — 全量执行精确值比较、外键追踪、语义相似度匹配
+5. **图谱生成** — 组装节点与边，通过 WebSocket 推送完成事件
+
+## 语义分析进阶
+
+嵌入模型预加载（生产环境建议）：
 
 ```powershell
 uv run --directory backend python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5')"
 ```
 
-Readiness follows Sentence Transformers 5.6's single-cache precedence:
-`SENTENCE_TRANSFORMERS_HOME`, then `HF_HUB_CACHE` (or the legacy
-`HUGGINGFACE_HUB_CACHE`), then `HF_HOME\hub`, then the platform default. An
-explicit primary cache value, including an empty value, is never masked by a
-model left in a lower-priority cache.
-
-`GET /api/health` reports only `ready`/`degraded` and fixed dependency states.
-It checks the database with `SELECT 1`, checks model files in the local cache
-without importing Torch or downloading anything, and checks only LLM
-configuration. It never returns API keys, database URLs, exception messages,
-prompts, responses, or entity and field values.
-
-### Partial-result troubleshooting
-
-When a terminal WebSocket result is `partial`, inspect its safe `warnings` and
-diagnostic counts to identify failed or pending groups. Confirm `/api/health`
-first, pre-warm the embedding cache if `embedding_model` is `missing`, and
-verify `DEEPSEEK_API_KEY` plus `DEEPSEEK_MODEL` if `llm` is `missing`. For
-service rate limits or deadline exhaustion, keep `LLM_CONCURRENCY=4` initially,
-reduce selected dimensions or tables, and retry; do not treat a partial graph
-as a complete zero-relation result.
-
-## 性能验收
-
-以下命令使用 7 张表、7,000 个合成实体、10 个关系计划和确定性假向量，
-不会调用外部 API，也不会输出实体字段值。后端结果应保持 Top-K 候选有界，
-前端结果应保持表区域不超过 10 个、概览场景无实体标签，并仅使用一个
-Canvas 而不是为每个实体创建 DOM 节点。
+性能基准测试（使用确定性假数据，不调用外部 API）：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\benchmark_semantic_backend.py
-Set-Location frontend
+cd frontend
 npm test -- --run src/graph/scaling.test.ts
 ```
 
-真实 DeepSeek 延迟需单独测量，因为它受账号配额、网络和服务状态影响，
-不属于上述可重复的本地性能基准。
+`/api/health` 仅返回 `ready`/`degraded` 状态和固定依赖项。它不会返回 API 密钥、数据库 URL、异常信息、提示词、响应内容或实体/字段值。
