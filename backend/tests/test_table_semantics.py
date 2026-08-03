@@ -174,8 +174,16 @@ async def test_summary_inference_uses_one_validated_batch():
     assert llm.calls[0]["response_model"] is not None
     messages = llm.calls[0]["messages"]
     assert '"summaries"' in messages[0]["content"]
+    assert "column_names" in messages[0]["content"]
+    assert "辅助上下文" in messages[0]["content"]
+    assert '"row_count"' not in json.dumps(messages, ensure_ascii=False)
     assert json.loads(messages[1]["content"])["tables"] == [
-        inputs[0].model_dump()
+        {
+            "table_name": "assembly_process",
+            "name_samples": ["通信卫星总装"],
+            "class_name_samples": ["com.example.AssemblyProcess"],
+            "column_names": ["id", "name", "class_name"],
+        }
     ]
     assert result[0].semantic_name == "装配工艺数据"
     assert result[0].status == "inferred"

@@ -122,13 +122,23 @@ def _fallback_summary(summary_input: TableSummaryInput) -> TableBusinessSummary:
 
 
 def _messages(inputs: list[TableSummaryInput]) -> list[dict[str, object]]:
-    evidence = [summary_input.model_dump() for summary_input in inputs]
+    evidence = [
+        {
+            "table_name": summary_input.table_name,
+            "name_samples": summary_input.name_samples,
+            "class_name_samples": summary_input.class_name_samples,
+            "column_names": summary_input.column_names,
+        }
+        for summary_input in inputs
+    ]
     return [
         {
             "role": "system",
             "content": (
-                "你为数据库表生成简短的中文业务类别名称。综合表名、对象类型、"
-                "少量业务名称示例和字段结构判断类别。semantic_name 必须是业务"
+                "你为数据库表生成简短的中文业务类别名称。以 table_name 的命名、"
+                "name_samples 的业务对象名称和 class_name_samples 的对象类型语义"
+                "作为主要上下文。column_names 只能作为辅助上下文用于消歧，不能"
+                "覆盖或改变主要上下文。semantic_name 必须是业务"
                 "类别，不得是某条记录名称、Java 类路径、数据库字段类型或技术"
                 "诊断。每个输入表恰好返回一项。输出形状必须是 "
                 '{"summaries":[{"table_name":"输入表名",'
