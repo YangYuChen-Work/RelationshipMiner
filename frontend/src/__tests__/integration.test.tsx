@@ -988,10 +988,10 @@ describe("Integration: full user flow", () => {
     });
     expect(screen.getByText("下单")).toBeInTheDocument();
     expect(screen.getByText("明确")).toBeInTheDocument();
-    expect(
-      screen.getByText("订单通过 user_id 指向用户主键。"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("orders.user_id 外键引用 users.id")).toBeInTheDocument();
+    expect(screen.getByText("两个业务对象通过已确认的数据引用建立关系。")).toBeInTheDocument();
+    expect(screen.getByText("已确认存在稳定的数据引用。")).toBeInTheDocument();
+    expect(screen.queryByText("订单通过 user_id 指向用户主键。")).not.toBeInTheDocument();
+    expect(screen.queryByText("orders.user_id 外键引用 users.id")).not.toBeInTheDocument();
     expect(screen.queryByText("placed_order")).not.toBeInTheDocument();
     expect(screen.queryByText("98%")).not.toBeInTheDocument();
     expect(screen.queryByText("foreign_key")).not.toBeInTheDocument();
@@ -1000,6 +1000,8 @@ describe("Integration: full user flow", () => {
     fireEvent.click(screen.getByText("技术依据"));
     expect(screen.getByText("placed_order")).toBeInTheDocument();
     expect(screen.getByText("98%")).toBeInTheDocument();
+    expect(screen.getByText("订单通过 user_id 指向用户主键。")).toBeInTheDocument();
+    expect(screen.getByText("orders.user_id 外键引用 users.id")).toBeInTheDocument();
     expect(screen.getByText("id = 1")).toBeInTheDocument();
     expect(screen.getByText("user_id = 1")).toBeInTheDocument();
     expect(screen.getByText("foreign_key")).toBeInTheDocument();
@@ -1098,16 +1100,28 @@ describe("Integration: full user flow", () => {
     expect(screen.getByText("工艺涉及零件")).toBeInTheDocument();
     expect(screen.getByText("明确")).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByText("所选业务信息支持这两个对象之间的关系。"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("所选业务信息能够相互印证。"),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByText(
         "转子装配工艺说明明确包含转轴，该记录是实际装配零件而不是名称相似的工艺文件。",
       ),
-    ).toBeInTheDocument();
-    expect(screen.getByText("工艺描述明确列出该零件名称。")).toBeInTheDocument();
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("工艺描述明确列出该零件名称。")).not.toBeInTheDocument();
     expect(screen.queryByText("weak")).not.toBeInTheDocument();
     expect(screen.queryByText("94%")).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("技术依据"));
     expect(screen.getByText("weak")).toBeInTheDocument();
     expect(screen.getByText("94%")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "转子装配工艺说明明确包含转轴，该记录是实际装配零件而不是名称相似的工艺文件。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("工艺描述明确列出该零件名称。")).toBeInTheDocument();
     expect(screen.getByText(/description = 依次安装转轴/)).toBeInTheDocument();
     expect(screen.getByText("part_name = 转轴")).toBeInTheDocument();
     expect(screen.getByText("fixture-semantic-model-v1")).toBeInTheDocument();

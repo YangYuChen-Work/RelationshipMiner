@@ -17,6 +17,30 @@ describe("business relationship presentation", () => {
     })).toBe("相关");
   });
 
+  it.each([
+    "owner_id关联",
+    "processUses零件",
+    "关联_code",
+    "使",
+    "一二三四五六七八九十甲乙丙",
+  ])("rejects unsafe explicit legacy label %s", (displayLabel) => {
+    expect(businessRelationLabel({
+      display_label: displayLabel,
+      relation_type: "unknown_internal_type",
+    })).toBe("相关");
+  });
+
+  it("never treats an arbitrary unknown raw relation type as display text", () => {
+    expect(businessRelationLabel({
+      display_label: undefined,
+      relation_type: "未知连接",
+    })).toBe("相关");
+    expect(businessRelationLabel({
+      display_label: "owner_id关联",
+      relation_type: "owns",
+    })).toBe("拥有");
+  });
+
   it("groups numeric confidence into business-readable bands", () => {
     expect(confidenceBand(0.92)).toBe("明确");
     expect(confidenceBand(0.71)).toBe("较可信");

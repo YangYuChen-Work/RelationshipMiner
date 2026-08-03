@@ -355,6 +355,29 @@ async def test_planner_preserves_internal_type_and_business_display_label():
     assert plans[0].display_label == "包含"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "display_label",
+    [
+        "owner_id关联",
+        "processUses零件",
+        "关联_code",
+        "使",
+        "一二三四五六七八九十甲乙丙",
+    ],
+    ids=["snake-cjk", "camel-cjk", "cjk-snake", "too-short", "too-long"],
+)
+async def test_planner_rejects_malformed_business_display_labels(
+    display_label: str,
+):
+    plan = {**_valid_plan(), "display_label": display_label}
+
+    with pytest.raises(ValueError):
+        await RelationshipPlanner(
+            _RecordingLlm({"plans": [plan]})
+        ).plan(_scope(), _schemas(), _samples())
+
+
 class _RecordingLlm:
     def __init__(self, payload: dict[str, object]):
         self.payload = payload

@@ -158,3 +158,76 @@ Output: exit 0, no whitespace errors.
 ## Concerns
 
 No blocking concerns. The judge intentionally treats an omitted or substituted response `display_label` as invalid because the business label is now part of the planned contract. Legacy stored graph snapshots remain supported on the frontend because `display_label` is optional there.
+
+## Fix round 1
+
+### Review findings addressed
+
+- Hardened the backend display-label contract at both planner and decision model boundaries. Explicit labels must contain 2–12 Han code points after trimming; snake_case, camelCase, mixed CJK/identifier text, one-character labels, and overlong labels are rejected.
+- Removed permissive truncation from graph normalization. Malformed legacy labels now use the small known mapping by raw relation type or fall back to `相关`.
+- Restricted frontend fallback order to: safe explicit `display_label`, known raw relation-type mapping, then `相关`. Arbitrary raw `relation_type` text is never displayed, even when it happens to contain Chinese characters.
+- Replaced normal-layer `explanation` and evidence `reason` rendering with fixed business summaries derived from evidence methods. Raw explanation/reason, fields, values, method, class names, IDs, direction, strength, and exact confidence remain available only under `技术依据`.
+
+### Red/green evidence
+
+The new focused regressions initially failed as expected:
+
+- Backend: `9 failed, 64 passed` — five malformed planner labels were accepted and four malformed legacy labels leaked or were truncated.
+- Frontend: `7 failed, 22 passed` — unsafe explicit labels and an arbitrary raw type leaked; deterministic explanation/reason text remained visible in the normal layer.
+
+After implementation:
+
+```powershell
+uv run --directory backend pytest tests/semantic/test_planner.py tests/semantic/test_judge.py tests/semantic/test_graph_builder.py -q
+```
+
+Output: `73 passed in 1.06s`.
+
+```powershell
+cd frontend
+npm test -- --run src/graph/businessRelations.test.ts src/components/__tests__/NodeDetailPanel.test.tsx src/__tests__/integration.test.tsx
+```
+
+Output: `3 passed` test files, `29 passed` tests.
+
+### Full verification after fixes
+
+```powershell
+uv run --directory backend pytest -q
+```
+
+Final isolated output: `277 passed in 7.70s`.
+
+```powershell
+cd frontend
+npm test -- --run
+```
+
+Final isolated output: `26 passed` test files, `282 passed` tests.
+
+An initial concurrent full-suite invocation caused the timing-sensitive backend event-loop responsiveness test to exceed its 50 ms assertion while the frontend suite was also consuming resources. The test passed immediately in isolation (`1 passed`) and the complete backend suite then passed without cross-process contention.
+
+```powershell
+cd frontend
+npm run lint
+npm run build
+```
+
+Output: both exit 0; the production build transformed 610 modules.
+
+```powershell
+uv run --directory backend python -m compileall -q engine tests
+git diff --check
+```
+
+Output: both exit 0; no compile or whitespace findings.
+
+### Fix-round self-review
+
+- Confirmed shared backend validation applies to both planned and decided relationships while retaining the safe `相关` default.
+- Confirmed the graph normalizer no longer truncates malformed labels into plausible-looking business text.
+- Confirmed the frontend never treats unknown raw relationship types as display text.
+- Confirmed realistic foreign-key payloads and semantic payloads hide raw explanations, evidence reasons, fields, values, methods, class names, and identifiers until `技术依据` is opened.
+- Confirmed unrelated `.superpowers/brainstorm/` remains untouched and unstaged.
+
+No blocking concerns remain.

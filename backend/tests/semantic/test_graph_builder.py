@@ -162,7 +162,7 @@ def test_generic_semantic_placeholder_gets_business_fallback_without_rewriting_r
             "orders:1",
             f"products:{index}",
             relation_type="business_relationship",
-            display_label="business_relationship",
+            display_label="相关",
         )
         for index in range(1, 4)
     ]
@@ -223,6 +223,22 @@ def test_graph_keeps_raw_relation_type_and_normalizes_business_label():
     assert relation.display_label == "包含"
     assert graph_builder.normalize_relation_label("") == "相关"
     assert graph_builder.normalize_relation_label("business_relationship") == "相关"
+
+
+@pytest.mark.parametrize(
+    "unsafe_label",
+    [
+        "owner_id关联",
+        "processUses零件",
+        "关联_code",
+        "使",
+        "一二三四五六七八九十甲乙丙",
+    ],
+)
+def test_relation_label_normalization_rejects_internal_identifier_shapes(
+    unsafe_label: str,
+):
+    assert graph_builder.normalize_relation_label(unsafe_label) == "相关"
 
 
 def test_weak_relations_of_different_types_do_not_combine_for_threshold():

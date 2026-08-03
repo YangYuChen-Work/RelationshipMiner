@@ -3,7 +3,28 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def is_safe_business_relation_label(value: str) -> bool:
+    """Return whether a label is short, business-facing Han text only."""
+    candidate = value.strip()
+    return 2 <= len(candidate) <= 12 and all(
+        "\u3400" <= character <= "\u9fff" for character in candidate
+    )
+
+
+class _BusinessRelationLabelModel(BaseModel):
+    display_label: str = "相关"
+
+    @field_validator("display_label")
+    @classmethod
+    def validate_display_label(cls, value: str) -> str:
+        if not is_safe_business_relation_label(value):
+            raise ValueError(
+                "display_label must contain 2-12 business-facing Chinese characters"
+            )
+        return value
 
 
 class AnalysisStatus(str, Enum):
@@ -43,11 +64,10 @@ class EntityDocument(BaseModel):
     search_text: str
 
 
-class RelationshipPlan(BaseModel):
+class RelationshipPlan(_BusinessRelationLabelModel):
     source_table: str
     target_table: str
     relation_type: str
-    display_label: str = "相关"
     direction: Literal["source_to_target", "target_to_source", "undirected"]
     source_dimensions: list[str]
     target_dimensions: list[str]
@@ -81,11 +101,10 @@ class RelationEvidence(BaseModel):
     reason: str
 
 
-class RelationDecision(BaseModel):
+class RelationDecision(_BusinessRelationLabelModel):
     source: str
     target: str
     relation_type: str
-    display_label: str = "相关"
     direction: Literal["source_to_target", "target_to_source", "undirected"]
     strength: Literal["strong", "weak"]
     confidence: float = Field(ge=0, le=1)

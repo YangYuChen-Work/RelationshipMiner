@@ -12,6 +12,7 @@ from .models import (
     RelationDecision,
     TableEdge,
     TableNode,
+    is_safe_business_relation_label,
 )
 from .public_json import public_json_value
 
@@ -62,11 +63,8 @@ def normalize_relation_label(
         mapped = _BUSINESS_RELATION_LABELS.get(normalized_candidate)
         if mapped is not None:
             return mapped
-        limited = candidate[:12]
-        if len(limited) >= 2 and any(
-            "\u3400" <= character <= "\u9fff" for character in limited
-        ):
-            return limited
+        if is_safe_business_relation_label(candidate):
+            return candidate
 
     return _BUSINESS_RELATION_LABELS.get(normalized_type, "相关")
 

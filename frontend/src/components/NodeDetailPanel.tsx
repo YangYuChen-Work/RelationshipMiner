@@ -31,6 +31,27 @@ function relationLabels(relations: readonly EntityRelationData[]): string {
   return [...new Set(relations.map(businessRelationLabel))].sort().join(" · ") || "相关";
 }
 
+function relationBusinessSummary(relation: EntityRelationData): string {
+  const methods = new Set(relation.evidence.map((evidence) => evidence.method));
+  if (methods.has("foreign_key")) {
+    return "两个业务对象通过已确认的数据引用建立关系。";
+  }
+  if (methods.has("unique_identifier")) {
+    return "两个业务对象通过唯一业务标识建立对应关系。";
+  }
+  if (methods.has("relation_table")) {
+    return "业务系统记录了这两个对象之间的结构关系。";
+  }
+  return "所选业务信息支持这两个对象之间的关系。";
+}
+
+function evidenceBusinessSummary(method: EntityRelationData["evidence"][number]["method"]): string {
+  if (method === "foreign_key") return "已确认存在稳定的数据引用。";
+  if (method === "unique_identifier") return "唯一业务标识匹配。";
+  if (method === "relation_table") return "业务结构记录提供支持。";
+  return "所选业务信息能够相互印证。";
+}
+
 function Disclosure({
   summary,
   children,
@@ -92,7 +113,7 @@ function RelationDetails({
         </span>
       </div>
       <p className="mt-3 whitespace-pre-wrap text-slate-200">
-        {relation.explanation || "暂无业务解释。"}
+        {relationBusinessSummary(relation)}
       </p>
       <div className="mt-3">
         <p className="text-xs text-slate-400">关系证据</p>
@@ -105,7 +126,7 @@ function RelationDetails({
                 key={`${evidence.source_field}-${evidence.target_field}-${index}`}
                 className="rounded border border-slate-700/60 px-2 py-2"
               >
-                {evidence.reason || "已有字段匹配证据。"}
+                {evidenceBusinessSummary(evidence.method)}
               </li>
             ))}
           </ul>
@@ -121,6 +142,7 @@ function RelationDetails({
           <div><dt className="text-slate-500">目标 class_name</dt><dd className="break-all font-mono">{target.class_name ?? "—"}</dd></div>
           <div><dt className="text-slate-500">模型 ID</dt><dd className="break-all font-mono">{relation.model_id ?? "—"}</dd></div>
           <div><dt className="text-slate-500">任务 ID</dt><dd className="break-all font-mono">{relation.task_id ?? "—"}</dd></div>
+          <div className="col-span-2"><dt className="text-slate-500">原始解释</dt><dd className="whitespace-pre-wrap break-all font-mono">{relation.explanation || "—"}</dd></div>
         </dl>
         {relation.evidence.length > 0 ? (
           <div className="mt-3 space-y-2">
@@ -132,6 +154,7 @@ function RelationDetails({
                 <div><dt className="inline text-slate-500">源字段：</dt><dd className="inline font-mono">{evidence.source_field} = {fieldValue(evidence.source_value)}</dd></div>
                 <div><dt className="inline text-slate-500">目标字段：</dt><dd className="inline font-mono">{evidence.target_field} = {fieldValue(evidence.target_value)}</dd></div>
                 <div><dt className="inline text-slate-500">匹配方法：</dt><dd className="inline font-mono">{evidence.method}</dd></div>
+                <div><dt className="inline text-slate-500">原始说明：</dt><dd className="inline whitespace-pre-wrap font-mono">{evidence.reason || "—"}</dd></div>
               </dl>
             ))}
           </div>

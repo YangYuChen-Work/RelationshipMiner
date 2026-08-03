@@ -24,35 +24,19 @@ const KNOWN_BUSINESS_LABELS: Readonly<Record<string, string>> = {
   "人员行为": "关联行为",
   "工艺涉及零件": "工艺涉及零件",
 };
-const GENERIC_LABELS = new Set([
-  "",
-  "相关",
-  "关联",
-  "关系",
-  "business_relationship",
-  "semantic_relationship",
-  "relationship",
-  "relation",
-  "语义关联",
-  "关联关系",
-]);
-
-function normalizedBusinessLabel(value: string | null | undefined): string | null {
+function safeExplicitBusinessLabel(value: string | null | undefined): string | null {
   const candidate = value?.trim() ?? "";
-  const normalized = candidate.toLocaleLowerCase();
-  if (GENERIC_LABELS.has(normalized)) return null;
-  const known = KNOWN_BUSINESS_LABELS[normalized];
-  if (known) return known;
-  const limited = Array.from(candidate).slice(0, 12).join("");
-  return limited.length >= 2 && /[\u3400-\u9fff]/u.test(limited)
-    ? limited
+  const codePoints = Array.from(candidate);
+  return codePoints.length >= 2 &&
+    codePoints.length <= 12 &&
+    codePoints.every((character) => /[\u3400-\u9fff]/u.test(character))
+    ? candidate
     : null;
 }
 
 export function businessRelationLabel(relation: RelationLabelInput): string {
-  return normalizedBusinessLabel(relation.display_label) ??
+  return safeExplicitBusinessLabel(relation.display_label) ??
     KNOWN_BUSINESS_LABELS[relation.relation_type.trim().toLocaleLowerCase()] ??
-    normalizedBusinessLabel(relation.relation_type) ??
     "相关";
 }
 
