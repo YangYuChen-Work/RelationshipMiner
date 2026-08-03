@@ -27,7 +27,7 @@ export default class CanvasErrorBoundary extends Component<CanvasErrorBoundaryPr
       return (
         <div
           role="alert"
-          className="flex h-full min-h-[420px] flex-col items-center justify-center gap-3 bg-[#0a1622] px-6 text-center text-sm text-slate-300"
+          className="flex h-full min-h-[420px] flex-col items-center justify-center gap-3 border border-slate-200 bg-white px-6 text-center text-sm text-slate-700"
         >
           <p>
             <span>图谱画布暂时无法显示</span>
@@ -36,7 +36,7 @@ export default class CanvasErrorBoundary extends Component<CanvasErrorBoundaryPr
           <button
             type="button"
             onClick={this.retry}
-            className="rounded border border-slate-500 px-3 py-1.5 text-slate-100"
+            className="rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-700 hover:border-teal-600 hover:text-teal-700"
           >
             重试画布
           </button>

@@ -148,10 +148,16 @@ describe("GraphCanvas", () => {
     );
     await frames.flushLatest();
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    const recoveryPanel = screen.getByRole("alert");
+    expect(recoveryPanel).toHaveTextContent(
       "无法创建 Canvas 2D",
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("浏览器不支持");
+    expect(recoveryPanel).toHaveTextContent("浏览器不支持");
+    expect(recoveryPanel).toHaveClass(
+      "border-rose-200",
+      "bg-white",
+      "text-rose-800",
+    );
     expect(canvas).toHaveAttribute("data-scene-ready", "false");
     expect(canvas).toHaveAttribute("data-ready-generation", "");
 

@@ -195,6 +195,42 @@ describe("edge geometry", () => {
     expect(loop.control.y).toBeLessThan(sourceBounds.top);
   });
 
+  it("clips against composite node and centered-below label regions", () => {
+    const sourceRegions = [
+      { left: -10, top: -10, right: 10, bottom: 10 },
+      { left: -90, top: 16, right: 90, bottom: 42 },
+    ];
+    const targetRegions = [
+      { left: 190, top: -10, right: 210, bottom: 10 },
+      { left: 110, top: 16, right: 290, bottom: 42 },
+    ];
+    const horizontal = buildQuadraticGeometry({
+      edgeId: "horizontal-business-labels",
+      from: { x: 0, y: 0 },
+      to: { x: 200, y: 0 },
+      fromBounds: sourceRegions,
+      toBounds: targetRegions,
+    });
+
+    expect(horizontal.from.x).toBeGreaterThan(10);
+    expect(horizontal.from.x).toBeLessThan(20);
+    expect(horizontal.to.x).toBeGreaterThan(180);
+    expect(horizontal.to.x).toBeLessThan(190);
+
+    const downward = buildQuadraticGeometry({
+      edgeId: "downward-business-labels",
+      from: { x: 0, y: 0 },
+      to: { x: 0, y: 200 },
+      fromBounds: sourceRegions,
+      toBounds: [
+        { left: -10, top: 190, right: 10, bottom: 210 },
+        { left: -90, top: 216, right: 90, bottom: 242 },
+      ],
+    });
+
+    expect(downward.from.y).toBeGreaterThan(42);
+  });
+
   it("clips curve endpoints beyond the source and target label bounds", () => {
     const geometry = buildQuadraticGeometry({
       edgeId: "orders-users",

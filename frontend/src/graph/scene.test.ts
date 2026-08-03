@@ -3,6 +3,7 @@ import type { SemanticGraphData } from "../api/analysis";
 import type { GraphLayout } from "./layout";
 import { hitTest } from "./hitTest";
 import { buildScene } from "./scene";
+import { sampleQuadratic } from "./edgeGeometry";
 
 const graph: SemanticGraphData = {
   table_nodes: [
@@ -69,6 +70,120 @@ function input(k: number, confidenceThreshold = 0) {
 }
 
 describe("buildScene", () => {
+  it("clips horizontal edges around the node instead of the old right-side label width", () => {
+    const horizontalGraph: SemanticGraphData = {
+      table_nodes: [{ id: "objects", display_name: "业务对象", entity_count: 2 }],
+      entity_nodes: [
+        { id: "source", table_id: "objects", display_name: "很长很长的源业务对象名称", class_name: null, dimensions: {} },
+        { id: "target", table_id: "objects", display_name: "很长很长的目标业务对象名称", class_name: null, dimensions: {} },
+      ],
+      table_edges: [],
+      entity_edges: [{
+        id: "horizontal",
+        source: "source",
+        target: "target",
+        relations: [{
+          source: "source",
+          target: "target",
+          relation_type: "related",
+          display_label: "关联",
+          direction: "source_to_target",
+          strength: "strong",
+          confidence: 1,
+          explanation: "",
+          evidence: [],
+          model_id: null,
+          task_id: null,
+        }],
+      }],
+    };
+    const horizontalLayout: GraphLayout = {
+      tableNodes: [{ id: "objects", x: 150, y: -80 }],
+      entityNodes: [
+        { id: "source", tableId: "objects", x: 0, y: 0 },
+        { id: "target", tableId: "objects", x: 300, y: 0 },
+      ],
+      tableEdges: [],
+      entityEdges: [{ id: "horizontal", source: "source", target: "target", from: { x: 0, y: 0 }, to: { x: 300, y: 0 } }],
+    };
+
+    const current = buildScene({
+      graph: horizontalGraph,
+      layout: horizontalLayout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+    const source = current.entityDots.find((node) => node.id === "source")!;
+    const target = current.entityDots.find((node) => node.id === "target")!;
+    const edge = current.entityEdges[0];
+
+    expect(edge.geometry.from.x).toBeLessThan(source.screen.x + 20);
+    expect(edge.geometry.from.x).toBeGreaterThan(source.screen.x + source.screenRadius);
+    expect(edge.geometry.to.x).toBeGreaterThan(target.screen.x - 20);
+    expect(edge.geometry.to.x).toBeLessThan(target.screen.x - target.screenRadius);
+  });
+
+  it("keeps a downward relationship outside centered primary and secondary labels", () => {
+    const verticalGraph: SemanticGraphData = {
+      table_nodes: [{ id: "objects", display_name: "业务对象", entity_count: 2 }],
+      entity_nodes: [
+        { id: "source", table_id: "objects", display_name: "重复业务对象", display_code: "SRC-01", class_name: null, dimensions: {} },
+        { id: "target", table_id: "objects", display_name: "重复业务对象", display_code: "TGT-02", class_name: null, dimensions: {} },
+      ],
+      table_edges: [],
+      entity_edges: [{
+        id: "vertical",
+        source: "source",
+        target: "target",
+        relations: [{
+          source: "source",
+          target: "target",
+          relation_type: "related",
+          display_label: "关联",
+          direction: "source_to_target",
+          strength: "strong",
+          confidence: 1,
+          explanation: "",
+          evidence: [],
+          model_id: null,
+          task_id: null,
+        }],
+      }],
+    };
+    const verticalLayout: GraphLayout = {
+      tableNodes: [{ id: "objects", x: 100, y: -80 }],
+      entityNodes: [
+        { id: "source", tableId: "objects", x: 100, y: 0 },
+        { id: "target", tableId: "objects", x: 100, y: 200 },
+      ],
+      tableEdges: [],
+      entityEdges: [{ id: "vertical", source: "source", target: "target", from: { x: 100, y: 0 }, to: { x: 100, y: 200 } }],
+    };
+
+    const current = buildScene({
+      graph: verticalGraph,
+      layout: verticalLayout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+    const source = current.entityDots.find((node) => node.id === "source")!;
+    const edge = current.entityEdges[0];
+    const labelBounds = {
+      left: source.screen.x - Math.max("重复业务对象".length * 7, "SRC-01".length * 6) / 2,
+      right: source.screen.x + Math.max("重复业务对象".length * 7, "SRC-01".length * 6) / 2,
+      top: source.screen.y + source.screenRadius + 6,
+      bottom: source.screen.y + source.screenRadius + 31,
+    };
+
+    expect(edge.geometry.from.y).toBeGreaterThan(labelBounds.bottom);
+    expect(sampleQuadratic(edge.geometry, 64).every((point) =>
+      point.x <= labelBounds.left ||
+      point.x >= labelBounds.right ||
+      point.y <= labelBounds.top ||
+      point.y >= labelBounds.bottom
+    )).toBe(true);
+  });
+
   it("uses the exact semantic zoom boundaries", () => {
     const overview = buildScene(input(0.4));
     const work = buildScene(input(0.8));

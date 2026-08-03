@@ -1026,13 +1026,13 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       {canvasError && (
         <div
           role="alert"
-          className="absolute bottom-3 left-3 right-3 z-10 rounded border border-rose-400/30 bg-slate-950/90 px-3 py-2 text-sm text-rose-100"
+          className="absolute bottom-3 left-3 right-3 z-10 rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-800 shadow-sm"
         >
           <p>{canvasError}</p>
           <button
             type="button"
             onClick={retryCanvas}
-            className="mt-2 rounded border border-rose-300/50 px-2 py-1 text-xs font-medium text-rose-100 hover:border-rose-200"
+            className="mt-2 rounded border border-rose-300 bg-white px-2 py-1 text-xs font-medium text-rose-800 hover:border-rose-500"
           >
             重试画布
           </button>

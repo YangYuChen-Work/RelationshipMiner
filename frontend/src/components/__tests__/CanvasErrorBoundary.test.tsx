@@ -19,7 +19,11 @@ it("clears its error and retries the canvas subtree", () => {
       <FragileCanvas />
     </CanvasErrorBoundary>,
   );
-  expect(screen.getByRole("alert")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveClass(
+    "border-slate-200",
+    "bg-white",
+    "text-slate-700",
+  );
 
   fireEvent.click(screen.getByRole("button", { name: "重试画布" }));
 

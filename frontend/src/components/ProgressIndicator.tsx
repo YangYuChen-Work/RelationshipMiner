@@ -24,7 +24,9 @@ export default function ProgressIndicator() {
 
   if (phase !== "analyzing") return null;
 
-  const phaseLabel = PHASE_LABELS[currentPhase] || currentPhase || "正在准备分析";
+  const knownPhaseLabel = PHASE_LABELS[currentPhase];
+  const phaseLabel = knownPhaseLabel || "正在处理业务对象关系";
+  const technicalPhase = currentPhase && !knownPhaseLabel ? currentPhase : null;
   const percent = Math.round(progressValue * 100);
 
   return (
@@ -56,10 +58,11 @@ export default function ProgressIndicator() {
       <p className="text-sm text-slate-600" aria-live="polite">
         正在生成业务关系图
       </p>
-      {progressMessage ? (
+      {progressMessage || technicalPhase ? (
         <details className="text-xs text-slate-500">
           <summary className="cursor-pointer">技术详情</summary>
-          <p className="mt-2">{progressMessage}</p>
+          {technicalPhase ? <p className="mt-2">技术阶段：{technicalPhase}</p> : null}
+          {progressMessage ? <p className="mt-2">{progressMessage}</p> : null}
         </details>
       ) : null}
     </div>

@@ -95,6 +95,8 @@ export interface SceneNode {
   screen: ScreenPoint;
   screenRadius: number;
   hitRadius: number;
+  /** Undefined for table nodes; present (possibly empty) for entity labels. */
+  secondaryLabel?: string;
 }
 
 export interface SceneEntityNode extends SceneNode {
@@ -329,14 +331,31 @@ function entityWorldRadius(degree: number): number {
   return ENTITY_BASE_WORLD_RADIUS + Math.min(6, Math.sqrt(Math.max(0, degree)) * 1.8);
 }
 
-function labelBounds(node: SceneNode): ScreenBounds {
-  const labelWidth = Math.max(40, node.label.length * 7);
-  return {
-    left: node.screen.x - node.screenRadius - NODE_HIT_PADDING,
-    top: node.screen.y - Math.max(20, node.screenRadius + 8),
-    right: node.screen.x + node.screenRadius + 8 + labelWidth,
-    bottom: node.screen.y + Math.max(20, node.screenRadius + 8),
+function labelBounds(node: SceneNode): readonly ScreenBounds[] {
+  const nodePadding = NODE_HIT_PADDING;
+  const nodeBounds = {
+    left: node.screen.x - node.screenRadius - nodePadding,
+    top: node.screen.y - node.screenRadius - nodePadding,
+    right: node.screen.x + node.screenRadius + nodePadding,
+    bottom: node.screen.y + node.screenRadius + nodePadding,
   };
+  const secondary = node.secondaryLabel;
+  const labelWidth = secondary === undefined
+    ? node.label.length * 7
+    : Math.max(node.label.length * 7, secondary.length * 6);
+  const labelTop = node.screen.y + node.screenRadius +
+    (secondary === undefined ? 3 : 6);
+  const labelBottom = node.screen.y + node.screenRadius +
+    (secondary === undefined ? 15 : secondary ? 31 : 19);
+  return [
+    nodeBounds,
+    {
+      left: node.screen.x - labelWidth / 2,
+      top: labelTop,
+      right: node.screen.x + labelWidth / 2,
+      bottom: labelBottom,
+    },
+  ];
 }
 
 function relationDirection(
@@ -608,6 +627,7 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       return command
         ? [{
           ...command,
+          secondaryLabel: zoomLevel === "overview" ? "" : presentation.secondary,
           tableId: node.tableId,
           className: data.class_name,
           presentation,
