@@ -24,7 +24,7 @@ async def run_analysis_pipeline(
     engine: Engine,
     tables: list[dict[str, object]],
     on_progress: Callable[[dict[str, object]], object] | None = None,
-    timeout_seconds: float = 180.0,
+    timeout_seconds: float = 600.0,
 ) -> AnalysisResult:
     """Map legacy ``fields`` selections to semantic ``dimensions``."""
     scope = AnalysisScope(
@@ -53,4 +53,14 @@ async def run_analysis_pipeline(
         if inspect.isawaitable(response):
             await response
 
-    return await _application_analyzer().analyze(engine, scope, relay)
+    import sys
+    print(f"[Pipeline] Starting analysis for {len(scope.tables)} table(s)...", file=sys.stderr, flush=True)
+    try:
+        result = await _application_analyzer().analyze(engine, scope, relay)
+        print(f"[Pipeline] Analysis completed: status={result.status.value}", file=sys.stderr, flush=True)
+        return result
+    except Exception as exc:
+        import traceback
+        print(f"[Pipeline] Analysis exception: {exc}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        raise

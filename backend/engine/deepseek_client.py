@@ -4,6 +4,8 @@
 """
 
 import json
+import sys
+import time
 
 from openai import AsyncOpenAI
 from openai import OpenAI
@@ -56,6 +58,18 @@ class DeepSeekJsonAdapter:
             )
 
         attempt_messages = [dict(message) for message in messages]
+        _call_count = getattr(type(self), '_total_calls', 0) + 1
+        type(self)._total_calls = _call_count
+        _phase = 'unknown'
+        for msg in messages:
+            c = str(msg.get('content', ''))
+            if 'Plan plausible cross-table' in c:
+                _phase = 'planner'
+            elif 'Judge only the proposed' in c:
+                _phase = 'judge'
+        _desc = f'[LLM #{_call_count}] [{_phase}] {self.model}'
+        print(f'{_desc} -> calling...', file=sys.stderr, flush=True)
+        _start = time.monotonic()
         last_error: Exception | None = None
         for attempt in range(2):
             try:
@@ -67,6 +81,14 @@ class DeepSeekJsonAdapter:
                     max_tokens=max_tokens,
                 )
                 choice = response.choices[0]
+                _elapsed = time.monotonic() - _start
+                usage = getattr(response, "usage", None)
+                _tokens = getattr(usage, "total_tokens", "?")
+                print(
+                    f'{_desc} <- {_elapsed:.1f}s, {_tokens} tokens, '
+                    f'finish={choice.finish_reason}',
+                    file=sys.stderr, flush=True,
+                )
                 if choice.finish_reason == "length":
                     raise ValueError(
                         "finish_reason=length: JSON output was truncated"

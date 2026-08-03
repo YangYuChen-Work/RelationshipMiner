@@ -112,7 +112,10 @@ async def analyze_progress(
             tables=task["request"]["tables"],
             on_progress=send_progress,
         )
-    except Exception:
+    except Exception as exc:
+        import traceback, sys
+        print(f"[Router] Pipeline exception: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         result = AnalysisResult(
             status=AnalysisStatus.FAILED,
             table_nodes=[],

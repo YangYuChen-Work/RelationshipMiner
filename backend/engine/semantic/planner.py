@@ -36,7 +36,10 @@ class RelationshipPlanner:
             samples,
             allowed_dimensions,
         )
+        import sys
+        print(f'[Planner] generating plans for {len(scope.tables)} tables...', file=sys.stderr, flush=True)
         envelope = await self._complete_plan(messages)
+        print(f'[Planner] received {len(envelope.plans)} plans', file=sys.stderr, flush=True)
 
         plans = _validate_and_cap_plans(
             envelope.plans,
@@ -51,7 +54,7 @@ class RelationshipPlanner:
     ) -> _PlanEnvelope:
         payload = await self._llm.complete_json(
             messages,
-            max_tokens=4096,
+            max_tokens=8192,
             response_model=_PlanEnvelope,
         )
         return _PlanEnvelope.model_validate(payload)
@@ -126,7 +129,7 @@ def _build_messages(
                 "source_dimensions": ["selected_source_dimension"],
                 "target_dimensions": ["selected_target_dimension"],
                 "retrieval_modes": ["keyword", "semantic"],
-                "candidate_limit_per_source": 20,
+                "candidate_limit_per_source": 10,
                 "reason": "Why these selected values can reveal a link.",
             }
         ]

@@ -19,7 +19,7 @@ class TableScope(BaseModel):
 
 class AnalysisScope(BaseModel):
     tables: list[TableScope] = Field(min_length=1, max_length=10)
-    time_budget_seconds: float = Field(default=180.0, gt=0, le=180.0)
+    time_budget_seconds: float = Field(default=180.0, gt=0, le=600.0)
 
 
 class AnalysisDiagnostics(BaseModel):

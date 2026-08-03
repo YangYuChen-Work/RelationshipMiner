@@ -502,8 +502,14 @@ def test_sentence_transformer_adapter_loads_lazily_and_normalizes_float32(
     instances = []
 
     class FakeSentenceTransformer:
-        def __init__(self, model_name: str) -> None:
+        def __init__(
+            self,
+            model_name: str,
+            *,
+            local_files_only: bool = False,
+        ) -> None:
             self.model_name = model_name
+            self.local_files_only = local_files_only
             self.calls: list[tuple[list[str], dict[str, object]]] = []
             instances.append(self)
 
@@ -523,6 +529,7 @@ def test_sentence_transformer_adapter_loads_lazily_and_normalizes_float32(
     vectors = adapter.encode_documents(["转子", ""])
 
     assert instances[0].model_name == "BAAI/bge-small-zh-v1.5"
+    assert instances[0].local_files_only is True
     assert vectors[0] == pytest.approx([0.6, 0.8])
     assert vectors[1] == pytest.approx([0.0, 0.0])
     assert instances[0].calls == [

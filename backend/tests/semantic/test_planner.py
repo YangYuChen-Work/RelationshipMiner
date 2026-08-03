@@ -370,7 +370,7 @@ async def test_planner_prompt_contains_only_selected_semantic_fields():
     )
 
     assert len(plans) == 1
-    assert llm.max_tokens == 4096
+    assert llm.max_tokens == 8192
     prompt = json.dumps(llm.messages, ensure_ascii=False)
     for selected in (
         "process",

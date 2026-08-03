@@ -205,7 +205,11 @@ class SemanticJudge:
                 active[task] = item
                 observe_live_groups()
                 try:
-                    outcome = await self._judge_group(item[1], deadline)
+                    import sys as _sys
+                    _seq, _grp = item
+                    print(f'[Judge] group {_seq}: source={_grp.source.entity_id}, candidates={len(_grp.candidates)}', file=_sys.stderr, flush=True)
+                    outcome = await self._judge_group(_grp, deadline)
+                    print(f'[Judge] group {_seq}: {outcome.status}, {len(outcome.decisions)} decisions', file=_sys.stderr, flush=True)
                 except asyncio.CancelledError:
                     # The deadline/error coordinator records this in-flight
                     # group only after all LLM calls have been awaited.
@@ -295,12 +299,15 @@ class SemanticJudge:
                 async with asyncio.timeout_at(deadline):
                     payload = await self._llm.complete_json(
                         _build_messages(group),
-                        max_tokens=4096,
+                        max_tokens=16384,
                         response_model=_JudgementEnvelope,
                     )
             except TimeoutError:
                 return _GroupOutcome("failed", [])
-            except Exception:
+            except Exception as exc:
+                import traceback, sys
+                print(f"[Judge] _judge_group failed: {exc}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
                 return _GroupOutcome("failed", [])
 
             try:

@@ -204,7 +204,10 @@ class RelationshipAnalyzer:
             if str(error) not in warnings:
                 warnings.append(str(error))
             return self._empty_partial(diagnostics, warnings)
-        except Exception:
+        except Exception as exc:
+            import traceback, sys
+            print(f"[Analyzer] Schema analysis exception: {exc}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
             warnings.append("Schema analysis failed (internal_error).")
             return self._empty_failed(diagnostics, warnings)
 

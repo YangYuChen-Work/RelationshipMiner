@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 from typing import Any
 
 import numpy as np
@@ -45,5 +48,8 @@ class SentenceTransformerEmbeddingAdapter:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self._model_name)
+            self._model = SentenceTransformer(
+                self._model_name,
+                local_files_only=True,
+            )
         return self._model
