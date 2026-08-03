@@ -72,6 +72,15 @@ class TestListFields:
         assert len(class_name_cols) == 1
         assert class_name_cols[0]["name"] == "class_name"
 
+    def test_marks_only_exact_name_field(self, client: TestClient):
+        """Only the exact name field is marked as the business name."""
+        response = client.get("/api/tables/users/fields")
+
+        columns = response.json()["columns"]
+        name_columns = [column for column in columns if column["is_name"]]
+        assert len(name_columns) == 1
+        assert name_columns[0]["name"] == "name"
+
     def test_marks_primary_key_column(self, client: TestClient):
         """数据库主键列应在字段响应中明确标记为 true。"""
         response = client.get("/api/tables/users/fields")

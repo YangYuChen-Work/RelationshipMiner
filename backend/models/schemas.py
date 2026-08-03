@@ -14,6 +14,7 @@ class ColumnInfo(BaseModel):
 
     name: str
     type: str
+    is_name: bool
     is_class_name: bool
     is_primary_key: bool
 

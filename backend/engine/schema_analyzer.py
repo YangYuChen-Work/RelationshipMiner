@@ -14,6 +14,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy import inspect
 
+from engine.business_fields import is_class_name_field, is_name_field
+
 
 @dataclass
 class FKConstraint:
@@ -37,6 +39,7 @@ class ColumnMeta:
     type: str
     nullable: bool
     is_class_name: bool
+    is_name: bool = False
     is_primary_key: bool = False
 
 
@@ -70,9 +73,6 @@ class SchemaAnalysisResult:
 
 
 # ── 约定常量 ──────────────────────────────────────────────────
-
-CLASS_NAME_CANDIDATES = {"class_name", "classname", "class"}
-
 
 # ── 分析函数 ──────────────────────────────────────────────────
 
@@ -118,12 +118,14 @@ def _analyze_single_table(inspector: Inspector, table_name: str) -> TableSchema:
         name = col["name"]
         col_type = str(col["type"])
         nullable = col.get("nullable", True)
-        is_class_name = name.lower() in CLASS_NAME_CANDIDATES
+        is_name = is_name_field(name)
+        is_class_name = is_class_name_field(name)
         columns.append(
             ColumnMeta(
                 name=name,
                 type=col_type,
                 nullable=nullable,
+                is_name=is_name,
                 is_class_name=is_class_name,
                 is_primary_key=(name in pk_set),
             )

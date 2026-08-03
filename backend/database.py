@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.engine import Engine
 
 from config import settings
+from engine.business_fields import is_class_name_field, is_name_field
 
 
 def create_db_engine(database_url: str | None = None) -> Engine:
@@ -73,18 +74,18 @@ def get_table_columns(
         primary_key_columns = set()
 
     # 约定命名识别 class_name 字段
-    CLASS_NAME_CANDIDATES = {"class_name", "classname", "class"}
-
     result = []
     for col in columns:
         name = col["name"]
         col_type = str(col["type"])
-        is_class_name = name.lower() in CLASS_NAME_CANDIDATES
+        is_name = is_name_field(name)
+        is_class_name = is_class_name_field(name)
         is_primary_key = name in primary_key_columns
         result.append(
             {
                 "name": name,
                 "type": col_type,
+                "is_name": is_name,
                 "is_class_name": is_class_name,
                 "is_primary_key": is_primary_key,
             }
