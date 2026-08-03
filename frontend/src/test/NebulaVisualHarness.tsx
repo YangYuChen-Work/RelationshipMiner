@@ -50,7 +50,11 @@ export function NebulaVisualHarness() {
   const targetNodeId = bridgeNodeId(entityCount);
 
   return (
-    <main className="nebula-visual-shell" data-visual-size={entityCount}>
+    <main
+      className="nebula-visual-shell"
+      data-visual-size={entityCount}
+      data-visual-theme="light-business"
+    >
       <header className="nebula-visual-header">
         <div>
           <p className="nebula-visual-kicker">Semantic graph visual fixture</p>

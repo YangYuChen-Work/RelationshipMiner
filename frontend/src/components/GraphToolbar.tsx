@@ -27,10 +27,6 @@ export default function GraphToolbar() {
         relation.strength === "strong" || relation.confidence >= confidenceThreshold,
     ),
   ).length;
-  const visibleTableEdgeCount = graph.table_edges.filter(
-    (edge) =>
-      edge.strong_count > 0 || edge.average_confidence >= confidenceThreshold,
-  ).length;
   const analysisSubtitle =
     analysisStatus === "failed"
       ? "分析失败 · 可用结果"
@@ -39,31 +35,21 @@ export default function GraphToolbar() {
         : "分析完成";
 
   return (
-    <header className="flex h-16 shrink-0 items-center gap-4 border-b border-slate-700/80 bg-[#101c2a] px-4 text-slate-200 lg:px-6">
+    <header className="flex min-h-16 shrink-0 items-center gap-4 border-b border-slate-200 bg-white px-4 text-slate-700 lg:px-6">
       <div className="min-w-0 shrink-0">
-        <h1 className="text-sm font-semibold tracking-wide text-slate-50">关系图谱</h1>
-        <p className="hidden text-xs text-slate-400 sm:block">
-          <span>{analysisSubtitle}</span> · 结果工作台
+        <h1 className="text-sm font-semibold tracking-wide text-slate-900">业务关系图</h1>
+        <p className="hidden text-xs text-slate-500 sm:block">
+          <span>{analysisSubtitle}</span> · 业务视图
         </p>
       </div>
 
-      <div className="hidden items-center gap-3 border-l border-slate-700 pl-4 text-xs text-slate-300 md:flex">
-        <span>{graph.table_nodes.length} 张表</span>
-        <span className="text-slate-600">/</span>
-        <span>{graph.entity_nodes.length} 个实体</span>
-        <span className="text-slate-600">/</span>
-        <span>{graph.table_edges.length} 条表关系</span>
-        <span className="text-slate-600">/</span>
-        <span>{graph.entity_edges.length} 条实体关系</span>
-        <span className="rounded-full border border-teal-400/25 bg-teal-400/10 px-2 py-0.5 text-teal-200">
-          {visibleTableEdgeCount + visibleEntityEdgeCount} 条可见关系
+      <div className="hidden items-center gap-3 border-l border-slate-200 pl-4 text-xs text-slate-600 md:flex">
+        <span>{graph.entity_nodes.length} 个对象</span>
+        <span className="text-slate-300">/</span>
+        <span>{graph.entity_edges.length} 条业务关系</span>
+        <span className="rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-teal-700">
+          {visibleEntityEdgeCount} 条当前可见
         </span>
-        {(graph.table_edges.length > 0 || graph.entity_edges.length > 0) && (
-          <span className="sr-only">
-            共 {graph.table_nodes.length} 张表，{graph.entity_nodes.length} 个实体，
-            {graph.table_edges.length} 条表关系，{graph.entity_edges.length} 条实体关系
-          </span>
-        )}
       </div>
 
       <div
@@ -74,27 +60,27 @@ export default function GraphToolbar() {
         <div className="shrink-0">
           <StrengthFilter />
         </div>
-        <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-300">
+        <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-600">
           <input
             type="checkbox"
             checked={showIsolatedNodes}
             onChange={(event) => setShowIsolatedNodes(event.target.checked)}
           />
-          显示孤立节点（隐藏 {hiddenIsolatedNodeCount} 个）
+          显示未关联对象（隐藏 {hiddenIsolatedNodeCount} 个）
         </label>
         <button
           type="button"
           onClick={requestFitView}
-          className="shrink-0 rounded-md border border-slate-600 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:border-teal-300 hover:text-teal-100"
+          className="shrink-0 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:border-teal-500 hover:text-teal-700"
         >
-          适应画布
+          适应视图
         </button>
         <button
           type="button"
           onClick={requestRelayout}
-          className="shrink-0 rounded-md border border-slate-600 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:border-teal-300 hover:text-teal-100"
+          className="shrink-0 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:border-teal-500 hover:text-teal-700"
         >
-          重新布局
+          重新生成布局
         </button>
         <div className="shrink-0">
           <ExportButton />
@@ -103,7 +89,7 @@ export default function GraphToolbar() {
           type="button"
           onClick={resetAnalysis}
           aria-label="新分析"
-          className="shrink-0 rounded-md bg-teal-400 px-2.5 py-1.5 text-xs font-semibold text-slate-950 transition-colors hover:bg-teal-300"
+          className="shrink-0 rounded-md bg-teal-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-700"
         >
           新分析
           <span className="sr-only">开始新分析</span>

@@ -12,7 +12,7 @@ describe("StrengthFilter", () => {
 
   it("renders the slider with initial value 0.00", () => {
     render(<StrengthFilter />);
-    const slider = screen.getByLabelText("置信度阈值");
+    const slider = screen.getByLabelText("关系可信程度");
     expect(slider).toBeInTheDocument();
     expect(slider).toHaveValue("0");
 
@@ -28,7 +28,7 @@ describe("StrengthFilter", () => {
 
   it("updates store value when slider changes", () => {
     render(<StrengthFilter />);
-    const slider = screen.getByLabelText("置信度阈值");
+    const slider = screen.getByLabelText("关系可信程度");
 
     fireEvent.change(slider, { target: { value: "0.75" } });
 
@@ -44,7 +44,7 @@ describe("StrengthFilter", () => {
 
   it("handles boundary value 1.00", () => {
     render(<StrengthFilter />);
-    const slider = screen.getByLabelText("置信度阈值");
+    const slider = screen.getByLabelText("关系可信程度");
 
     fireEvent.change(slider, { target: { value: "1" } });
 
@@ -54,7 +54,7 @@ describe("StrengthFilter", () => {
 
   it("has correct range attributes", () => {
     render(<StrengthFilter />);
-    const slider = screen.getByLabelText("置信度阈值");
+    const slider = screen.getByLabelText("关系可信程度");
 
     expect(slider).toHaveAttribute("min", "0");
     expect(slider).toHaveAttribute("max", "1");

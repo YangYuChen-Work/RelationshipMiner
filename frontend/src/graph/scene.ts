@@ -111,6 +111,7 @@ export interface SceneLabel {
   secondary: string;
   world: WorldPoint;
   screen: ScreenPoint;
+  screenRadius: number;
 }
 
 export type SceneEdgeLineStyle = "solid" | "dashed";
@@ -185,7 +186,7 @@ function toScreen(point: WorldPoint, transform: GraphTransform): ScreenPoint {
   };
 }
 
-function tableColor(tableId: string): string {
+export function tableColor(tableId: string): string {
   const knownColor = KNOWN_TABLE_COLORS[tableId.toLowerCase()];
   if (knownColor) return knownColor;
   let hash = 2166136261;
@@ -644,19 +645,23 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       secondary: zoomLevel === "overview" ? "" : node.presentation.secondary,
       world: node.world,
       screen: node.screen,
+      screenRadius: node.screenRadius,
     }));
   const edgeLabels = buildEdgeLabels(
     tableEdges,
     entityEdges,
     transform,
     entityLabels.map((label) => ({
-      left: label.screen.x + 6,
-      right: label.screen.x + 6 + Math.max(
+      left: label.screen.x - Math.max(
         label.primary.length * 7,
         label.secondary.length * 6,
-      ),
-      top: label.screen.y - 13,
-      bottom: label.screen.y + 13,
+      ) / 2,
+      right: label.screen.x + Math.max(
+        label.primary.length * 7,
+        label.secondary.length * 6,
+      ) / 2,
+      top: label.screen.y + label.screenRadius + 6,
+      bottom: label.screen.y + label.screenRadius + (label.secondary ? 31 : 19),
     })),
   );
 

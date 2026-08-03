@@ -1,6 +1,7 @@
 import CanvasErrorBoundary from "./CanvasErrorBoundary";
 import GraphCanvas from "./GraphCanvas";
 import GraphToolbar from "./GraphToolbar";
+import GraphLegend from "./GraphLegend";
 import NodeDetailPanel from "./NodeDetailPanel";
 import { useAnalysisStore } from "../store/analysis";
 
@@ -17,19 +18,21 @@ function AnalysisNotice() {
     return (
       <section
         role="alert"
-        className="mx-3 mt-3 rounded-lg border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100"
+        className="mx-3 mt-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
       >
-        <p className="font-semibold">分析失败，正在显示可用结果。</p>
-        <p className="mt-1 text-xs">
-          {failureReason}
-        </p>
-        {additionalWarnings.length > 0 && (
-          <ul className="mt-2 list-disc pl-5 text-xs">
-            {additionalWarnings.map((warning, index) => (
-              <li key={`${warning}-${index}`}>{warning}</li>
-            ))}
-          </ul>
-        )}
+        <p className="font-semibold">对象关系暂时无法完成判断。</p>
+        <p className="mt-1 text-xs">已保留当前可用的业务对象和关系，可稍后重试。</p>
+        <details className="mt-2 text-xs text-rose-700">
+          <summary className="cursor-pointer">技术详情</summary>
+          <p className="mt-2">{failureReason}</p>
+          {additionalWarnings.length > 0 && (
+            <ul className="mt-2 list-disc pl-5">
+              {additionalWarnings.map((warning, index) => (
+                <li key={`${warning}-${index}`}>{warning}</li>
+              ))}
+            </ul>
+          )}
+        </details>
       </section>
     );
   }
@@ -42,47 +45,55 @@ function AnalysisNotice() {
     const allFailed =
       !hasAvailableRelationships && completed === 0 && pending === 0 && failed > 0;
     const title = allFailed
-      ? "关系判断全部失败，尚无可用关系。"
-      : hasAvailableRelationships
-        ? "分析未完成，正在显示可用关系。"
-        : "分析未完成，尚无可用关系。";
+      ? "对象关系暂时无法完成判断。"
+      : "部分对象的关系尚未判断完成。";
     const fallbackExplanation = allFailed
       ? "所有候选关系判断均失败，请检查模型服务或后端日志后重试。"
       : pending > 0
-        ? "仍有候选关系待处理，结果可能继续补充。"
-        : "部分候选关系未能完成，当前结果可能不完整。";
+        ? "仍有对象关系待处理。"
+        : "部分对象关系未能完成。";
+    const businessImpact = hasAvailableRelationships
+      ? "已展示目前可用的业务关系，结果可能继续补充。"
+      : "当前还没有可展示的业务关系。";
     return (
-      <section role="status" className="mx-3 mt-3 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+      <section role="status" className="mx-3 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
         <p className="font-semibold">{title}</p>
-        <p className="mt-1 text-xs">候选关系：已完成 {completed} · 待处理 {pending} · 失败 {failed}</p>
-        {warnings.length > 0 ? (
-          <ul className="mt-2 list-disc pl-5 text-xs">
-            {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
-          </ul>
-        ) : (
-          <p className="mt-2 text-xs">{fallbackExplanation}</p>
-        )}
+        <p className="mt-1 text-xs">{businessImpact}</p>
+        <details className="mt-2 text-xs text-amber-800">
+          <summary className="cursor-pointer">技术详情</summary>
+          <p className="mt-2">判断任务：已完成 {completed} · 待处理 {pending} · 失败 {failed}</p>
+          {warnings.length > 0 ? (
+            <ul className="mt-2 list-disc pl-5">
+              {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+            </ul>
+          ) : (
+            <p className="mt-2">{fallbackExplanation}</p>
+          )}
+        </details>
       </section>
     );
   }
   if (analysisStatus === "complete" && graph.entity_edges.length === 0 && graph.table_edges.length === 0) {
-    return <section role="status" className="mx-3 mt-3 rounded-lg border border-slate-600 bg-slate-800/70 px-4 py-3 text-sm text-slate-200">完整分析未发现关系。可调整数据表或字段后重新分析。</section>;
+    return <section role="status" className="mx-3 mt-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">暂未发现对象之间的业务关系。可调整业务数据或辅助判断依据后重新分析。</section>;
   }
   return null;
 }
 
 export default function GraphWorkbench() {
   return (
-    <section className="flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden bg-[#09131f] text-slate-100">
+    <section data-business-workbench className="flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden bg-[#f3f5f7] text-slate-800">
       <GraphToolbar />
       <AnalysisNotice />
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="relative min-h-0 overflow-hidden border-r border-slate-700/70 bg-[#0d1926]">
+        <section className="business-graph-stage relative min-h-0 overflow-hidden border-r border-slate-200 bg-[#f3f5f7]">
           <div className="h-full min-h-0 p-3 [&>div]:h-full [&_canvas]:h-full">
             <CanvasErrorBoundary>
               <GraphCanvas suppressStatusOverlay />
             </CanvasErrorBoundary>
+          </div>
+          <div className="pointer-events-none absolute left-4 top-16 z-20 sm:left-6 sm:top-6">
+            <GraphLegend />
           </div>
         </section>
         <NodeDetailPanel />

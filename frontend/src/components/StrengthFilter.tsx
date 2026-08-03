@@ -11,12 +11,12 @@ export default function StrengthFilter() {
   const setConfidenceThreshold = useAnalysisStore((s) => s.setConfidenceThreshold);
 
   return (
-    <div className="flex items-center gap-2 rounded-md border border-slate-600/80 bg-slate-900/90 px-3 py-2 text-slate-200 backdrop-blur">
-      <label htmlFor="strength-slider" className="text-xs font-medium text-slate-300">
-        置信度阈值
+    <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">
+      <label htmlFor="strength-slider" className="text-xs font-medium text-slate-700">
+        关系可信程度
       </label>
       {/* 弱关系标签 */}
-      <span className="hidden text-xs font-medium text-slate-400 sm:inline">弱关系</span>
+      <span className="hidden text-xs font-medium text-slate-500 sm:inline">弱关系</span>
 
       {/* 滑块 */}
       <div className="relative flex-1 flex items-center">
@@ -41,16 +41,16 @@ export default function StrengthFilter() {
             [&::-moz-range-thumb]:border-none
             [&::-moz-range-thumb]:cursor-pointer"
           id="strength-slider"
-          aria-label="置信度阈值"
+          aria-label="关系可信程度"
         />
       </div>
 
       {/* 强关系标签 */}
-      <span className="hidden text-xs font-medium text-slate-400 sm:inline">强关系</span>
+      <span className="hidden text-xs font-medium text-slate-500 sm:inline">强关系</span>
 
       {/* 数值显示 */}
       <output
-        className="min-w-[3.5em] shrink-0 rounded bg-teal-400/10 px-2 py-0.5 text-center font-mono text-xs font-semibold text-teal-200"
+        className="min-w-[3.5em] shrink-0 rounded bg-teal-50 px-2 py-0.5 text-center font-mono text-xs font-semibold text-teal-700"
         htmlFor="strength-slider"
       >
         {confidenceThreshold.toFixed(2)}

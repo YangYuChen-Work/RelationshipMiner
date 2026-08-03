@@ -241,7 +241,7 @@ function TableEdgeDetails({
         <div><dt className="text-xs text-slate-400">业务关系</dt><dd>{labels}</dd></div>
         <div><dt className="text-xs text-slate-400">可信程度</dt><dd>{confidenceBand(edge.average_confidence)}</dd></div>
         <div><dt className="text-xs text-slate-400">明确关系</dt><dd>{edge.strong_count}</dd></div>
-        <div><dt className="text-xs text-slate-400">候选关系</dt><dd>{edge.weak_count}</dd></div>
+        <div><dt className="text-xs text-slate-400">可能有关</dt><dd>{edge.weak_count}</dd></div>
         <div><dt className="text-xs text-slate-400">支持对象对</dt><dd>{edge.entity_edge_count}</dd></div>
       </dl>
       <section>

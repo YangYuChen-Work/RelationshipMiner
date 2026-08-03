@@ -1025,6 +1025,10 @@ describe("GraphCanvas", () => {
     await ready();
 
     expect(useAnalysisStore.getState().graph?.entity_nodes).toHaveLength(200);
+    expect(screen.getByRole("main")).toHaveAttribute(
+      "data-visual-theme",
+      "light-business",
+    );
     expect(screen.getByText("200 entities")).toBeInTheDocument();
     const controls = screen.getByRole("group", {
       name: "Visual test controls",
@@ -1141,11 +1145,13 @@ describe("GraphCanvas", () => {
       confidenceThreshold: 0,
     });
     const entityBounds = scene.entityLabels.map((label) => ({
-      left: label.screen.x + 6,
-      right: label.screen.x + 6 +
-        Math.max(label.primary.length * 7, label.secondary.length * 6),
-      top: label.screen.y - 13,
-      bottom: label.screen.y + 13,
+      left: label.screen.x -
+        Math.max(label.primary.length * 7, label.secondary.length * 6) / 2,
+      right: label.screen.x +
+        Math.max(label.primary.length * 7, label.secondary.length * 6) / 2,
+      top: label.screen.y + label.screenRadius + 6,
+      bottom: label.screen.y + label.screenRadius +
+        (label.secondary ? 31 : 19),
     }));
     const routineEdgeLabels = scene.edgeLabels.filter(
       (label) =>

@@ -20,16 +20,19 @@ describe("GraphWorkbench analysis status", () => {
   it("distinguishes a complete analysis with no relationships", () => {
     render(<GraphWorkbench />);
     const notice = document.querySelector("section[role='status']")!;
-    expect(notice).toHaveTextContent("完整分析未发现关系");
-    expect(notice).toHaveTextContent("调整数据表或字段");
+    expect(notice).toHaveTextContent("暂未发现对象之间的业务关系");
+    expect(notice).toHaveTextContent("调整业务数据或辅助判断依据");
   });
 
   it("explains that a partial graph with pending work has no usable relationships yet", () => {
     useAnalysisStore.setState({ analysisStatus: "partial", graph: { ...emptyGraph, table_nodes: [{ id: "users", display_name: "Users", entity_count: 1 }], entity_nodes: [{ id: "u1", table_id: "users", display_name: "U1", class_name: null, dimensions: {} }] }, warnings: ["semantic model timed out"], diagnostics: { entities_read: 1, plans_created: 1, candidates_retrieved: 7, candidates_completed: 3, candidates_pending: 2, candidates_failed: 2, strong_edges_created: 0, weak_edges_created: 0 } });
     render(<GraphWorkbench />);
     const banner = document.querySelector("section[role='status']")!;
-    expect(banner).toHaveTextContent("分析未完成，尚无可用关系");
-    expect(banner).toHaveTextContent("已完成 3 · 待处理 2 · 失败 2");
+    expect(banner).toHaveTextContent("部分对象的关系尚未判断完成");
+    expect(banner).toHaveTextContent("当前还没有可展示的业务关系");
+    const details = screen.getByText("技术详情").closest("details");
+    expect(details).not.toHaveAttribute("open");
+    expect(details).toHaveTextContent("已完成 3 · 待处理 2 · 失败 2");
     expect(banner).toHaveTextContent("semantic model timed out");
     expect(screen.queryByText(/正在显示可用关系/)).not.toBeInTheDocument();
   });
@@ -53,7 +56,7 @@ describe("GraphWorkbench analysis status", () => {
     render(<GraphWorkbench />);
 
     const banner = document.querySelector("section[role='status']")!;
-    expect(banner).toHaveTextContent("关系判断全部失败，尚无可用关系");
+    expect(banner).toHaveTextContent("对象关系暂时无法完成判断");
     expect(banner).toHaveTextContent(
       "所有候选关系判断均失败，请检查模型服务或后端日志后重试",
     );
@@ -98,7 +101,7 @@ describe("GraphWorkbench analysis status", () => {
     render(<GraphWorkbench />);
 
     const banner = document.querySelector("section[role='status']")!;
-    expect(banner).toHaveTextContent("分析未完成，正在显示可用关系");
-    expect(banner).toHaveTextContent("仍有候选关系待处理，结果可能继续补充");
+    expect(banner).toHaveTextContent("部分对象的关系尚未判断完成");
+    expect(banner).toHaveTextContent("已展示目前可用的业务关系，结果可能继续补充");
   });
 });

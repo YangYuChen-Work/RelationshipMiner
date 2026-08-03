@@ -14,8 +14,13 @@ const GRID_SIZE = 24;
 const MAX_ENTITY_LABELS = 500;
 const LABEL_VIEWPORT_PADDING = 24;
 const ENTITY_SELECTED = "#2dd4bf";
-const EDGE = "#52677a";
-const TABLE_EDGE = "#8fa0b0";
+const GRAPH_BACKGROUND = "#f3f5f7";
+const GRAPH_GRID = "#e4e8ed";
+const ENTITY_EDGE = "#aeb6c1";
+const TABLE_EDGE = "#8d98a7";
+const PRIMARY_TEXT = "#252b35";
+const SECONDARY_TEXT = "#667085";
+const NODE_OUTLINE = "#ffffff";
 const UNRELATED_NODE_OPACITY = 0.16;
 const UNRELATED_EDGE_OPACITY = 0.06;
 const FOCUS_EDGE_WIDTH = 2.2;
@@ -126,9 +131,9 @@ function drawGrid(
 ): void {
   semanticLayer(context, 1, () => {
     context.clearRect(0, 0, width, height);
-    context.fillStyle = "#0d1926";
+    context.fillStyle = GRAPH_BACKGROUND;
     context.fillRect(0, 0, width, height);
-    context.strokeStyle = "#213243";
+    context.strokeStyle = GRAPH_GRID;
     context.lineWidth = 0.7;
     for (let x = 0; x <= width; x += GRID_SIZE) {
       context.beginPath();
@@ -244,15 +249,11 @@ function drawEntityNode(
     0,
     Math.PI * 2,
   );
-  context.fillStyle = active
-    ? ENTITY_SELECTED
-    : entity.color ?? "#7dd3fc";
+  context.fillStyle = entity.color ?? "#7dd3fc";
   context.fill();
-  if (active) {
-    context.strokeStyle = "#f8fafc";
-    context.lineWidth = 1.5;
-    context.stroke();
-  }
+  context.strokeStyle = NODE_OUTLINE;
+  context.lineWidth = active ? 3 : 1.5;
+  context.stroke();
 }
 
 function drawEntityNodes(
@@ -281,18 +282,19 @@ function drawTableNode(
     0,
     Math.PI * 2,
   );
-  context.fillStyle = "#112438";
-  context.fill();
-  context.strokeStyle = table.color ?? "#38bdf8";
-  context.lineWidth = 3;
-  context.stroke();
   context.fillStyle = table.color ?? "#38bdf8";
+  context.fill();
+  context.strokeStyle = NODE_OUTLINE;
+  context.lineWidth = 1.5;
+  context.stroke();
+  context.fillStyle = PRIMARY_TEXT;
   context.font = "600 12px system-ui, sans-serif";
+  context.textAlign = "center";
   context.textBaseline = "middle";
   context.fillText(
     table.label,
-    table.screen.x + table.screenRadius + 8,
-    table.screen.y,
+    table.screen.x,
+    table.screen.y + table.screenRadius + 9,
   );
 }
 
@@ -313,10 +315,10 @@ function labelBounds(
     ? context.measureText?.(label.secondary).width ?? label.secondary.length * 6
     : 0;
   return {
-    left: label.screen.x + 6,
-    top: label.screen.y - 13,
-    right: label.screen.x + 6 + Math.max(primaryWidth, secondaryWidth),
-    bottom: label.screen.y + (label.secondary ? 13 : 2),
+    left: label.screen.x - Math.max(primaryWidth, secondaryWidth) / 2,
+    top: label.screen.y + label.screenRadius + 6,
+    right: label.screen.x + Math.max(primaryWidth, secondaryWidth) / 2,
+    bottom: label.screen.y + label.screenRadius + (label.secondary ? 31 : 19),
   };
 }
 
@@ -331,15 +333,17 @@ function drawEntityLabel(
   context: CanvasRenderingContext2D,
   label: SceneLabel,
 ): void {
-  context.fillStyle = "#dbeafe";
+  const labelTop = label.screen.y + label.screenRadius + 6;
+  context.fillStyle = PRIMARY_TEXT;
   context.font = "600 11px system-ui, sans-serif";
-  context.textBaseline = "bottom";
-  context.fillText(label.primary, label.screen.x + 6, label.screen.y - 2);
+  context.textAlign = "center";
+  context.textBaseline = "top";
+  context.fillText(label.primary, label.screen.x, labelTop);
   if (label.secondary) {
-    context.fillStyle = "#94a3b8";
+    context.fillStyle = SECONDARY_TEXT;
     context.font = "9px system-ui, sans-serif";
     context.textBaseline = "top";
-    context.fillText(label.secondary, label.screen.x + 6, label.screen.y + 1);
+    context.fillText(label.secondary, label.screen.x, labelTop + 14);
   }
 }
 
@@ -369,9 +373,10 @@ function drawEdgeLabel(
   focused: boolean,
 ): void {
   context.font = "600 10px system-ui, sans-serif";
+  context.textAlign = "start";
   context.textBaseline = "middle";
   if (focused) {
-    context.fillStyle = "rgba(7, 15, 25, 0.92)";
+    context.fillStyle = "rgba(255, 255, 255, 0.94)";
     context.fillRect(
       label.screen.x - label.maxWidth / 2 - 5,
       label.screen.y - 10,
@@ -379,7 +384,7 @@ function drawEdgeLabel(
       20,
     );
   }
-  context.fillStyle = label.lineStyle === "solid" ? "#dbeafe" : "#94a3b8";
+  context.fillStyle = label.lineStyle === "solid" ? PRIMARY_TEXT : SECONDARY_TEXT;
   context.fillText(
     label.text,
     label.screen.x - label.maxWidth / 2,
@@ -460,6 +465,7 @@ export function drawGraphScene(
       secondary: activeNode.presentation.secondary,
       world: activeNode.world,
       screen: activeNode.screen,
+      screenRadius: activeNode.screenRadius,
     }
     : null;
   const occupied: Bounds[] = [];
@@ -477,7 +483,7 @@ export function drawGraphScene(
   drawEdges(
     context,
     unrelatedEntityEdges,
-    EDGE,
+    ENTITY_EDGE,
     1,
     state.hasFocus ? UNRELATED_EDGE_OPACITY : scene.layerOpacity.entityEdges,
   );
@@ -564,7 +570,7 @@ export function drawGraphScene(
     drawArrowheads(
       context,
       unrelatedEntityEdges,
-      EDGE,
+      ENTITY_EDGE,
       scene.layerOpacity.entityEdges,
     );
   }
@@ -645,6 +651,7 @@ export function drawGraphDragPreview(
       secondary: node.presentation.secondary,
       world: node.world,
       screen: node.screen,
+      screenRadius: node.screenRadius,
     })
   );
   const edgesById = new Map(edges.map((edge) => [edge.id, edge]));

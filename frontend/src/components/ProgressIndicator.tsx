@@ -7,13 +7,13 @@
 import { useAnalysisStore } from "../store/analysis";
 
 const PHASE_LABELS: Record<string, string> = {
-  schema: "读取表结构",
-  entities: "读取实体",
-  planning: "规划关系",
-  candidates: "检索候选关系",
-  semantic_judging: "语义判断",
-  graph: "组装关系图谱",
-  complete: "分析完成",
+  schema: "正在读取业务数据",
+  entities: "正在整理业务对象",
+  planning: "正在梳理关系范围",
+  candidates: "正在寻找可能有关的对象",
+  semantic_judging: "正在判断对象关系",
+  graph: "正在整理业务关系图",
+  complete: "业务关系图已生成",
 };
 
 export default function ProgressIndicator() {
@@ -28,36 +28,40 @@ export default function ProgressIndicator() {
   const percent = Math.round(progressValue * 100);
 
   return (
-    <div className="bg-white rounded-xl border border-blue-200 p-5 shadow-sm space-y-4">
+    <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       {/* 阶段标题 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="animate-spin h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full" />
+          <div className="size-5 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
           <div>
-            <span className="text-sm font-semibold text-blue-700">
+            <span className="text-sm font-semibold text-slate-800">
               {phaseLabel}
             </span>
           </div>
         </div>
-        <span className="text-sm font-mono text-blue-600 tabular-nums">
+        <span className="font-mono text-sm text-teal-700 tabular-nums">
           {percent}%
         </span>
       </div>
 
       {/* 进度条 */}
-      <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
         <div
-          className="bg-blue-500 h-2.5 rounded-full transition-all duration-500 ease-out"
+          className="h-2.5 rounded-full bg-teal-600 transition-all duration-500 ease-out"
           style={{ width: `${percent}%` }}
         />
       </div>
 
       {/* 阶段描述 */}
-      <p className="text-sm text-gray-500">{progressMessage}</p>
-
-      <p className="text-xs text-gray-400" aria-live="polite">
-        状态：分析中
+      <p className="text-sm text-slate-600" aria-live="polite">
+        正在生成业务关系图
       </p>
+      {progressMessage ? (
+        <details className="text-xs text-slate-500">
+          <summary className="cursor-pointer">技术详情</summary>
+          <p className="mt-2">{progressMessage}</p>
+        </details>
+      ) : null}
     </div>
   );
 }

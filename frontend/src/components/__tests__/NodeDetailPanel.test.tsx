@@ -102,6 +102,8 @@ describe("NodeDetailPanel", () => {
     expect(screen.getByText("表关系汇总")).toBeInTheDocument();
     expect(screen.getAllByText("下单 · 归属").length).toBeGreaterThan(0);
     expect(screen.getByText("明确")).toBeInTheDocument();
+    expect(screen.getByText("可能有关")).toBeInTheDocument();
+    expect(screen.queryByText("候选关系")).not.toBeInTheDocument();
     expect(screen.queryByText("places")).not.toBeInTheDocument();
     expect(screen.queryByText("85%")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Alice → Order 101.*下单.*归属/ }));

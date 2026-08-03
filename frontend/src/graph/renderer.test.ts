@@ -85,7 +85,14 @@ interface DrawRecord {
   kind: "fill" | "stroke" | "fillRect" | "fillText";
   alpha: number;
   lineWidth: number;
+  fillStyle?: string | CanvasGradient | CanvasPattern;
+  strokeStyle?: string | CanvasGradient | CanvasPattern;
+  textAlign?: CanvasTextAlign;
+  textBaseline?: CanvasTextBaseline;
   text?: string;
+  x?: number;
+  y?: number;
+  arc?: { x: number; y: number };
 }
 
 function recordingContext() {
@@ -96,28 +103,47 @@ function recordingContext() {
     arc: vi.fn((x: number, y: number) => {
       lastArc = { x, y };
     }),
-    beginPath: vi.fn(),
+    beginPath: vi.fn(() => {
+      lastArc = null;
+    }),
     clearRect: vi.fn(),
     closePath: vi.fn(),
     fill: vi.fn(function (this: CanvasRenderingContext2D) {
-      records.push({ kind: "fill", alpha: this.globalAlpha, lineWidth: this.lineWidth });
+      records.push({
+        kind: "fill",
+        alpha: this.globalAlpha,
+        lineWidth: this.lineWidth,
+        fillStyle: this.fillStyle,
+        arc: lastArc ?? undefined,
+      });
       if (lastArc) {
         nodeFills.push({ ...lastArc, alpha: this.globalAlpha });
-        lastArc = null;
       }
     }),
     fillRect: vi.fn(function (this: CanvasRenderingContext2D) {
-      records.push({ kind: "fillRect", alpha: this.globalAlpha, lineWidth: this.lineWidth });
+      records.push({
+        kind: "fillRect",
+        alpha: this.globalAlpha,
+        lineWidth: this.lineWidth,
+        fillStyle: this.fillStyle,
+      });
     }),
     fillText: vi.fn(function (
       this: CanvasRenderingContext2D,
       text: string,
+      x: number,
+      y: number,
     ) {
       records.push({
         kind: "fillText",
         alpha: this.globalAlpha,
         lineWidth: this.lineWidth,
+        fillStyle: this.fillStyle,
+        textAlign: this.textAlign,
+        textBaseline: this.textBaseline,
         text,
+        x,
+        y,
       });
     }),
     lineTo: vi.fn(),
@@ -128,7 +154,13 @@ function recordingContext() {
     save: vi.fn(),
     setLineDash: vi.fn(),
     stroke: vi.fn(function (this: CanvasRenderingContext2D) {
-      records.push({ kind: "stroke", alpha: this.globalAlpha, lineWidth: this.lineWidth });
+      records.push({
+        kind: "stroke",
+        alpha: this.globalAlpha,
+        lineWidth: this.lineWidth,
+        strokeStyle: this.strokeStyle,
+        arc: lastArc ?? undefined,
+      });
     }),
     fillStyle: "",
     font: "",
@@ -155,6 +187,88 @@ function options(focusNodeId: string | null = null) {
 }
 
 describe("drawGraphScene", () => {
+  it("paints the approved light canvas and low-contrast relationship colors", () => {
+    const { context, records } = recordingContext();
+
+    drawGraphScene(context, scene(), options());
+
+    expect(records).toContainEqual(expect.objectContaining({
+      kind: "fillRect",
+      fillStyle: "#f3f5f7",
+    }));
+    expect(records).toContainEqual(expect.objectContaining({
+      kind: "stroke",
+      strokeStyle: "#e4e8ed",
+    }));
+    expect(records).toContainEqual(expect.objectContaining({
+      kind: "stroke",
+      strokeStyle: "#aeb6c1",
+    }));
+    expect(records).toContainEqual(expect.objectContaining({
+      kind: "stroke",
+      strokeStyle: "#8d98a7",
+    }));
+  });
+
+  it("keeps entity nodes solid and gives every node a white outline", () => {
+    const currentScene = scene();
+    const { context, records } = recordingContext();
+
+    drawGraphScene(context, currentScene, options());
+
+    for (const node of currentScene.entityDots) {
+      expect(records).toContainEqual(expect.objectContaining({
+        kind: "fill",
+        fillStyle: node.color,
+        arc: node.screen,
+      }));
+      expect(records).toContainEqual(expect.objectContaining({
+        kind: "stroke",
+        strokeStyle: "#ffffff",
+        lineWidth: 1.5,
+        arc: node.screen,
+      }));
+    }
+  });
+
+  it("centers primary labels below their entity nodes", () => {
+    const currentScene = scene();
+    const alpha = currentScene.entityDots.find((node) => node.id === "a")!;
+    const { context, records } = recordingContext();
+
+    drawGraphScene(context, currentScene, options("a"));
+
+    expect(records).toContainEqual(expect.objectContaining({
+      kind: "fillText",
+      text: "Alpha",
+      fillStyle: "#252b35",
+      textAlign: "center",
+      textBaseline: "top",
+      x: alpha.screen.x,
+      y: alpha.screen.y + alpha.screenRadius + 6,
+    }));
+  });
+
+  it("thickens the active outline without replacing its business color", () => {
+    const currentScene = scene();
+    const alpha = currentScene.entityDots.find((node) => node.id === "a")!;
+    const { context, records } = recordingContext();
+
+    drawGraphScene(context, currentScene, options("a"));
+
+    expect(records).toContainEqual(expect.objectContaining({
+      kind: "fill",
+      fillStyle: alpha.color,
+      arc: alpha.screen,
+    }));
+    expect(records).toContainEqual(expect.objectContaining({
+      kind: "stroke",
+      strokeStyle: "#ffffff",
+      lineWidth: 3,
+      arc: alpha.screen,
+    }));
+  });
+
   it("uses semantic layer opacity when there is no focus", () => {
     const currentScene = scene();
     const { context, records } = recordingContext();
