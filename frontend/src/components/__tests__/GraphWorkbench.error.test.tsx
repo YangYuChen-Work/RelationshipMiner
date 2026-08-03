@@ -33,8 +33,10 @@ describe("GraphWorkbench canvas containment", () => {
     expect(
       screen.getByText("图谱画布暂时无法显示"),
     ).toBeVisible();
-    expect(screen.getByText("1 个实体")).toBeInTheDocument();
+    expect(screen.getByText("1 个对象")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "导出 JSON" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "新分析" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开始新分析" }))
+      .not.toBeInTheDocument();
   });
 });

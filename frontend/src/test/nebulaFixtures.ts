@@ -29,10 +29,18 @@ function relation(
   relationType: string,
   strength: "strong" | "weak",
 ): EntityRelationData {
+  const displayLabel = source === "entity-001" && target === "entity-002"
+    ? "用于检验"
+    : relationType === "self_check"
+      ? "自检"
+      : relationType === "cross_table_bridge"
+        ? "跨域关联"
+        : "包含";
   return {
     source,
     target,
     relation_type: relationType,
+    display_label: displayLabel,
     direction: source === target ? "undirected" : "source_to_target",
     strength,
     confidence: strength === "strong" ? 0.96 : 0.42,
@@ -95,7 +103,7 @@ export function makeNebulaGraph(options: {
   const entityNodes = Array.from({ length: entityCount }, (_, index) => {
     const tableIndex = tableFor(index, entityCount);
     const zeroBacked = index % 10 === 0;
-    const dimensions = zeroBacked
+    const defaultDimensions = zeroBacked
       ? index % 20 === 0
         ? { name: ENTITY_LABELS[tableIndex], fixture_index: index }
         : { item_code: `ITEM${String(400 + index).padStart(7, "0")}`, fixture_index: index }
@@ -104,17 +112,41 @@ export function makeNebulaGraph(options: {
         name: `${ENTITY_LABELS[tableIndex]} ${index}`,
         fixture_index: index,
       };
+    const businessIdentity = index === 0 || index === 1
+      ? {
+        displayName: index === 0 ? "0" : "通信天线装配",
+        displayCode: index === 0 ? "GY0000203" : "GY0000204",
+        dimensions: { ...defaultDimensions, name: "通信天线装配" },
+      }
+      : index === 2
+        ? {
+          displayName: "电性能综合测试",
+          displayCode: undefined,
+          dimensions: { ...defaultDimensions, name: "电性能综合测试" },
+        }
+        : index === 3
+          ? {
+            displayName: "总装测试",
+            displayCode: undefined,
+            dimensions: { ...defaultDimensions, name: "总装测试" },
+          }
+          : {
+            displayName: zeroBacked ? "0" : `${ENTITY_LABELS[tableIndex]} ${index}`,
+            displayCode: undefined,
+            dimensions: defaultDimensions,
+          };
     return {
       id: entityId(index),
       table_id: `table-${tableIndex}`,
-      display_name: zeroBacked ? "0" : `${ENTITY_LABELS[tableIndex]} ${index}`,
+      display_name: businessIdentity.displayName,
+      display_code: businessIdentity.displayCode,
       class_name: `com.example.nebula.${[
         "AssemblyTest",
         "ReflectorComponent",
         "InventoryItem",
         "HighGainAntenna",
       ][tableIndex]}`,
-      dimensions,
+      dimensions: businessIdentity.dimensions,
     };
   });
 

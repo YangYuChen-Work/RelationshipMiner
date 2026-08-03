@@ -85,6 +85,21 @@ def test_selected_dimensions_produce_explainable_business_relationships(
         embeddings,
         judge,
     ):
+        judged_groups: list[object] = []
+        original_judge_groups = judge.judge_groups
+
+        async def record_primary_and_auxiliary_context(
+            groups: object,
+            deadline: float,
+        ) -> object:
+            if hasattr(groups, "__aiter__"):
+                materialized = [group async for group in groups]
+            else:
+                materialized = list(groups)
+            judged_groups.extend(materialized)
+            return await original_judge_groups(materialized, deadline)
+
+        judge.judge_groups = record_primary_and_auxiliary_context  # type: ignore[method-assign]
         response = client.post(
             "/api/analyze",
             json={"tables": ANALYSIS_SELECTION},
@@ -120,6 +135,22 @@ def test_selected_dimensions_produce_explainable_business_relationships(
         INVALID_OPERATION_ID,
         UNRELATED_PART_ID,
     }
+    assert judged_groups
+    selected_dimensions = {
+        table["name"]: set(table["dimensions"])
+        for table in ANALYSIS_SELECTION
+    }
+    judged_documents = [
+        document
+        for group in judged_groups
+        for document in [group.source, *group.candidates]
+    ]
+    for document in judged_documents:
+        assert document.display_name
+        assert document.class_name
+        assert "name" not in document.dimensions
+        assert "class_name" not in document.dimensions
+        assert set(document.dimensions) <= selected_dimensions[document.table_name]
 
     graph = result["graph"]
     assert len(graph["table_edges"]) == 2
@@ -157,10 +188,6 @@ def test_selected_dimensions_produce_explainable_business_relationships(
         node["id"] for node in graph["entity_nodes"]
     }
 
-    selected_dimensions = {
-        table["name"]: set(table["dimensions"])
-        for table in ANALYSIS_SELECTION
-    }
     for relation in relations:
         assert relation["strength"] == "weak"
         assert relation["explanation"]

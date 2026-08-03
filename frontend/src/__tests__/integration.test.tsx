@@ -117,6 +117,134 @@ const MOCK_GRAPH: SemanticGraphData = {
   ],
 };
 
+const BUSINESS_FRIENDLY_TABLE = { name: "satellite_assembly_records" };
+const BUSINESS_FRIENDLY_COLUMNS = {
+  table_name: BUSINESS_FRIENDLY_TABLE.name,
+  columns: [
+    { name: "id", type: "int", is_name: false, is_class_name: false, is_primary_key: true, is_foreign_key: false },
+    { name: "name", type: "varchar", is_name: true, is_class_name: false, is_primary_key: false, is_foreign_key: false },
+    { name: "class_name", type: "varchar", is_name: false, is_class_name: true, is_primary_key: false, is_foreign_key: false },
+    { name: "test_item", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false, is_foreign_key: false },
+    { name: "internal_note", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false, is_foreign_key: false },
+  ],
+};
+
+const BUSINESS_FRIENDLY_GRAPH: SemanticGraphData = {
+  table_nodes: [
+    {
+      id: BUSINESS_FRIENDLY_TABLE.name,
+      display_name: "卫星天线装配与检验数据",
+      entity_count: 3,
+    },
+  ],
+  entity_nodes: [
+    {
+      id: "satellite_assembly_records:1",
+      table_id: BUSINESS_FRIENDLY_TABLE.name,
+      display_name: "通信天线装配",
+      display_code: "GY0000203",
+      class_name: "com.example.satellite.AntennaAssembly",
+      dimensions: { name: "通信天线装配", test_item: "电性能" },
+    },
+    {
+      id: "satellite_assembly_records:2",
+      table_id: BUSINESS_FRIENDLY_TABLE.name,
+      display_name: "通信天线装配",
+      display_code: "GY0000204",
+      class_name: "com.example.satellite.AntennaAssembly",
+      dimensions: { name: "通信天线装配", test_item: "结构完整性" },
+    },
+    {
+      id: "satellite_assembly_records:3",
+      table_id: BUSINESS_FRIENDLY_TABLE.name,
+      display_name: "电性能综合测试",
+      class_name: "com.example.satellite.ElectricalTest",
+      dimensions: { name: "电性能综合测试", test_item: "电性能" },
+    },
+  ],
+  table_edges: [],
+  entity_edges: [
+    {
+      id: "satellite_assembly_records:1--satellite_assembly_records:3",
+      source: "satellite_assembly_records:1",
+      target: "satellite_assembly_records:3",
+      relations: [
+        {
+          source: "satellite_assembly_records:1",
+          target: "satellite_assembly_records:3",
+          relation_type: "assembly_electrical_test_assignment",
+          display_label: "用于检验",
+          direction: "source_to_target",
+          strength: "weak",
+          confidence: 0.93,
+          explanation: "装配对象与电性能综合测试的检验项目一致。",
+          evidence: [
+            {
+              source_field: "test_item",
+              source_value: "电性能",
+              target_field: "test_item",
+              target_value: "电性能",
+              method: "llm_semantic_reasoning",
+              reason: "两个对象的检验项目一致。",
+            },
+          ],
+          model_id: "fixture-business-model-v1",
+          task_id: "business-friendly-task-1",
+        },
+      ],
+    },
+  ],
+};
+
+const LEGACY_BUSINESS_GRAPH: SemanticGraphData = {
+  table_nodes: [
+    { id: "legacy_internal_table", display_name: "历史业务数据", entity_count: 3 },
+  ],
+  entity_nodes: [
+    {
+      id: "legacy_internal_table:technical-id-1",
+      table_id: "legacy_internal_table",
+      display_name: "0",
+      class_name: "com.internal.LegacyAssembly",
+      dimensions: { name: "通信天线装配" },
+    },
+    {
+      id: "legacy_internal_table:technical-id-2",
+      table_id: "legacy_internal_table",
+      display_name: "0",
+      class_name: "com.internal.LegacyAssembly",
+      dimensions: { name: "通信天线装配" },
+    },
+    {
+      id: "legacy_internal_table:technical-id-3",
+      table_id: "legacy_internal_table",
+      display_name: "internal_test_row",
+      class_name: "com.internal.LegacyElectricalTest",
+      dimensions: { name: "电性能综合测试" },
+    },
+  ],
+  table_edges: [],
+  entity_edges: [
+    {
+      id: "legacy-edge-1",
+      source: "legacy_internal_table:technical-id-1",
+      target: "legacy_internal_table:technical-id-3",
+      relations: [{
+        source: "legacy_internal_table:technical-id-1",
+        target: "legacy_internal_table:technical-id-3",
+        relation_type: "legacy_internal_test_link",
+        direction: "source_to_target",
+        strength: "weak",
+        confidence: 0.72,
+        explanation: "Legacy relationship evidence.",
+        evidence: [],
+        model_id: null,
+        task_id: null,
+      }],
+    },
+  ],
+};
+
 const BUSINESS_SELECTION = [
   {
     name: "requirements",
@@ -678,6 +806,43 @@ function setupBusinessFetchMock() {
   });
 }
 
+function setupBusinessFriendlyFetchMock() {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url === "/api/tables") {
+      return {
+        ok: true,
+        json: () => Promise.resolve([BUSINESS_FRIENDLY_TABLE]),
+      } as Response;
+    }
+    if (url === "/api/table-summaries") {
+      return {
+        ok: true,
+        json: () => Promise.resolve([{
+          table_name: BUSINESS_FRIENDLY_TABLE.name,
+          semantic_name: "卫星天线装配与检验数据",
+          row_count: 3,
+          name_samples: ["通信天线装配", "电性能综合测试"],
+          status: "inferred",
+        }]),
+      } as Response;
+    }
+    if (url === `/api/tables/${BUSINESS_FRIENDLY_TABLE.name}/fields`) {
+      return {
+        ok: true,
+        json: () => Promise.resolve(BUSINESS_FRIENDLY_COLUMNS),
+      } as Response;
+    }
+    if (url === "/api/analyze") {
+      return {
+        ok: true,
+        json: () => Promise.resolve({ task_id: "business-friendly-task-1" }),
+      } as Response;
+    }
+    return { ok: false, json: () => Promise.resolve({}) } as Response;
+  });
+}
+
 describe("Integration: full user flow", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -890,7 +1055,7 @@ describe("Integration: full user flow", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("读取表结构")).toBeInTheDocument();
+      expect(screen.getByText("正在读取业务数据")).toBeInTheDocument();
       expect(screen.getByText("10%")).toBeInTheDocument();
     });
 
@@ -901,7 +1066,7 @@ describe("Integration: full user flow", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("读取实体")).toBeInTheDocument();
+      expect(screen.getByText("正在整理业务对象")).toBeInTheDocument();
     });
 
     await ws.sendMessage({
@@ -923,7 +1088,7 @@ describe("Integration: full user flow", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("语义判断")).toBeInTheDocument();
+      expect(screen.getByText("正在判断对象关系")).toBeInTheDocument();
       expect(screen.getByText("80%")).toBeInTheDocument();
     });
 
@@ -938,13 +1103,13 @@ describe("Integration: full user flow", () => {
       expect(canvas).toHaveAttribute("data-scene-ready", "true");
     });
 
-    expect(screen.getByText("2 个实体")).toBeInTheDocument();
-    expect(screen.getByText("1 条表关系")).toBeInTheDocument();
-    expect(screen.getByText("1 条实体关系")).toBeInTheDocument();
+    expect(screen.getByText("2 个对象")).toBeInTheDocument();
+    expect(screen.getByText("1 条业务关系")).toBeInTheDocument();
+    expect(screen.getByText("1 条当前可见")).toBeInTheDocument();
     expect(screen.getByText("弱关系")).toBeInTheDocument();
     expect(screen.getByText("强关系")).toBeInTheDocument();
     expect(screen.getByText("导出 JSON")).toBeInTheDocument();
-    expect(screen.getByText("开始新分析")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新分析" })).toBeInTheDocument();
 
     const layout = FakeLayoutWorker.latestLayout!;
     const tableEdge = layout.tableEdges.find(
@@ -1013,6 +1178,141 @@ describe("Integration: full user flow", () => {
 
   });
 
+  it("completes the business-user journey with duplicate codes and collapsed technical evidence", async () => {
+    const fetchMock = setupBusinessFriendlyFetchMock();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+
+    render(<App />);
+
+    expect(await screen.findByText("卫星天线装配与检验数据")).toBeInTheDocument();
+    expect(screen.getByText(BUSINESS_FRIENDLY_TABLE.name)).toBeInTheDocument();
+    expect(screen.getByText("3 个对象")).toBeInTheDocument();
+    expect(screen.getByText("通信天线装配")).toBeInTheDocument();
+    expect(screen.getByText("电性能综合测试")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", {
+      name: `选择业务数据 ${BUSINESS_FRIENDLY_TABLE.name}`,
+    }));
+    const evidenceField = await screen.findByRole("checkbox", {
+      name: "字段 test_item",
+    });
+    fireEvent.click(evidenceField);
+    expect(screen.getByRole("checkbox", { name: "字段 internal_note" }))
+      .not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "生成业务关系图" }));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    expect(JSON.parse(String(fetchMock.mock.calls.find(([input]) =>
+      (typeof input === "string" ? input : input.toString()) === "/api/analyze"
+    )?.[1]?.body))).toEqual({
+      tables: [{ name: BUSINESS_FRIENDLY_TABLE.name, fields: ["test_item"] }],
+    });
+
+    await FakeWebSocket.instances[0].sendMessage(terminalMessage(
+      "complete",
+      BUSINESS_FRIENDLY_GRAPH,
+      [],
+      {
+        ...MOCK_DIAGNOSTICS,
+        entities_read: 3,
+        candidates_retrieved: 1,
+        candidates_completed: 1,
+        weak_edges_created: 1,
+        strong_edges_created: 0,
+      },
+    ));
+
+    const canvas = await screen.findByRole("img", { name: /3 个实体，1 条关系/ });
+    await waitFor(() => expect(canvas).toHaveAttribute("data-scene-ready", "true"));
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    fireEvent.change(search, { target: { value: "通信天线装配 GY0000203" } });
+    fireEvent.click(screen.getByRole("button", { name: "定位" }));
+    await waitFor(() => {
+      expect(useAnalysisStore.getState().selectedNodeId)
+        .toBe("satellite_assembly_records:1");
+    });
+    expect(screen.getByRole("heading", { name: "通信天线装配" }))
+      .toBeInTheDocument();
+    expect(screen.getByText("GY0000203")).toBeInTheDocument();
+    expect(screen.queryByText("GY0000204")).not.toBeInTheDocument();
+
+    const layout = FakeLayoutWorker.latestLayout!;
+    const scene = buildScene({
+      graph: useAnalysisStore.getState().graph!,
+      layout,
+      transform: d3.zoomTransform(canvas),
+      confidenceThreshold: useAnalysisStore.getState().confidenceThreshold,
+    });
+    const edge = scene.entityEdges.find((item) =>
+      item.id === "satellite_assembly_records:1--satellite_assembly_records:3"
+    )!;
+    const edgePoint = quadraticPoint(edge.geometry, 0.5);
+    fireEvent.click(canvas, { clientX: edgePoint.x, clientY: edgePoint.y });
+
+    await waitFor(() => {
+      expect(useAnalysisStore.getState().selectedEntityEdgeId)
+        .toBe("satellite_assembly_records:1--satellite_assembly_records:3");
+    });
+    expect(screen.getByText("通信天线装配 → 电性能综合测试"))
+      .toBeInTheDocument();
+    expect(screen.getByText("用于检验")).toBeInTheDocument();
+    expect(screen.queryByText("assembly_electrical_test_assignment"))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText("llm_semantic_reasoning")).not.toBeInTheDocument();
+    expect(screen.queryByText("fixture-business-model-v1")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("技术依据"));
+    expect(screen.getByText("assembly_electrical_test_assignment"))
+      .toBeInTheDocument();
+    expect(screen.getByText("llm_semantic_reasoning")).toBeInTheDocument();
+    expect(screen.getByText("fixture-business-model-v1")).toBeInTheDocument();
+  });
+
+  it("presents a legacy snapshot with safe business names, stable duplicate labels, and relation fallback", async () => {
+    act(() => {
+      useAnalysisStore.setState({
+        phase: "done",
+        graph: LEGACY_BUSINESS_GRAPH,
+        analysisStatus: "complete",
+        diagnostics: null,
+        warnings: [],
+      });
+    });
+
+    render(<App />);
+    const canvas = await screen.findByRole("img", { name: /3 个实体，1 条关系/ });
+    await waitFor(() => expect(canvas).toHaveAttribute("data-scene-ready", "true"));
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    fireEvent.change(search, { target: { value: "通信天线装配 同名 1" } });
+    fireEvent.click(screen.getByRole("button", { name: "定位" }));
+    await waitFor(() => expect(screen.getByText("同名 1")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "通信天线装配" }))
+      .toBeInTheDocument();
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
+    expect(screen.queryByText("com.internal.LegacyAssembly"))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText("legacy_internal_table"))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText("legacy_internal_table:technical-id-1"))
+      .not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", {
+      name: /显示未关联对象/,
+    }));
+    await waitFor(() => expect(canvas).toHaveAttribute("data-scene-ready", "true"));
+    fireEvent.change(search, { target: { value: "通信天线装配 同名 2" } });
+    fireEvent.click(screen.getByRole("button", { name: "定位" }));
+    await waitFor(() => expect(screen.getByText("同名 2")).toBeInTheDocument());
+
+    act(() => useAnalysisStore.getState().selectEntityEdge("legacy-edge-1"));
+    expect(screen.getByText("相关")).toBeInTheDocument();
+    expect(screen.queryByText("legacy_internal_test_link")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("技术依据"));
+    expect(screen.getByText("legacy_internal_test_link")).toBeInTheDocument();
+  });
+
   it("renders representative semantic results and exposes process evidence", async () => {
     const fetchMock = setupBusinessFetchMock();
     vi.stubGlobal("WebSocket", FakeWebSocket);
@@ -1075,8 +1375,8 @@ describe("Integration: full user flow", () => {
     await waitFor(() => {
       expect(canvas).toHaveAttribute("data-scene-ready", "true");
     });
-    expect(screen.getByText("2 条表关系")).toBeInTheDocument();
-    expect(screen.getByText("6 条实体关系")).toBeInTheDocument();
+    expect(screen.getByText("10 个对象")).toBeInTheDocument();
+    expect(screen.getByText("6 条业务关系")).toBeInTheDocument();
 
     act(() => {
       useAnalysisStore.getState().selectTableEdge(PROCESS_TABLE_EDGE_ID);
@@ -1172,7 +1472,7 @@ describe("Integration: full user flow", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("分析失败，正在显示可用结果。"),
+        screen.getByText("对象关系暂时无法完成判断。"),
       ).toBeInTheDocument();
     });
     expect(
@@ -1359,14 +1659,13 @@ describe("Integration: full user flow", () => {
     });
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/完整分析未发现关系/)
-      ).toBeInTheDocument();
+      expect(screen.getByText(/暂未发现对象之间的业务关系/))
+        .toBeInTheDocument();
     });
 
-    expect(screen.getByText("2 个实体")).toBeInTheDocument();
-    expect(screen.getByText("0 条表关系")).toBeInTheDocument();
-    expect(screen.getByText("0 条实体关系")).toBeInTheDocument();
+    expect(screen.getByText("2 个对象")).toBeInTheDocument();
+    expect(screen.getByText("0 条业务关系")).toBeInTheDocument();
+    expect(screen.getByText("0 条当前可见")).toBeInTheDocument();
   });
 
   it("displays timeout error when analysis times out via WebSocket", async () => {
@@ -1412,12 +1711,12 @@ describe("Integration: full user flow", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("分析未完成，正在显示可用关系。"),
+        screen.getByText("部分对象的关系尚未判断完成。"),
       ).toBeInTheDocument();
     });
 
     expect(
-      screen.getByText("候选关系：已完成 1 · 待处理 3 · 失败 0"),
+      screen.getByText("判断任务：已完成 1 · 待处理 3 · 失败 0"),
     ).toBeInTheDocument();
     expect(screen.getByText(/分析超时（180 秒）/)).toBeInTheDocument();
     expect(useAnalysisStore.getState().analysisStatus).toBe("partial");
@@ -1501,7 +1800,7 @@ describe("Integration: full user flow", () => {
       progress: 0.6,
     });
     await waitFor(() => {
-      expect(screen.getByText("检索候选关系")).toBeInTheDocument();
+      expect(screen.getByText("正在寻找可能有关的对象")).toBeInTheDocument();
       expect(screen.getByText("60%")).toBeInTheDocument();
     });
     expect(useAnalysisStore.getState().activeSocket).toBe(socket);

@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import CanvasErrorBoundary from "../components/CanvasErrorBoundary";
 import GraphCanvas from "../components/GraphCanvas";
+import NodeDetailPanel from "../components/NodeDetailPanel";
 import { useAnalysisStore } from "../store/analysis";
 import { makeNebulaGraph } from "./nebulaFixtures";
 
@@ -100,6 +101,7 @@ export function NebulaVisualHarness() {
         <CanvasErrorBoundary>
           <GraphCanvas suppressStatusOverlay />
         </CanvasErrorBoundary>
+        <NodeDetailPanel />
       </section>
     </main>
   );
