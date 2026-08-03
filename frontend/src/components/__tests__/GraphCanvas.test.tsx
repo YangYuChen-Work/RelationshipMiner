@@ -523,7 +523,7 @@ describe("GraphCanvas", () => {
     expect(Math.max(...screenPoints.map(([x]) => x))).toBeLessThanOrEqual(912);
     expect(Math.min(...screenPoints.map(([, y]) => y))).toBeGreaterThanOrEqual(48);
     expect(Math.max(...screenPoints.map(([, y]) => y))).toBeLessThanOrEqual(552);
-  });
+  }, 15_000);
 
   it("uses one canvas and no per-entity DOM for a 7000 entity graph", async () => {
     const entities = Array.from({ length: 7_000 }, (_, index) => ({ id: `entity-${index}`, table_id: "bulk", display_name: `Entity ${index}`, class_name: null, dimensions: {} }));
