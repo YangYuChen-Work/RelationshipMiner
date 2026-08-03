@@ -1,12 +1,16 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import AnalysisLauncher from "./AnalysisLauncher";
-import DatabaseTableAccordion from "./DatabaseTableAccordion";
+import BusinessDatasetCard from "./BusinessDatasetCard";
 import { useAnalysisStore } from "../store/analysis";
 
 export default function SelectionWorkspace() {
   const tables = useAnalysisStore((s) => s.tables);
   const tablesLoading = useAnalysisStore((s) => s.tablesLoading);
   const tablesError = useAnalysisStore((s) => s.tablesError);
+  const tableSummaries = useAnalysisStore((s) => s.tableSummaries);
+  const tableSummariesWarning = useAnalysisStore(
+    (s) => s.tableSummariesWarning,
+  );
   const selectedTables = useAnalysisStore((s) => s.selectedTables);
   const maxTables = useAnalysisStore((s) => s.maxTables);
   const loadTables = useAnalysisStore((s) => s.loadTables);
@@ -16,11 +20,16 @@ export default function SelectionWorkspace() {
   const filteredTables = useMemo(
     () =>
       normalizedSearchQuery
-        ? tables.filter((table) =>
-            table.name.toLocaleLowerCase().includes(normalizedSearchQuery)
-          )
+        ? tables.filter((table) => {
+            const summary = tableSummaries.get(table.name);
+            return [table.name, summary?.semantic_name]
+              .filter(Boolean)
+              .some((value) =>
+                value!.toLocaleLowerCase().includes(normalizedSearchQuery),
+              );
+          })
         : tables,
-    [normalizedSearchQuery, tables]
+    [normalizedSearchQuery, tableSummaries, tables]
   );
 
   useEffect(() => {
@@ -30,11 +39,15 @@ export default function SelectionWorkspace() {
   const selectedCount = selectedTables.size;
 
   return (
-    <section className="space-y-4" aria-label="数据表与字段选择">
+    <section className="space-y-4" aria-label="业务数据选择">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">选择数据表与字段</h2>
-          <p className="mt-1 text-sm text-gray-500">展开表后可精确选择用于关系分析的字段。</p>
+          <h2 className="text-lg font-semibold text-gray-900">
+            选择要分析的业务数据
+          </h2>
+          <p className="mt-1 text-sm text-gray-500">
+            选择业务数据，并按需补充辅助判断依据。
+          </p>
         </div>
         <span className="rounded-full bg-blue-100 px-2.5 py-1 text-sm font-medium text-blue-800">
           {selectedCount} / {maxTables} 表
@@ -47,6 +60,12 @@ export default function SelectionWorkspace() {
           className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
         >
           已达到十表上限，取消选择后可继续添加。
+        </p>
+      )}
+
+      {tableSummariesWarning && !tablesError && (
+        <p role="status" className="text-xs text-amber-700">
+          业务名称暂不可用，已显示原始表名。
         </p>
       )}
 
@@ -98,9 +117,10 @@ export default function SelectionWorkspace() {
       {!tablesLoading && tables.length > 0 && (
         <div className="space-y-2">
           {filteredTables.map((table) => (
-            <DatabaseTableAccordion
+            <BusinessDatasetCard
               key={table.name}
               tableName={table.name}
+              summary={tableSummaries.get(table.name)}
               disabled={
                 !selectedTables.has(table.name) && selectedCount >= maxTables
               }
@@ -110,7 +130,9 @@ export default function SelectionWorkspace() {
       )}
 
       <div className="flex items-center justify-between border-t border-gray-200 pt-4">
-        <span className="text-xs text-gray-500">选择用于语义关系分析的维度字段。</span>
+        <span className="text-xs text-gray-500">
+          系统将使用名称和对象类型判断关系。
+        </span>
         <AnalysisLauncher />
       </div>
     </section>

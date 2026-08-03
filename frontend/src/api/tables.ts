@@ -7,8 +7,17 @@ export interface TableInfo {
 export interface ColumnInfo {
   name: string;
   type: string;
+  is_name: boolean;
   is_class_name: boolean;
   is_primary_key: boolean;
+}
+
+export interface TableBusinessSummary {
+  table_name: string;
+  semantic_name: string;
+  row_count: number;
+  name_samples: string[];
+  status: "inferred" | "fallback";
 }
 
 export interface TableColumnsResponse {
@@ -53,6 +62,14 @@ export async function fetchTables(): Promise<TableInfo[]> {
   const res = await fetch(`${BASE}/tables`);
   if (!res.ok) {
     throw new Error(await apiErrorMessage(res, "获取表列表失败"));
+  }
+  return res.json();
+}
+
+export async function fetchTableSummaries(): Promise<TableBusinessSummary[]> {
+  const res = await fetch(`${BASE}/table-summaries`);
+  if (!res.ok) {
+    throw new Error(await apiErrorMessage(res, "获取业务数据摘要失败"));
   }
   return res.json();
 }

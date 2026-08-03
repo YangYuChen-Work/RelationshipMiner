@@ -32,20 +32,21 @@ const MOCK_TABLES = [
 const MOCK_COLUMNS = {
   table_name: "users",
   columns: [
-    { name: "id", type: "int", is_class_name: false, is_primary_key: true },
-    { name: "class_name", type: "varchar", is_class_name: true, is_primary_key: false },
-    { name: "name", type: "varchar", is_class_name: false, is_primary_key: false },
-    { name: "email", type: "varchar", is_class_name: false, is_primary_key: false },
+    { name: "id", type: "int", is_name: false, is_class_name: false, is_primary_key: true },
+    { name: "class_name", type: "varchar", is_name: false, is_class_name: true, is_primary_key: false },
+    { name: "name", type: "varchar", is_name: true, is_class_name: false, is_primary_key: false },
+    { name: "email", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
   ],
 };
 
 const MOCK_COLUMNS_ORDERS = {
   table_name: "orders",
   columns: [
-    { name: "id", type: "int", is_class_name: false, is_primary_key: true },
-    { name: "class_name", type: "varchar", is_class_name: true, is_primary_key: false },
-    { name: "user_id", type: "int", is_class_name: false, is_primary_key: false },
-    { name: "total", type: "decimal", is_class_name: false, is_primary_key: false },
+    { name: "id", type: "int", is_name: false, is_class_name: false, is_primary_key: true },
+    { name: "name", type: "varchar", is_name: true, is_class_name: false, is_primary_key: false },
+    { name: "class_name", type: "varchar", is_name: false, is_class_name: true, is_primary_key: false },
+    { name: "user_id", type: "int", is_name: false, is_class_name: false, is_primary_key: false },
+    { name: "total", type: "decimal", is_name: false, is_class_name: false, is_primary_key: false },
   ],
 };
 
@@ -139,40 +140,48 @@ const BUSINESS_COLUMNS = {
   requirements: {
     table_name: "requirements",
     columns: [
-      { name: "id", type: "int", is_class_name: false, is_primary_key: true },
-      { name: "title", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "creator_name", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "creator_employee_no", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "private_note", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "id", type: "int", is_name: false, is_class_name: false, is_primary_key: true },
+      { name: "name", type: "varchar", is_name: true, is_class_name: false, is_primary_key: false },
+      { name: "class_name", type: "varchar", is_name: false, is_class_name: true, is_primary_key: false },
+      { name: "title", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "creator_name", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "creator_employee_no", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "private_note", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
     ],
   },
   operations: {
     table_name: "operations",
     columns: [
-      { name: "id", type: "int", is_class_name: false, is_primary_key: true },
-      { name: "action", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "operator_name", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "operator_employee_no", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "private_note", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "id", type: "int", is_name: false, is_class_name: false, is_primary_key: true },
+      { name: "name", type: "varchar", is_name: true, is_class_name: false, is_primary_key: false },
+      { name: "class_name", type: "varchar", is_name: false, is_class_name: true, is_primary_key: false },
+      { name: "action", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "operator_name", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "operator_employee_no", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "private_note", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
     ],
   },
   processes: {
     table_name: "processes",
     columns: [
-      { name: "id", type: "int", is_class_name: false, is_primary_key: true },
-      { name: "process_name", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "description", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "private_note", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "id", type: "int", is_name: false, is_class_name: false, is_primary_key: true },
+      { name: "name", type: "varchar", is_name: true, is_class_name: false, is_primary_key: false },
+      { name: "class_name", type: "varchar", is_name: false, is_class_name: true, is_primary_key: false },
+      { name: "process_name", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "description", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "private_note", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
     ],
   },
   parts: {
     table_name: "parts",
     columns: [
-      { name: "id", type: "int", is_class_name: false, is_primary_key: true },
-      { name: "part_name", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "part_code", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "description", type: "varchar", is_class_name: false, is_primary_key: false },
-      { name: "private_note", type: "varchar", is_class_name: false, is_primary_key: false },
+      { name: "id", type: "int", is_name: false, is_class_name: false, is_primary_key: true },
+      { name: "name", type: "varchar", is_name: true, is_class_name: false, is_primary_key: false },
+      { name: "class_name", type: "varchar", is_name: false, is_class_name: true, is_primary_key: false },
+      { name: "part_name", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "part_code", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "description", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
+      { name: "private_note", type: "varchar", is_name: false, is_class_name: false, is_primary_key: false },
     ],
   },
 };
@@ -570,6 +579,29 @@ function setupFetchMock() {
         } as Response;
       }
 
+      if (url === "/api/table-summaries") {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                table_name: "users",
+                semantic_name: "用户数据",
+                row_count: 1,
+                name_samples: ["Alice"],
+                status: "inferred",
+              },
+              {
+                table_name: "orders",
+                semantic_name: "订单数据",
+                row_count: 1,
+                name_samples: ["Order #1"],
+                status: "inferred",
+              },
+            ]),
+        } as Response;
+      }
+
       if (url === "/api/tables/users/fields") {
         return {
           ok: true,
@@ -609,6 +641,21 @@ function setupBusinessFetchMock() {
       } as Response;
     }
 
+    if (url === "/api/table-summaries") {
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            BUSINESS_TABLES.map(({ name }) => ({
+              table_name: name,
+              semantic_name: `${name} 业务数据`,
+              row_count: 1,
+              name_samples: [],
+              status: "inferred",
+            }))),
+      } as Response;
+    }
+
     const fieldsMatch = url.match(/^\/api\/tables\/([^/]+)\/fields$/);
     if (fieldsMatch) {
       const tableName = fieldsMatch[1] as keyof typeof BUSINESS_COLUMNS;
@@ -642,6 +689,8 @@ describe("Integration: full user flow", () => {
       tables: [],
       tablesLoading: false,
       tablesError: null,
+      tableSummaries: new Map(),
+      tableSummariesWarning: null,
       selectedTables: new Map(),
       pendingTables: new Set(),
       tableRequestTokens: new Map(),
@@ -738,17 +787,19 @@ describe("Integration: full user flow", () => {
     });
 
     // Click on users table to select it
-    const usersLabel = screen.getByText("users").closest("label");
-    expect(usersLabel).not.toBeNull();
-    fireEvent.click(usersLabel!);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+    );
 
     // FieldSelector should appear with the table's fields
     await waitFor(() => {
-      expect(screen.getByText("email")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "字段 email" }),
+      ).toBeInTheDocument();
     });
   });
 
-  it("shows '开始分析' button disabled when no tables selected", async () => {
+  it("shows '生成业务关系图' button disabled when no tables selected", async () => {
     setupFetchMock();
 
     render(<App />);
@@ -757,7 +808,7 @@ describe("Integration: full user flow", () => {
       expect(screen.getByText("users")).toBeInTheDocument();
     });
 
-    const btn = screen.getByText("开始分析");
+    const btn = screen.getByText("生成业务关系图");
     expect(btn).toBeDisabled();
   });
 
@@ -771,33 +822,44 @@ describe("Integration: full user flow", () => {
       expect(screen.getByText("users")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("users").closest("label")!);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+    );
 
     await waitFor(() => {
-      expect(screen.getByText("email")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "字段 email" }),
+      ).toBeInTheDocument();
     });
 
-    const primaryKey = screen.getByRole("checkbox", { name: "字段 id" });
-    const classMetadata = screen.getByRole("checkbox", {
-      name: "字段 class_name",
-    });
-    expect(primaryKey).toBeDisabled();
-    expect(primaryKey).not.toBeChecked();
-    expect(classMetadata).toBeDisabled();
-    expect(classMetadata).not.toBeChecked();
-    expect(screen.getByText("自动用于实体 ID")).toBeInTheDocument();
-    expect(screen.getByText("用于节点展示")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("checkbox", { name: "字段 name" }));
+    expect(
+      screen.queryByRole("checkbox", { name: "字段 id" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "字段 name" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "字段 class_name" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", { name: "users 主要判断信息" }),
+      ).getByText("系统将使用名称和对象类型判断关系。"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "字段 email" }));
 
-    fireEvent.click(screen.getByText("orders").closest("label")!);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择业务数据 orders" }),
+    );
     await waitFor(() => {
-      expect(screen.getByText("user_id")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "字段 user_id" }),
+      ).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole("checkbox", { name: "字段 user_id" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "字段 total" }));
 
-    const startBtn = screen.getByText("开始分析");
+    const startBtn = screen.getByText("生成业务关系图");
     expect(startBtn).not.toBeDisabled();
     fireEvent.click(startBtn);
 
@@ -812,7 +874,7 @@ describe("Integration: full user flow", () => {
     expect(analyzeCall).toBeDefined();
     expect(JSON.parse(String(analyzeCall?.[1]?.body))).toEqual({
       tables: [
-        { name: "users", fields: ["name", "email"] },
+        { name: "users", fields: ["email"] },
         { name: "orders", fields: ["user_id", "total"] },
       ],
     });
@@ -950,7 +1012,7 @@ describe("Integration: full user flow", () => {
 
     for (const selection of BUSINESS_SELECTION) {
       const tableCheckbox = screen.getByRole("checkbox", {
-        name: `选择表 ${selection.name}`,
+          name: `选择业务数据 ${selection.name}`,
       });
       const tableCard = tableCheckbox.closest("article")!;
       fireEvent.click(tableCheckbox);
@@ -970,7 +1032,9 @@ describe("Integration: full user flow", () => {
       }
     }
 
-    fireEvent.click(screen.getByRole("button", { name: "开始分析" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "生成业务关系图" }),
+    );
     await waitFor(() => {
       expect(FakeWebSocket.instances).toHaveLength(1);
     });
@@ -1054,12 +1118,16 @@ describe("Integration: full user flow", () => {
     });
 
     // Select table and start analysis
-    fireEvent.click(screen.getByText("users").closest("label")!);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+    );
     await waitFor(() => {
-      expect(screen.getByText("email")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "字段 email" }),
+      ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("开始分析"));
+    fireEvent.click(screen.getByText("生成业务关系图"));
 
     // Wait for the WS to be created
     await waitFor(() => {
@@ -1116,7 +1184,7 @@ describe("Integration: full user flow", () => {
     render(<App />);
 
     expect(
-      screen.getByRole("checkbox", { name: "选择表 overflow" })
+      screen.getByRole("checkbox", { name: "选择业务数据 overflow" })
     ).toBeDisabled();
     expect(
       screen.getByText("已达到十表上限，取消选择后可继续添加。")
@@ -1134,12 +1202,16 @@ describe("Integration: full user flow", () => {
     });
 
     // Select table and run through analysis to completion
-    fireEvent.click(screen.getByText("users").closest("label")!);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+    );
     await waitFor(() => {
-      expect(screen.getByText("email")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "字段 email" }),
+      ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("开始分析"));
+    fireEvent.click(screen.getByText("生成业务关系图"));
 
     await waitFor(() => {
       expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
@@ -1155,7 +1227,7 @@ describe("Integration: full user flow", () => {
     fireEvent.click(screen.getByRole("button", { name: /新分析/ }));
 
     await waitFor(() => {
-      expect(screen.getByText("选择数据表与字段")).toBeInTheDocument();
+      expect(screen.getByText("选择要分析的业务数据")).toBeInTheDocument();
     });
   });
 
@@ -1234,12 +1306,16 @@ describe("Integration: full user flow", () => {
     });
 
     // Select users table and run analysis
-    fireEvent.click(screen.getByText("users").closest("label")!);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+    );
     await waitFor(() => {
-      expect(screen.getByText("email")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "字段 email" }),
+      ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("开始分析"));
+    fireEvent.click(screen.getByText("生成业务关系图"));
 
     await waitFor(() => {
       expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
@@ -1283,12 +1359,16 @@ describe("Integration: full user flow", () => {
     });
 
     // Select users table and run analysis
-    fireEvent.click(screen.getByText("users").closest("label")!);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+    );
     await waitFor(() => {
-      expect(screen.getByText("email")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "字段 email" }),
+      ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("开始分析"));
+    fireEvent.click(screen.getByText("生成业务关系图"));
 
     await waitFor(() => {
       expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
@@ -1380,11 +1460,15 @@ describe("Integration: full user flow", () => {
     await waitFor(() => {
       expect(screen.getByText("users")).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByText("users").closest("label")!);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+    );
     await waitFor(() => {
-      expect(screen.getByText("email")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "字段 email" }),
+      ).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByText("开始分析"));
+    fireEvent.click(screen.getByText("生成业务关系图"));
 
     await waitFor(() => {
       expect(FakeWebSocket.instances).toHaveLength(1);
@@ -1445,12 +1529,16 @@ describe("Integration: full user flow", () => {
     });
 
     // Select users table and run analysis
-    fireEvent.click(screen.getByText("users").closest("label")!);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+    );
     await waitFor(() => {
-      expect(screen.getByText("email")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "字段 email" }),
+      ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("开始分析"));
+    fireEvent.click(screen.getByText("生成业务关系图"));
 
     // Should show connection error
     await waitFor(() => {

@@ -9,6 +9,7 @@ const selectedTable = {
     {
       name: "id",
       type: "int",
+      is_name: false,
       is_class_name: false,
       is_primary_key: true,
     },
@@ -32,7 +33,7 @@ describe("AnalysisLauncher", () => {
 
     render(<AnalysisLauncher />);
 
-    expect(screen.getByRole("button", { name: "开始分析" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "生成业务关系图" })).toBeDisabled();
     expect(screen.getByText(/正在加载所选表字段/)).toBeVisible();
   });
 });

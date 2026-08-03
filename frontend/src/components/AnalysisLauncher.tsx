@@ -37,7 +37,7 @@ export default function AnalysisLauncher() {
             分析中...
           </span>
         ) : (
-          "开始分析"
+          "生成业务关系图"
         )}
       </button>
 
@@ -46,7 +46,7 @@ export default function AnalysisLauncher() {
           {hasPendingTables
             ? "正在加载所选表字段，请稍候"
             : tableCount === 0
-            ? "请先勾选要分析的数据表"
+            ? "请先选择要分析的业务数据"
             : "请选择至少一张表"}
         </span>
       )}

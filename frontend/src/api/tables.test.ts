@@ -1,5 +1,42 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchTableColumns, fetchTables } from "./tables";
+import { fetchTableColumns, fetchTableSummaries, fetchTables } from "./tables";
+
+describe("tables API contracts", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns the business summaries exposed by the backend", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            table_name: "assembly_process",
+            semantic_name: "装配工艺数据",
+            row_count: 128,
+            name_samples: ["通信卫星总装", "高增益天线装配"],
+            status: "inferred",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    expect(await fetchTableSummaries()).toEqual([
+      {
+        table_name: "assembly_process",
+        semantic_name: "装配工艺数据",
+        row_count: 128,
+        name_samples: ["通信卫星总装", "高增益天线装配"],
+        status: "inferred",
+      },
+    ]);
+    expect(fetch).toHaveBeenCalledWith("/api/table-summaries");
+  });
+});
 
 describe("tables API errors", () => {
   afterEach(() => {

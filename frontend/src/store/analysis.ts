@@ -1,13 +1,21 @@
 /** Zustand 全局状态 — 分析配置与执行。 */
 
 import { create } from "zustand";
-import type { TableInfo, ColumnInfo } from "../api/tables";
+import type {
+  TableBusinessSummary,
+  TableInfo,
+  ColumnInfo,
+} from "../api/tables";
 import type {
   AnalysisDiagnostics,
   AnalysisStatus,
   SemanticGraphData,
 } from "../api/analysis";
-import { fetchTables, fetchTableColumns } from "../api/tables";
+import {
+  fetchTableColumns,
+  fetchTableSummaries,
+  fetchTables,
+} from "../api/tables";
 import { submitAnalysis, createAnalysisSocket } from "../api/analysis";
 
 export type Phase = "select" | "analyzing" | "done" | "error";
@@ -23,8 +31,12 @@ interface FocusNodeRequest {
   version: number;
 }
 
-export function isSystemColumn(column: ColumnInfo): boolean {
-  return column.is_class_name || column.is_primary_key;
+export function isRequiredBusinessColumn(column: ColumnInfo): boolean {
+  return column.is_name || column.is_class_name;
+}
+
+export function isAuxiliaryColumn(column: ColumnInfo): boolean {
+  return !isRequiredBusinessColumn(column) && !column.is_primary_key;
 }
 
 interface AnalysisState {
@@ -36,6 +48,8 @@ interface AnalysisState {
   tables: TableInfo[];
   tablesLoading: boolean;
   tablesError: string | null;
+  tableSummaries: Map<string, TableBusinessSummary>;
+  tableSummariesWarning: string | null;
 
   // ── 用户选择 ──
   selectedTables: Map<string, SelectedTable>;
@@ -71,6 +85,7 @@ interface AnalysisState {
 
   // ── 操作：元数据 ──
   loadTables: () => Promise<void>;
+  loadTableSummaries: () => Promise<void>;
   toggleTable: (tableName: string) => Promise<void>;
   toggleField: (tableName: string, fieldName: string) => void;
   selectAllFields: (tableName: string) => void;
@@ -119,6 +134,7 @@ function closeAnalysisSocket(socket: WebSocket | null) {
 }
 
 let nextTableRequestToken = 0;
+let nextTableSummaryRequestToken = 0;
 
 export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   // ── 初始值 ──
@@ -127,6 +143,8 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   tables: [],
   tablesLoading: false,
   tablesError: null,
+  tableSummaries: new Map(),
+  tableSummariesWarning: null,
   selectedTables: new Map(),
   pendingTables: new Set(),
   tableRequestTokens: new Map(),
@@ -163,10 +181,33 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     try {
       const result = await fetchTables();
       set({ tables: result, tablesLoading: false, tablesError: null });
+      void get().loadTableSummaries();
     } catch (e: any) {
       set({
         tablesError: e.message || "无法加载表列表",
         tablesLoading: false,
+      });
+    }
+  },
+
+  loadTableSummaries: async () => {
+    const requestToken = ++nextTableSummaryRequestToken;
+    set({ tableSummariesWarning: null });
+    try {
+      const summaries = await fetchTableSummaries();
+      if (requestToken !== nextTableSummaryRequestToken) return;
+      set({
+        tableSummaries: new Map(
+          summaries.map((summary) => [summary.table_name, summary]),
+        ),
+        tableSummariesWarning: null,
+      });
+    } catch (e: any) {
+      if (requestToken !== nextTableSummaryRequestToken) return;
+      set({
+        tableSummaries: new Map(),
+        tableSummariesWarning:
+          e.message || "无法加载业务数据摘要，将显示原始表名",
       });
     }
   },
@@ -265,7 +306,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     if (!entry) return;
 
     const col = entry.columns.find((c) => c.name === fieldName);
-    if (!col || isSystemColumn(col)) return;
+    if (!col || !isAuxiliaryColumn(col)) return;
 
     const next = patchSelectedTable(selectedTables, tableName, (e) => {
       const nextFields = new Set(e.selectedFields);
@@ -284,7 +325,9 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     const next = patchSelectedTable(selectedTables, tableName, (e) => ({
       ...e,
       selectedFields: new Set(
-        e.columns.filter((column) => !isSystemColumn(column)).map((column) => column.name)
+        e.columns
+          .filter(isAuxiliaryColumn)
+          .map((column) => column.name)
       ),
     }));
     set({ selectedTables: next });
@@ -309,18 +352,40 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       return;
     }
 
-    const tableList = Array.from(selectedTables.values()).map((t) => ({
-      name: t.name,
-      fields: t.columns
-        .filter((column) => !isSystemColumn(column) && t.selectedFields.has(column.name))
-        .map((column) => column.name),
-    }));
-
     // ── 验证 ──
-    if (tableList.length === 0) {
+    if (selectedTables.size === 0) {
       set({ errorMessage: "请至少选择一张表" });
       return;
     }
+
+    const selectedEntries = Array.from(selectedTables.values());
+    if (
+      selectedEntries.some(
+        (table) => !table.columns.some((column) => column.is_name),
+      )
+    ) {
+      set({ errorMessage: "缺少业务名称字段。" });
+      return;
+    }
+    if (
+      selectedEntries.some(
+        (table) => !table.columns.some((column) => column.is_class_name),
+      )
+    ) {
+      set({ errorMessage: "缺少对象类型信息，无法进行主要关系判断。" });
+      return;
+    }
+
+    const tableList = selectedEntries.map((table) => ({
+      name: table.name,
+      fields: table.columns
+        .filter(
+          (column) =>
+            isAuxiliaryColumn(column) &&
+            table.selectedFields.has(column.name),
+        )
+        .map((column) => column.name),
+    }));
 
     const runGeneration = analysisGeneration + 1;
     closeAnalysisSocket(activeSocket);

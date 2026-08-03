@@ -8,6 +8,7 @@ const columns = [
   {
     name: "class_name",
     type: "varchar",
+    is_name: false,
     is_class_name: true,
     is_primary_key: false,
   },
@@ -26,6 +27,8 @@ describe("SelectionWorkspace table search", () => {
       ],
       tablesLoading: false,
       tablesError: null,
+      tableSummaries: new Map(),
+      tableSummariesWarning: null,
       selectedTables: new Map(),
       pendingTables: new Set(),
       tableRequestTokens: new Map(),
@@ -109,7 +112,9 @@ describe("SelectionWorkspace table search", () => {
     await user.clear(searchInput);
 
     expect(
-      await screen.findByRole("checkbox", { name: "选择表 UserAccounts" })
+      await screen.findByRole("checkbox", {
+        name: "选择业务数据 UserAccounts",
+      }),
     ).toBeChecked();
   });
 
@@ -117,5 +122,22 @@ describe("SelectionWorkspace table search", () => {
     render(<SelectionWorkspace />);
 
     expect(screen.queryByText("主键与类名字段会始终保留。")).not.toBeInTheDocument();
+  });
+
+  it("uses business selection copy while retaining original names without summaries", () => {
+    useAnalysisStore.setState({
+      tableSummariesWarning: "获取业务数据摘要失败 (HTTP 503)",
+    });
+
+    render(<SelectionWorkspace />);
+
+    expect(
+      screen.getByRole("heading", { name: "选择要分析的业务数据" }),
+    ).toBeVisible();
+    expect(screen.getByText("UserAccounts")).toBeVisible();
+    expect(
+      screen.getByRole("checkbox", { name: "选择业务数据 UserAccounts" }),
+    ).toBeEnabled();
+    expect(screen.queryByText("加载失败")).not.toBeInTheDocument();
   });
 });

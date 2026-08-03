@@ -1,16 +1,40 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAnalysisSocket } from "../api/analysis";
-import { isSystemColumn, useAnalysisStore } from "./analysis";
+import {
+  isAuxiliaryColumn,
+  isRequiredBusinessColumn,
+  useAnalysisStore,
+} from "./analysis";
 
 const columns = [
-  { name: "id", type: "int", is_class_name: false, is_primary_key: true },
+  {
+    name: "id",
+    type: "int",
+    is_name: false,
+    is_class_name: false,
+    is_primary_key: true,
+  },
+  {
+    name: "name",
+    type: "varchar",
+    is_name: true,
+    is_class_name: false,
+    is_primary_key: false,
+  },
   {
     name: "class_name",
     type: "varchar",
+    is_name: false,
     is_class_name: true,
     is_primary_key: false,
   },
-  { name: "email", type: "varchar", is_class_name: false, is_primary_key: false },
+  {
+    name: "email",
+    type: "varchar",
+    is_name: false,
+    is_class_name: false,
+    is_primary_key: false,
+  },
 ];
 
 const completedGraph = {
@@ -85,13 +109,167 @@ describe("analysis selection store", () => {
     useAnalysisStore.setState({
       phase: "select",
       errorMessage: null,
+      tables: [],
+      tablesLoading: false,
+      tablesError: null,
       selectedTables: new Map(),
       pendingTables: new Set(),
+      tableSummaries: new Map(),
+      tableSummariesWarning: null,
       maxTables: 10,
     });
   });
 
-  it("keeps system metadata separate from user-selected dimensions", async () => {
+  it("exposes tables before non-blocking business summaries resolve", async () => {
+    let resolveSummaries!: (value: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith("/tables")) {
+        return Promise.resolve(
+          new Response(JSON.stringify([{ name: "assembly_process" }]), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      if (url.endsWith("/table-summaries")) {
+        return new Promise<Response>((resolve) => {
+          resolveSummaries = resolve;
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    await useAnalysisStore.getState().loadTables();
+
+    expect(useAnalysisStore.getState().tables).toEqual([
+      { name: "assembly_process" },
+    ]);
+    expect(useAnalysisStore.getState().tablesLoading).toBe(false);
+    expect(useAnalysisStore.getState().tableSummaries).toEqual(new Map());
+
+    resolveSummaries(
+      new Response(
+        JSON.stringify([
+          {
+            table_name: "assembly_process",
+            semantic_name: "装配工艺数据",
+            row_count: 128,
+            name_samples: ["通信卫星总装", "高增益天线装配"],
+            status: "inferred",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    await vi.waitFor(() => {
+      expect(useAnalysisStore.getState().tableSummaries.get("assembly_process"))
+        .toEqual({
+          table_name: "assembly_process",
+          semantic_name: "装配工艺数据",
+          row_count: 128,
+          name_samples: ["通信卫星总装", "高增益天线装配"],
+          status: "inferred",
+        });
+    });
+  });
+
+  it("keeps table selection available when business summaries fail", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith("/tables")) {
+        return Promise.resolve(
+          new Response(JSON.stringify([{ name: "legacy_table" }]), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      if (url.endsWith("/table-summaries")) {
+        return Promise.resolve(
+          new Response("unavailable", {
+            status: 503,
+            headers: { "content-type": "text/plain" },
+          }),
+        );
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    await useAnalysisStore.getState().loadTables();
+
+    await vi.waitFor(() => {
+      expect(useAnalysisStore.getState().tableSummariesWarning).toContain(
+        "HTTP 503",
+      );
+    });
+    expect(useAnalysisStore.getState().tables).toEqual([
+      { name: "legacy_table" },
+    ]);
+    expect(useAnalysisStore.getState().tablesError).toBeNull();
+  });
+
+  it("keeps the newest business summaries when requests finish out of order", async () => {
+    const resolvers: Array<(value: Response) => void> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    const olderRequest = useAnalysisStore.getState().loadTableSummaries();
+    const newerRequest = useAnalysisStore.getState().loadTableSummaries();
+
+    resolvers[1](
+      new Response(
+        JSON.stringify([
+          {
+            table_name: "assembly_process",
+            semantic_name: "最新业务名称",
+            row_count: 128,
+            name_samples: [],
+            status: "inferred",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    await newerRequest;
+
+    resolvers[0](
+      new Response(
+        JSON.stringify([
+          {
+            table_name: "assembly_process",
+            semantic_name: "过期业务名称",
+            row_count: 128,
+            name_samples: [],
+            status: "inferred",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    await olderRequest;
+
+    expect(
+      useAnalysisStore.getState().tableSummaries.get("assembly_process")
+        ?.semantic_name,
+    ).toBe("最新业务名称");
+  });
+
+  it("keeps required business fields and primary keys out of auxiliary selection", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ table_name: "users", columns }),
@@ -99,8 +277,10 @@ describe("analysis selection store", () => {
 
     await useAnalysisStore.getState().toggleTable("users");
 
-    expect(isSystemColumn(columns[0])).toBe(true);
-    expect(isSystemColumn(columns[1])).toBe(true);
+    expect(isRequiredBusinessColumn(columns[1])).toBe(true);
+    expect(isRequiredBusinessColumn(columns[2])).toBe(true);
+    expect(isAuxiliaryColumn(columns[0])).toBe(false);
+    expect(isAuxiliaryColumn(columns[3])).toBe(true);
     expect(useAnalysisStore.getState().selectedTables.get("users")?.selectedFields).toEqual(
       new Set()
     );
@@ -111,6 +291,7 @@ describe("analysis selection store", () => {
     );
 
     useAnalysisStore.getState().toggleField("users", "id");
+    useAnalysisStore.getState().toggleField("users", "name");
     useAnalysisStore.getState().toggleField("users", "class_name");
     useAnalysisStore.getState().toggleField("users", "stale_field");
     expect(useAnalysisStore.getState().selectedTables.get("users")?.selectedFields).toEqual(
@@ -118,6 +299,9 @@ describe("analysis selection store", () => {
     );
 
     useAnalysisStore.getState().selectAllFields("users");
+    expect(
+      useAnalysisStore.getState().selectedTables.get("users")?.selectedFields,
+    ).toEqual(new Set(["email"]));
     useAnalysisStore.getState().deselectAllFields("users");
     expect(useAnalysisStore.getState().selectedTables.get("users")?.selectedFields).toEqual(
       new Set()
@@ -264,8 +448,8 @@ describe("analysis selection store", () => {
     expect(useAnalysisStore.getState().tableRequestTokens).toEqual(new Map());
   });
 
-  it("submits only user semantic dimensions", async () => {
-    // This fails if the retired per-table class_name validation is restored.
+  it("submits only selected auxiliary fields", async () => {
+    // This fails if required business roles or primary keys leak into the request.
     class SilentWebSocket {
       onmessage: ((event: MessageEvent) => void) | null = null;
       onerror: ((event: Event) => void) | null = null;
@@ -282,8 +466,8 @@ describe("analysis selection store", () => {
           "audit_log",
           {
             name: "audit_log",
-            columns: [columns[0], columns[2]],
-            selectedFields: new Set(["id", "email"]),
+            columns,
+            selectedFields: new Set(["id", "name", "class_name", "email"]),
           },
         ],
       ]),
@@ -315,7 +499,7 @@ describe("analysis selection store", () => {
           "audit_log",
           {
             name: "audit_log",
-            columns: [columns[0], columns[1]],
+            columns: [columns[0], columns[1], columns[2]],
             selectedFields: new Set(),
           },
         ],
@@ -327,6 +511,50 @@ describe("analysis selection store", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
       tables: [{ name: "audit_log", fields: [] }],
     });
+  });
+
+  it("rejects a selected table without a business name before submission", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    useAnalysisStore.setState({
+      selectedTables: new Map([
+        [
+          "audit_log",
+          {
+            name: "audit_log",
+            columns: [columns[0], columns[2], columns[3]],
+            selectedFields: new Set(["email"]),
+          },
+        ],
+      ]),
+    });
+
+    await useAnalysisStore.getState().startAnalysis();
+
+    expect(useAnalysisStore.getState().errorMessage).toBe("缺少业务名称字段。");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a selected table without object type information before submission", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    useAnalysisStore.setState({
+      selectedTables: new Map([
+        [
+          "audit_log",
+          {
+            name: "audit_log",
+            columns: [columns[0], columns[1], columns[3]],
+            selectedFields: new Set(["email"]),
+          },
+        ],
+      ]),
+    });
+
+    await useAnalysisStore.getState().startAnalysis();
+
+    expect(useAnalysisStore.getState().errorMessage).toBe(
+      "缺少对象类型信息，无法进行主要关系判断。",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
