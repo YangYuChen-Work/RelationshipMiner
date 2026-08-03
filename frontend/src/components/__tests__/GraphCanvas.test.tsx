@@ -717,6 +717,49 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
   });
 
+  it("never exposes a hidden isolated entity as a keyboard target", async () => {
+    const isolatedGraph: SemanticGraphData = {
+      table_nodes: [{ id: "bulk", display_name: "Bulk", entity_count: 3 }],
+      entity_nodes: [
+        { id: "a", table_id: "bulk", display_name: "Visible A", class_name: null, dimensions: {} },
+        { id: "b", table_id: "bulk", display_name: "Visible B", class_name: null, dimensions: {} },
+        { id: "hidden-isolated", table_id: "bulk", display_name: "Hidden keyboard entity", class_name: null, dimensions: {} },
+      ],
+      table_edges: [],
+      entity_edges: [{
+        id: "a-b",
+        source: "a",
+        target: "b",
+        relations: [{
+          source: "a",
+          target: "b",
+          relation_type: "connected",
+          direction: "undirected",
+          strength: "strong",
+          confidence: 1,
+          explanation: "fixture",
+          evidence: [],
+          model_id: null,
+          task_id: null,
+        }],
+      }],
+    };
+    act(() => setGraph(isolatedGraph));
+    const { container } = render(<GraphCanvas />);
+    await ready();
+    const canvas = container.querySelector("canvas")!;
+    const announcement = container.querySelector("[aria-live='polite']")!;
+
+    fireEvent.focus(canvas);
+    expect(announcement).not.toHaveTextContent("Hidden keyboard entity");
+    for (const key of ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]) {
+      fireEvent.keyDown(canvas, { key });
+      expect(announcement).not.toHaveTextContent("Hidden keyboard entity");
+    }
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    expect(useAnalysisStore.getState().selectedNodeId).not.toBe("hidden-isolated");
+  });
+
   it("navigates from table-only zoom to an entity and reveals it before selection", async () => {
     const { container } = render(<GraphCanvas />);
     await ready();

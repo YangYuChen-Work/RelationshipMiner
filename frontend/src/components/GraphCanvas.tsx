@@ -729,6 +729,9 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     const tableData = new Map(
       projectedGraph.table_nodes.map((table) => [table.id, table]),
     );
+    const projectedEntityIds = new Set(
+      projectedGraph.entity_nodes.map((entity) => entity.id),
+    );
     return [
       ...layout.tableNodes.flatMap((node) => {
         const table = tableData.get(node.id);
@@ -740,6 +743,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         }] : [];
       }),
       ...layout.entityNodes.flatMap((node) => {
+        if (!projectedEntityIds.has(node.id)) return [];
         const presentation = businessPresentations.get(node.id);
         return presentation ? [{
         hit: { kind: "entity-node" as const, id: node.id },

@@ -56,6 +56,40 @@ describe("businessName", () => {
     expect(primary).not.toContain("42");
     expect(primary).not.toContain("AUX-001");
   });
+
+  it.each([
+    ["array", ["Array Name"]],
+    ["object", { label: "Object Name" }],
+    ["boolean", true],
+    ["NaN", Number.NaN],
+    ["positive infinity", Number.POSITIVE_INFINITY],
+    ["negative infinity", Number.NEGATIVE_INFINITY],
+  ])("falls through invalid %s dimensions.name values", (_case, name) => {
+    expect(businessName(entity("legacy", "Valid fallback name", null, {
+      name,
+    }))).toBe("Valid fallback name");
+  });
+
+  it.each([
+    "processing",
+    "approved",
+    "rejected",
+    "pending_review",
+    "status: approved",
+    "处理中",
+    "已批准",
+    "已拒绝",
+  ])("rejects the common status-only name %s", (statusName) => {
+    expect(businessName(entity("legacy", statusName))).toBe("未命名对象");
+  });
+
+  it.each([
+    "Processing Station",
+    "Approved Supplier Assembly",
+    "张三",
+  ])("keeps the valid human business name %s", (name) => {
+    expect(businessName(entity("legacy", "Fallback", null, { name }))).toBe(name);
+  });
 });
 
 describe("buildBusinessPresentationIndex", () => {

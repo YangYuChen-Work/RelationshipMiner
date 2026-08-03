@@ -1,22 +1,44 @@
 import type { EntityNodeData } from "../api/analysis";
 
 const UNNAMED_OBJECT = "未命名对象";
-const NON_MEANINGFUL_TEXT = new Set([
+const NON_MEANINGFUL_LITERALS = new Set([
   "0",
   "1",
   "true",
   "false",
   "null",
   "undefined",
+  "nan",
+  "infinity",
+  "+infinity",
+  "-infinity",
+]);
+const STATUS_ONLY_TOKENS = new Set([
+  "status",
+  "state",
   "active",
   "inactive",
   "enabled",
   "disabled",
   "pending",
+  "processing",
+  "processed",
+  "approved",
+  "rejected",
+  "accepted",
+  "declined",
+  "queued",
+  "running",
+  "paused",
+  "stopped",
+  "started",
+  "finished",
   "complete",
   "completed",
   "failed",
+  "failure",
   "success",
+  "successful",
   "error",
   "ready",
   "draft",
@@ -24,13 +46,79 @@ const NON_MEANINGFUL_TEXT = new Set([
   "archived",
   "open",
   "closed",
+  "cancelled",
+  "canceled",
+  "new",
+  "unknown",
+  "valid",
+  "invalid",
+  "review",
+  "reviewing",
+  "reviewed",
+  "approval",
+  "awaiting",
+  "scheduled",
+  "published",
+  "unpublished",
+  "locked",
+  "unlocked",
+  "verified",
+  "unverified",
+  "passed",
+  "pass",
+  "in",
+  "progress",
+  "not",
+  "done",
+  "todo",
+  "hold",
+  "on",
+  "off",
+  "状态",
   "启用",
   "禁用",
   "正常",
   "异常",
   "完成",
+  "已完成",
   "失败",
   "待处理",
+  "处理中",
+  "已处理",
+  "批准",
+  "已批准",
+  "拒绝",
+  "已拒绝",
+  "接受",
+  "已接受",
+  "待审核",
+  "审核中",
+  "已审核",
+  "待审批",
+  "审批中",
+  "已审批",
+  "草稿",
+  "已删除",
+  "已归档",
+  "开放",
+  "关闭",
+  "已取消",
+  "排队中",
+  "运行中",
+  "已停止",
+  "暂停",
+  "新建",
+  "未知",
+  "有效",
+  "无效",
+  "已发布",
+  "未发布",
+  "已锁定",
+  "未锁定",
+  "已验证",
+  "未验证",
+  "通过",
+  "未通过",
 ]);
 
 export interface BusinessEntityPresentation {
@@ -41,12 +129,32 @@ export interface BusinessEntityPresentation {
   isDuplicate: boolean;
 }
 
+function isStatusOnlyText(normalized: string): boolean {
+  const tokens = normalized
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  let hasStatusToken = false;
+  const containsOnlyStatusParts = tokens.every((token) => {
+    if (STATUS_ONLY_TOKENS.has(token)) {
+      hasStatusToken = true;
+      return true;
+    }
+    return /^\d+$/u.test(token);
+  });
+  return hasStatusToken && containsOnlyStatusParts;
+}
+
 function normalizedText(value: unknown): string | null {
-  if (value == null || typeof value === "boolean") return null;
-  const text = String(value).trim();
+  const text = typeof value === "string"
+    ? value.trim()
+    : typeof value === "number" && Number.isFinite(value)
+      ? String(value)
+      : "";
   if (!text) return null;
   const normalized = text.normalize("NFKC").toLocaleLowerCase();
-  return NON_MEANINGFUL_TEXT.has(normalized) ? null : text;
+  return NON_MEANINGFUL_LITERALS.has(normalized) || isStatusOnlyText(normalized)
+    ? null
+    : text;
 }
 
 function normalizedBusinessName(value: string): string {
