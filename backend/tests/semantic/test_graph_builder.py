@@ -354,6 +354,16 @@ def test_empty_input_builds_an_explicit_empty_graph():
     assert build_graph([], [], []) == ([], [], [], [])
 
 
+def test_graph_exposes_document_display_code():
+    document = _document("parts:203", "parts").model_copy(
+        update={"display_code": "GY0000203"}
+    )
+
+    _, entity_nodes, _, _ = build_graph([document], [], [])
+
+    assert entity_nodes[0].display_code == "GY0000203"
+
+
 def test_identical_relation_decisions_remain_independent_entries():
     documents = [
         _document("orders:1", "orders"),

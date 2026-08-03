@@ -364,8 +364,10 @@ def _build_messages(
                 "whose selected fields explicitly support the planned "
                 "relation, and mark every returned relationship with "
                 "approved=true. Omit rejected candidates. Use only the "
-                "supplied entity IDs, relation type, direction, and "
-                "selected fields. Approved relationships are weak and "
+                "supplied entity IDs, relation type, direction, and fields. "
+                "business_context identifies the two objects. "
+                "auxiliary_evidence may only support or reject a "
+                "relationship. Approved relationships are weak and "
                 "must include field evidence. Return one JSON object "
                 "with a decisions array and no prose."
             ),
@@ -386,8 +388,11 @@ def _entity_payload(
 ) -> dict[str, object]:
     return {
         "entity_id": entity.entity_id,
-        "table_name": entity.table_name,
-        "dimensions": {
+        "business_context": {
+            "name": entity.display_name,
+            "class_name": entity.class_name,
+        },
+        "auxiliary_evidence": {
             name: _canonical_json_value(entity.dimensions[name])
             for name in dimensions
             if name in entity.dimensions

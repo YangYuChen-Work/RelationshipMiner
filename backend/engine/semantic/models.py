@@ -36,6 +36,7 @@ class EntityDocument(BaseModel):
     entity_id: str
     table_name: str
     display_name: str
+    display_code: str | None = None
     class_name: str | None = None
     dimensions: dict[str, object]
     normalized_dimensions: dict[str, str]
@@ -106,6 +107,7 @@ class EntityNode(BaseModel):
     id: str
     table_id: str
     display_name: str
+    display_code: str | None = None
     class_name: str | None = None
     dimensions: dict[str, object]
 

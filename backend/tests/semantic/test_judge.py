@@ -29,6 +29,7 @@ def _document(
         entity_id=entity_id,
         table_name=table_name,
         display_name=name,
+        class_name=f"com.example.{table_name.title()}",
         dimensions={
             "name": name,
             "private_note": f"secret-{entity_id}",
@@ -245,6 +246,30 @@ async def test_one_source_and_multiple_candidates_are_sent_together():
 
 
 @pytest.mark.asyncio
+async def test_primary_business_context_is_separate_from_auxiliary_evidence():
+    group = _candidate_group()
+    group.plan.source_dimensions = ["private_note"]
+    group.plan.target_dimensions = ["private_note"]
+    llm = _RecordingLlm(lambda _messages: {"decisions": []})
+
+    await SemanticJudge(llm).judge_groups(
+        [group],
+        deadline=time.monotonic() + 30,
+    )
+
+    prompt = json.loads(str(llm.calls[0][-1]["content"]))
+    assert prompt["source"]["business_context"] == {
+        "name": "Rotor assembly process:1",
+        "class_name": "com.example.Process",
+    }
+    assert prompt["source"]["auxiliary_evidence"] == {
+        "private_note": "secret-process:1"
+    }
+    assert "name" not in prompt["source"]["auxiliary_evidence"]
+    assert "class_name" not in prompt["source"]["auxiliary_evidence"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("approved", ["yes", 1], ids=["string", "integer"])
 async def test_only_strict_boolean_can_explicitly_approve(
     approved: object,
@@ -331,7 +356,7 @@ async def test_canonical_database_values_round_trip_as_evidence():
     )
 
     prompt = json.loads(str(llm.calls[0][-1]["content"]))
-    assert prompt["source"]["dimensions"] == {
+    assert prompt["source"]["auxiliary_evidence"] == {
         "amount": canonical_decimal,
         "produced_on": {"$type": "date", "value": "2026-07-29"},
         "observed_at": {
@@ -348,10 +373,10 @@ async def test_canonical_database_values_round_trip_as_evidence():
             "value": "AP8=",
         },
     }
-    assert prompt["candidates"][0]["dimensions"]["price"] == (
+    assert prompt["candidates"][0]["auxiliary_evidence"]["price"] == (
         canonical_decimal
     )
-    assert prompt["candidates"][0]["dimensions"]["available_on"] == (
+    assert prompt["candidates"][0]["auxiliary_evidence"]["available_on"] == (
         canonical_date
     )
     assert result.completed_groups == 1

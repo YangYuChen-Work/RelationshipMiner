@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import text
 
 from engine.schema_analyzer import analyze_schema
 from engine.pipeline import run_analysis_pipeline
@@ -10,8 +11,80 @@ from engine.semantic.corpus import (
     group_documents_by_signature,
     load_scoped_records,
 )
+from engine.semantic import corpus
 from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.models import AnalysisScope, EntityDocument, TableScope
+
+
+def test_display_metadata_uses_name_and_business_code_only(engine):
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE users SET email = 'alice@example.com' WHERE id = 1"
+        ))
+    scope = AnalysisScope(
+        tables=[TableScope(name="users", dimensions=["email"])]
+    )
+    schema = analyze_schema(engine, ["users"])
+    records = load_scoped_records(engine, scope, schema)
+    documents = build_entity_documents(records, scope, schema)
+
+    assert documents[0].display_name == "Alice"
+    assert documents[0].class_name == "com.example.User"
+    assert documents[0].dimensions == {"email": "alice@example.com"}
+    assert documents[0].display_code is None
+    assert documents[0].search_text == (
+        "Alice；com.example.User；email：alice@example.com"
+    )
+
+
+@pytest.mark.parametrize("name_value", [None, "  "], ids=["missing", "blank"])
+def test_missing_or_blank_business_name_uses_fixed_fallback(
+    engine,
+    name_value,
+):
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE users SET name = :name WHERE id = 1"),
+            {"name": name_value},
+        )
+    scope = AnalysisScope(
+        tables=[TableScope(name="users", dimensions=["email"])]
+    )
+    schema = analyze_schema(engine, ["users"])
+    records = load_scoped_records(engine, scope, schema)
+
+    documents = build_entity_documents(records, scope, schema)
+
+    assert documents[0].display_name == "未命名对象"
+
+
+def test_business_code_is_selected_without_using_integer_primary_key(engine):
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE parts ("
+            "id INTEGER PRIMARY KEY, email TEXT, name TEXT, "
+            "class_name TEXT, part_code TEXT)"
+        ))
+        connection.execute(text(
+            "INSERT INTO parts VALUES "
+            "(203, 'part@example.com', 'Rotor', 'com.example.Part', 'GY0000203')"
+        ))
+    scope = AnalysisScope(
+        tables=[TableScope(name="parts", dimensions=["email"])]
+    )
+    schema = analyze_schema(engine, ["parts"])
+    records = load_scoped_records(engine, scope, schema)
+
+    documents = build_entity_documents(records, scope, schema)
+
+    assert corpus.required_field_names(schema.tables["parts"]) == (
+        "name",
+        "class_name",
+    )
+    assert corpus.select_display_code(records["parts"][0], schema.tables["parts"]) == (
+        "GY0000203"
+    )
+    assert documents[0].display_code == "GY0000203"
 
 
 def test_load_scoped_records_reads_only_selected_tables_and_required_fields(
@@ -33,6 +106,7 @@ def test_load_scoped_records_reads_only_selected_tables_and_required_fields(
         "id",
         "user_id",
         "amount",
+        "name",
         "className",
     }
 
@@ -199,11 +273,11 @@ def test_identical_normalized_signatures_share_one_inference_group():
     assert groups[0].entity_ids == ["operation:1", "operation:2"]
 
 
-def test_pipeline_does_not_send_system_fields_to_ai(
+def test_pipeline_keeps_primary_context_out_of_auxiliary_dimensions(
     engine,
     monkeypatch,
 ):
-    """Primary key and class metadata never enter semantic documents."""
+    """Primary identity and support metadata stay out of auxiliary fields."""
     captured: dict[str, object] = {}
     from engine.semantic.corpus import build_entity_documents as real_build
 
@@ -218,7 +292,10 @@ def test_pipeline_does_not_send_system_fields_to_ai(
     asyncio.run(run_analysis_pipeline(engine, [{
         "name": "users", "fields": ["id", "name", "class_name"],
     }]))
-    assert captured["documents"][0].dimensions == {"name": "Alice"}
+    document = captured["documents"][0]
+    assert document.dimensions == {}
+    assert document.display_name == "Alice"
+    assert document.class_name == "com.example.User"
 
 
 def test_schema_failure_is_attributed_to_schema_progress_phase(

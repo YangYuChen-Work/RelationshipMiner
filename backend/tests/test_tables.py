@@ -110,14 +110,16 @@ class TestListFields:
         assert len(class_name_cols) == 1
         assert class_name_cols[0]["name"] == "className"
 
-    def test_no_class_name_for_table_without_it(self, client: TestClient):
-        """无 class_name 字段的表应正常返回，is_class_name 全部为 false。"""
+    def test_products_expose_required_business_roles(self, client: TestClient):
+        """业务表公开唯一的 name 与 class_name 角色。"""
         response = client.get("/api/tables/products/fields")
 
         columns = response.json()["columns"]
         class_name_cols = [c for c in columns if c["is_class_name"]]
-        assert len(class_name_cols) == 0
-        assert len(columns) == 3  # id, title, price
+        name_cols = [c for c in columns if c["is_name"]]
+        assert [column["name"] for column in class_name_cols] == ["class_name"]
+        assert [column["name"] for column in name_cols] == ["name"]
+        assert len(columns) == 5
 
     def test_class_field_recognized(self, client: TestClient):
         """class 字段（单名）也应被识别为 is_class_name=True。"""

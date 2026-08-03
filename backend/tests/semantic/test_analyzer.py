@@ -42,7 +42,7 @@ async def test_analyzer_redacts_retrieval_exception_from_public_warning(
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="products", dimensions=["title"]),
             ]
         ),
@@ -81,7 +81,7 @@ async def test_schema_deadline_keeps_event_loop_responsive(engine, monkeypatch):
         ).analyze(
             engine,
             AnalysisScope(
-                tables=[TableScope(name="users", dimensions=["name"])],
+                tables=[TableScope(name="users", dimensions=["email"])],
                 time_budget_seconds=0.03,
             ),
         )
@@ -125,7 +125,7 @@ async def test_embedding_deadline_keeps_event_loop_responsive(engine):
             engine,
             AnalysisScope(
                 tables=[
-                    TableScope(name="users", dimensions=["name"]),
+                    TableScope(name="users", dimensions=["email"]),
                     TableScope(name="products", dimensions=["title"]),
                 ],
                 time_budget_seconds=0.03,
@@ -149,6 +149,78 @@ class _StaticPlanner:
         if isinstance(self._plans, Exception):
             raise self._plans
         return self._plans
+
+
+@pytest.mark.asyncio
+async def test_missing_required_business_roles_return_safe_warnings(engine):
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE missing_roles (id INTEGER PRIMARY KEY, title TEXT)"
+        ))
+        connection.execute(text(
+            "INSERT INTO missing_roles VALUES (1, 'Widget')"
+        ))
+
+    result = await RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[TableScope(name="missing_roles", dimensions=["title"])]
+        ),
+    )
+
+    assert result.status == AnalysisStatus.FAILED
+    assert result.warnings == [
+        "缺少业务名称字段。",
+        "缺少对象类型信息，无法进行主要关系判断。",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_blank_business_names_emit_one_fixed_warning(engine):
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE users SET name = ' '"))
+    result = await RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[TableScope(name="users", dimensions=["email"])]
+        ),
+    )
+
+    assert result.status == AnalysisStatus.COMPLETE
+    assert result.warnings.count("部分对象缺少业务名称。") == 1
+    assert {node.display_name for node in result.entity_nodes} == {"未命名对象"}
+
+
+@pytest.mark.asyncio
+async def test_literal_fallback_text_is_not_miscounted_as_a_blank_name(engine):
+    from engine.semantic.analyzer import RelationshipAnalyzer
+
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE users SET name = '未命名对象'"))
+    result = await RelationshipAnalyzer(
+        planner=_StaticPlanner([]),
+        embedding_adapter=_ConstantEmbeddings(),
+        judge=_ApprovingJudge(),
+    ).analyze(
+        engine,
+        AnalysisScope(
+            tables=[TableScope(name="users", dimensions=["email"])]
+        ),
+    )
+
+    assert "部分对象缺少业务名称。" not in result.warnings
 
 
 async def _materialize_groups(groups: object) -> list[object]:
@@ -235,7 +307,7 @@ def _plan() -> RelationshipPlan:
         target_table="orders",
         relation_type="user_places_order",
         direction="source_to_target",
-        source_dimensions=["name"],
+        source_dimensions=["email"],
         target_dimensions=["amount"],
         retrieval_modes=["semantic"],
         candidate_limit_per_source=2,
@@ -249,7 +321,7 @@ def _product_plan() -> RelationshipPlan:
         target_table="products",
         relation_type="user_discusses_product",
         direction="source_to_target",
-        source_dimensions=["name"],
+        source_dimensions=["email"],
         target_dimensions=["title"],
         retrieval_modes=["semantic"],
         candidate_limit_per_source=2,
@@ -270,7 +342,7 @@ async def test_analyzer_completes_and_emits_structured_progress(engine):
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ]
         ),
@@ -297,7 +369,7 @@ async def test_analyzer_marks_failed_judgement_partial_without_losing_fk_edges(e
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ]
         ),
@@ -341,10 +413,10 @@ async def test_analyzer_keeps_completed_weak_edge_when_candidate_stream_deadline
                     "confidence": 0.91,
                     "explanation": "The selected values support the relation.",
                     "evidence": [{
-                        "source_field": "name",
-                        "source_value": source["dimensions"]["name"],
+                        "source_field": "email",
+                        "source_value": source["auxiliary_evidence"]["email"],
                         "target_field": "title",
-                        "target_value": target["dimensions"]["title"],
+                        "target_value": target["auxiliary_evidence"]["title"],
                         "method": "llm_semantic_reasoning",
                         "reason": "The selected values match.",
                     }],
@@ -386,7 +458,7 @@ async def test_analyzer_keeps_completed_weak_edge_when_candidate_stream_deadline
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="products", dimensions=["title"]),
             ],
         ),
@@ -419,7 +491,7 @@ async def test_analyzer_fails_when_planner_fails_without_trustworthy_output(engi
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="products", dimensions=["title"]),
             ]
         ),
@@ -442,7 +514,7 @@ async def test_planner_exception_keeps_fk_edges_as_partial_result(engine):
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ]
         ),
@@ -491,7 +563,7 @@ async def test_schema_overrun_does_not_start_record_loading(engine, monkeypatch)
     ).analyze(
         engine,
         AnalysisScope(
-            tables=[TableScope(name="users", dimensions=["name"])],
+            tables=[TableScope(name="users", dimensions=["email"])],
             time_budget_seconds=1,
         ),
     )
@@ -513,7 +585,7 @@ async def test_malformed_judgement_cannot_be_complete_with_zero_edges(engine):
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="products", dimensions=["title"]),
             ]
         ),
@@ -540,7 +612,7 @@ async def test_analyzer_expands_representative_verdicts_to_all_signature_members
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="products", dimensions=["title"]),
             ]
         ),
@@ -592,7 +664,7 @@ async def test_deadline_stops_before_next_table_and_returns_chinese_partial(
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ],
             time_budget_seconds=1,
@@ -616,7 +688,7 @@ async def test_planner_uses_remaining_deadline_and_returns_failed_warning(engine
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="products", dimensions=["title"]),
             ],
             time_budget_seconds=0.1,
@@ -664,7 +736,7 @@ async def test_deadline_before_graph_assembly_finalizes_strong_edges(
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ],
             time_budget_seconds=1,
@@ -692,7 +764,7 @@ async def test_empty_plan_keeps_relation_table_edge_without_selecting_class_name
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ]
         ),
@@ -730,7 +802,7 @@ async def test_analyzer_excludes_relation_rows_within_one_selected_business_tabl
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ]
         ),
@@ -911,7 +983,7 @@ async def test_deadline_after_structural_discovery_finalizes_loaded_graph(
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ],
             time_budget_seconds=1,
@@ -944,7 +1016,7 @@ async def test_structural_discovery_redacts_internal_error(engine, monkeypatch):
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ]
         ),
@@ -997,7 +1069,7 @@ async def test_internal_structural_deadline_keeps_already_resolved_edges(
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="orders", dimensions=["amount"]),
             ],
             time_budget_seconds=1,
@@ -1037,7 +1109,7 @@ async def test_structural_failure_without_trustworthy_edges_is_failed(
         engine,
         AnalysisScope(
             tables=[
-                TableScope(name="users", dimensions=["name"]),
+                TableScope(name="users", dimensions=["email"]),
                 TableScope(name="products", dimensions=["title"]),
             ]
         ),

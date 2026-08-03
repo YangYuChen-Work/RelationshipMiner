@@ -47,6 +47,7 @@ def create_test_engine() -> Engine:
         Column("id", Integer, primary_key=True),
         Column("user_id", Integer, ForeignKey("users.id")),
         Column("amount", Integer),
+        Column("name", String(100)),
         Column("className", String(500)),
     )
 
@@ -56,6 +57,8 @@ def create_test_engine() -> Engine:
         Column("id", Integer, primary_key=True),
         Column("title", String(200)),
         Column("price", Integer),
+        Column("name", String(200)),
+        Column("class_name", String(500)),
     )
 
     # 包含 `class` 字段的表 — 验证单名 class 也被识别为 class_name 候选
@@ -79,16 +82,18 @@ def create_test_engine() -> Engine:
         )
         conn.execute(
             text(
-                "INSERT INTO orders (id, user_id, amount, className) VALUES "
-                "(1, 1, 100, 'com.example.Order'),"
-                "(2, 2, 200, 'com.example.Order')"
+                "INSERT INTO orders "
+                "(id, user_id, amount, name, className) VALUES "
+                "(1, 1, 100, 'Order 1', 'com.example.Order'),"
+                "(2, 2, 200, 'Order 2', 'com.example.Order')"
             )
         )
         conn.execute(
             text(
-                "INSERT INTO products (id, title, price) VALUES "
-                "(1, 'Widget', 10),"
-                "(2, 'Gadget', 20)"
+                "INSERT INTO products "
+                "(id, title, price, name, class_name) VALUES "
+                "(1, 'Widget', 10, 'Widget', 'com.example.Product'),"
+                "(2, 'Gadget', 20, 'Gadget', 'com.example.Product')"
             )
         )
         conn.commit()

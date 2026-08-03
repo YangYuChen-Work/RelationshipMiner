@@ -46,6 +46,7 @@ def build_graph(
                 id=document.entity_id,
                 table_id=document.table_name,
                 display_name=document.display_name,
+                display_code=document.display_code,
                 class_name=document.class_name,
                 dimensions=document.dimensions,
             )

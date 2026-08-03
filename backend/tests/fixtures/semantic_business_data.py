@@ -60,6 +60,8 @@ def create_semantic_business_engine() -> Engine:
         "requirements",
         metadata,
         Column("id", Integer, primary_key=True),
+        Column("name", String(200), nullable=False),
+        Column("class_name", String(500), nullable=False),
         Column("title", String(200), nullable=False),
         Column("creator_name", String(100), nullable=False),
         Column("creator_employee_no", String(50), nullable=False),
@@ -69,6 +71,8 @@ def create_semantic_business_engine() -> Engine:
         "operations",
         metadata,
         Column("id", Integer, primary_key=True),
+        Column("name", String(200), nullable=False),
+        Column("class_name", String(500), nullable=False),
         Column("action", String(200), nullable=False),
         Column("operator_name", String(100), nullable=False),
         Column("operator_employee_no", String(50), nullable=False),
@@ -78,6 +82,8 @@ def create_semantic_business_engine() -> Engine:
         "processes",
         metadata,
         Column("id", Integer, primary_key=True),
+        Column("name", String(200), nullable=False),
+        Column("class_name", String(500), nullable=False),
         Column("process_name", String(200), nullable=False),
         Column("description", String(500), nullable=False),
         Column("private_note", String(200)),
@@ -86,6 +92,8 @@ def create_semantic_business_engine() -> Engine:
         "parts",
         metadata,
         Column("id", Integer, primary_key=True),
+        Column("name", String(200), nullable=False),
+        Column("class_name", String(500), nullable=False),
         Column("part_name", String(200), nullable=False),
         Column("part_code", String(80), nullable=False),
         Column("description", String(500), nullable=False),
@@ -99,6 +107,8 @@ def create_semantic_business_engine() -> Engine:
             [
                 {
                     "id": 1,
+                    "name": "转子装配质量需求",
+                    "class_name": "com.example.Requirement",
                     "title": "转子装配质量需求",
                     "creator_name": "张三",
                     "creator_employee_no": "EMP-001",
@@ -111,6 +121,8 @@ def create_semantic_business_engine() -> Engine:
             [
                 {
                     "id": 101,
+                    "name": "创建转子装配工单",
+                    "class_name": "com.example.Operation",
                     "action": "创建转子装配工单",
                     "operator_name": "张三",
                     "operator_employee_no": "EMP-001",
@@ -118,6 +130,8 @@ def create_semantic_business_engine() -> Engine:
                 },
                 {
                     "id": 102,
+                    "name": "复核转子装配工艺",
+                    "class_name": "com.example.Operation",
                     "action": "复核转子装配工艺",
                     "operator_name": "张三",
                     "operator_employee_no": "EMP-001",
@@ -125,6 +139,8 @@ def create_semantic_business_engine() -> Engine:
                 },
                 {
                     "id": 103,
+                    "name": "批准转子装配放行",
+                    "class_name": "com.example.Operation",
                     "action": "批准转子装配放行",
                     "operator_name": "张三",
                     "operator_employee_no": "EMP-001",
@@ -132,6 +148,8 @@ def create_semantic_business_engine() -> Engine:
                 },
                 {
                     "id": 104,
+                    "name": "查看转子装配工单",
+                    "class_name": "com.example.Operation",
                     "action": "查看转子装配工单",
                     "operator_name": "张三",
                     "operator_employee_no": "EMP-999",
@@ -144,6 +162,8 @@ def create_semantic_business_engine() -> Engine:
             [
                 {
                     "id": 10,
+                    "name": "转子装配工艺",
+                    "class_name": "com.example.Process",
                     "process_name": "转子装配工艺",
                     "description": "依次安装转轴、轴承与转子铁芯，并完成动平衡检查。",
                     "private_note": "未选择的工艺内部备注",
@@ -155,6 +175,8 @@ def create_semantic_business_engine() -> Engine:
             [
                 {
                     "id": 201,
+                    "name": "转轴",
+                    "class_name": "com.example.Part",
                     "part_name": "转轴",
                     "part_code": "RTR-SHAFT-01",
                     "description": "转子装配使用的传动转轴。",
@@ -162,6 +184,8 @@ def create_semantic_business_engine() -> Engine:
                 },
                 {
                     "id": 202,
+                    "name": "轴承",
+                    "class_name": "com.example.Part",
                     "part_name": "轴承",
                     "part_code": "RTR-BEARING-02",
                     "description": "转子装配使用的支撑轴承。",
@@ -169,6 +193,8 @@ def create_semantic_business_engine() -> Engine:
                 },
                 {
                     "id": 203,
+                    "name": "转子铁芯",
+                    "class_name": "com.example.Part",
                     "part_name": "转子铁芯",
                     "part_code": "RTR-CORE-03",
                     "description": "转子装配使用的叠片铁芯。",
@@ -176,6 +202,8 @@ def create_semantic_business_engine() -> Engine:
                 },
                 {
                     "id": 204,
+                    "name": "转子装配工艺卡片",
+                    "class_name": "com.example.Part",
                     "part_name": "转子装配工艺卡片",
                     "part_code": "DOC-ROTOR-99",
                     "description": "记录转子装配工艺的纸质文件，不是装配零件。",

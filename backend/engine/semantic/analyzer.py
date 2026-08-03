@@ -16,6 +16,7 @@ from .corpus import (
     build_entity_documents,
     group_documents_by_signature,
     load_scoped_records,
+    required_field_names,
 )
 from .deadline import DeadlineExceeded
 from .deterministic import build_fk_edges, build_unique_identifier_edges
@@ -211,34 +212,46 @@ class RelationshipAnalyzer:
             warnings.append("Schema analysis failed (internal_error).")
             return self._empty_failed(diagnostics, warnings)
 
-        class_name_fields = {
-            name: next(
-                (
-                    column.name
-                    for column in schema.columns
-                    if column.is_class_name
-                ),
-                None,
+        selected_schemas = [
+            schema_result.tables[table_scope.name]
+            for table_scope in scope.tables
+        ]
+        if any(
+            not any(column.is_name for column in schema.columns)
+            for schema in selected_schemas
+        ):
+            warnings.append("缺少业务名称字段。")
+        if any(
+            not any(column.is_class_name for column in schema.columns)
+            for schema in selected_schemas
+        ):
+            warnings.append("缺少对象类型信息，无法进行主要关系判断。")
+        if warnings:
+            return self._empty_failed(diagnostics, warnings)
+
+        def auxiliary_dimensions(table_scope: Any) -> list[str]:
+            schema = schema_result.tables[table_scope.name]
+            support_fields = set(schema.primary_keys)
+            support_fields.update(
+                column.name
+                for column in schema.columns
+                if column.is_name or column.is_class_name
             )
-            for name, schema in schema_result.tables.items()
-        }
+            for foreign_key in schema_result.all_foreign_keys:
+                if foreign_key.source_table == table_scope.name:
+                    support_fields.update(foreign_key.source_columns)
+                if foreign_key.target_table == table_scope.name:
+                    support_fields.update(foreign_key.target_columns)
+            return [
+                name
+                for name in table_scope.dimensions
+                if name not in support_fields
+            ]
+
         effective_scope = AnalysisScope(
             tables=[
                 table_scope.model_copy(
-                    update={
-                        "dimensions": [
-                            name
-                            for name in table_scope.dimensions
-                            if name not in schema_result.tables[table_scope.name].primary_keys
-                            and not any(
-                                name in foreign_key.source_columns
-                                for foreign_key in schema_result.tables[
-                                    table_scope.name
-                                ].foreign_keys
-                            )
-                            and name != class_name_fields[table_scope.name]
-                        ]
-                    }
+                    update={"dimensions": auxiliary_dimensions(table_scope)}
                 )
                 for table_scope in scope.tables
             ],
@@ -272,9 +285,22 @@ class RelationshipAnalyzer:
         documents = build_entity_documents(
             records,
             effective_scope,
-            schema_result.pk_metadata,
-            class_name_fields,
+            schema_result,
         )
+        has_blank_name = False
+        for table_scope in effective_scope.tables:
+            name_field, _ = required_field_names(
+                schema_result.tables[table_scope.name]
+            )
+            if any(
+                row.get(name_field) is None
+                or not str(row[name_field]).strip()
+                for row in records.get(table_scope.name, [])
+            ):
+                has_blank_name = True
+                break
+        if has_blank_name:
+            warnings.append("部分对象缺少业务名称。")
         signature_groups = group_documents_by_signature(documents)
         groups_by_representative = {
             group.representative.entity_id: group for group in signature_groups
@@ -606,6 +632,9 @@ def _safe_warnings(warnings: list[str]) -> list[str]:
         elif warning.endswith("candidate groups did not complete judgement."):
             normalized = _SAFE_INCOMPLETE_JUDGEMENT_WARNING
         elif warning in {
+            "缺少业务名称字段。",
+            "缺少对象类型信息，无法进行主要关系判断。",
+            "部分对象缺少业务名称。",
             "Schema analysis failed (internal_error).",
             "Relationship planning failed (internal_error).",
             "Structural relation discovery failed (internal_error).",
