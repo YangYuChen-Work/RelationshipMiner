@@ -51,6 +51,66 @@ class TestListTables:
         assert secret not in response.text
 
 
+class TestListTableSummaries:
+    """GET /api/table-summaries — non-blocking business summaries."""
+
+    def test_inference_failure_returns_safe_fallbacks(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        import routers.tables as tables_router
+
+        class FailingLlm:
+            async def complete_json(self, **_kwargs):
+                raise RuntimeError("offline; api_key=sk-do-not-leak")
+
+        monkeypatch.setattr(tables_router, "DeepSeekJsonAdapter", FailingLlm)
+
+        response = client.get("/api/table-summaries")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert {item["table_name"] for item in payload} == {
+            "orders",
+            "products",
+            "users",
+        }
+        assert all(item["status"] == "fallback" for item in payload)
+        assert all(
+            set(item)
+            == {
+                "table_name",
+                "semantic_name",
+                "row_count",
+                "name_samples",
+                "status",
+            }
+            for item in payload
+        )
+        assert "offline" not in response.text
+        assert "sk-do-not-leak" not in response.text
+        assert "class_name_samples" not in response.text
+        assert "column_names" not in response.text
+
+    def test_database_failure_keeps_safe_503_contract(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        import routers.tables as tables_router
+
+        secret = "password=do-not-leak"
+
+        def fail_to_connect(_engine):
+            raise RuntimeError(secret)
+
+        monkeypatch.setattr(tables_router, "get_table_names", fail_to_connect)
+        safe_client = TestClient(client.app, raise_server_exceptions=False)
+
+        response = safe_client.get("/api/table-summaries")
+
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "database_unavailable"
+        assert secret not in response.text
+
+
 class TestListFields:
     """GET /api/tables/{table_name}/fields — 字段列表端点测试。"""
 

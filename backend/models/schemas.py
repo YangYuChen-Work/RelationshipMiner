@@ -1,5 +1,7 @@
 """Pydantic 数据模型。"""
 
+from typing import Literal
+
 from pydantic import AliasChoices, BaseModel, Field
 
 
@@ -24,6 +26,16 @@ class TableColumnsResponse(BaseModel):
 
     table_name: str
     columns: list[ColumnInfo]
+
+
+class TableBusinessSummaryResponse(BaseModel):
+    """Response-safe business summary for one database table."""
+
+    table_name: str
+    semantic_name: str
+    row_count: int
+    name_samples: list[str]
+    status: Literal["inferred", "fallback"]
 
 
 class ErrorResponse(BaseModel):

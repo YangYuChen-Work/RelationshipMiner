@@ -1,11 +1,30 @@
 """表与字段浏览 API。"""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
-from database import get_engine, get_table_names, get_table_columns
-from models.schemas import TableInfo, ColumnInfo, TableColumnsResponse
+from database import (
+    get_engine,
+    get_table_columns,
+    get_table_names,
+    get_table_summary_input,
+)
+from engine.deepseek_client import DeepSeekJsonAdapter
+from engine.table_semantics import (
+    TableBusinessSummary,
+    TableSummaryInput,
+    fallback_semantic_name,
+    infer_table_summaries,
+)
+from models.schemas import (
+    ColumnInfo,
+    TableBusinessSummaryResponse,
+    TableColumnsResponse,
+    TableInfo,
+)
 
 router = APIRouter(prefix="/api", tags=["tables"])
 
@@ -24,6 +43,33 @@ def _database_unavailable() -> HTTPException:
     )
 
 
+def _collect_table_summary_inputs(engine: Engine) -> list[TableSummaryInput]:
+    inputs: list[TableSummaryInput] = []
+    for table_name in get_table_names(engine):
+        try:
+            inputs.append(get_table_summary_input(engine, table_name))
+        except ValueError:
+            # Such tables stay visible through /api/tables, but cannot
+            # provide the two required business-role samples.
+            continue
+    return inputs
+
+
+def _fallback_summaries(
+    inputs: list[TableSummaryInput],
+) -> list[TableBusinessSummary]:
+    return [
+        TableBusinessSummary(
+            table_name=summary_input.table_name,
+            semantic_name=fallback_semantic_name(summary_input.table_name),
+            row_count=summary_input.row_count,
+            name_samples=summary_input.name_samples,
+            status="fallback",
+        )
+        for summary_input in inputs
+    ]
+
+
 @router.get("/tables", response_model=list[TableInfo])
 def list_tables(engine: Engine = Depends(get_engine)):
     """返回数据库中所有表名列表。"""
@@ -32,6 +78,28 @@ def list_tables(engine: Engine = Depends(get_engine)):
         return [TableInfo(name=n) for n in names]
     except (SQLAlchemyError, RuntimeError) as exc:
         raise _database_unavailable() from exc
+
+
+@router.get(
+    "/table-summaries",
+    response_model=list[TableBusinessSummaryResponse],
+)
+async def list_table_summaries(engine: Engine = Depends(get_engine)):
+    """Return bounded summaries without exposing inference failures."""
+
+    try:
+        inputs = await asyncio.to_thread(_collect_table_summary_inputs, engine)
+    except (SQLAlchemyError, RuntimeError) as exc:
+        raise _database_unavailable() from exc
+
+    try:
+        summaries = await infer_table_summaries(inputs, DeepSeekJsonAdapter())
+    except Exception:
+        summaries = _fallback_summaries(inputs)
+    return [
+        TableBusinessSummaryResponse(**summary.model_dump())
+        for summary in summaries
+    ]
 
 
 @router.get(
