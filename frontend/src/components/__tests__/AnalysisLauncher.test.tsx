@@ -12,6 +12,7 @@ const selectedTable = {
       is_name: false,
       is_class_name: false,
       is_primary_key: true,
+      is_foreign_key: false,
     },
   ],
   selectedFields: new Set(["id"]),

@@ -107,7 +107,7 @@ async def list_table_summaries(engine: Engine = Depends(get_engine)):
     response_model=TableColumnsResponse,
 )
 def list_fields(table_name: str, engine: Engine = Depends(get_engine)):
-    """返回指定表的字段名、类型，并标记 class_name 候选字段。
+    """返回字段类型、业务角色以及主外键浏览元数据。
 
     class_name 候选字段通过约定命名自动识别：
     - `class_name`
@@ -134,6 +134,7 @@ def list_fields(table_name: str, engine: Engine = Depends(get_engine)):
                 is_name=c["is_name"],
                 is_class_name=c["is_class_name"],
                 is_primary_key=c["is_primary_key"],
+                is_foreign_key=c["is_foreign_key"],
             )
             for c in columns_raw
         ]

@@ -11,6 +11,7 @@ const columns = [
     is_name: false,
     is_class_name: false,
     is_primary_key: true,
+    is_foreign_key: false,
   },
   {
     name: "name",
@@ -18,6 +19,7 @@ const columns = [
     is_name: true,
     is_class_name: false,
     is_primary_key: false,
+    is_foreign_key: false,
   },
   {
     name: "class_name",
@@ -25,6 +27,7 @@ const columns = [
     is_name: false,
     is_class_name: true,
     is_primary_key: false,
+    is_foreign_key: false,
   },
   {
     name: "work_center",
@@ -32,6 +35,7 @@ const columns = [
     is_name: false,
     is_class_name: false,
     is_primary_key: false,
+    is_foreign_key: true,
   },
 ];
 
@@ -93,11 +97,17 @@ describe("BusinessDatasetCard", () => {
     for (const type of screen.getAllByText(/^(INTEGER|VARCHAR|TEXT)$/)) {
       expect(type).not.toBeVisible();
     }
+    expect(screen.getByText("主键")).not.toBeVisible();
+    expect(screen.getByText("外键")).not.toBeVisible();
 
     await user.click(screen.getByText("技术信息"));
 
     for (const type of screen.getAllByText(/^(INTEGER|VARCHAR|TEXT)$/)) {
       expect(type).toBeVisible();
     }
+    expect(screen.getByText("主键")).toBeVisible();
+    expect(screen.getByText("外键")).toBeVisible();
+    expect(screen.getByText("主键").closest("details")).not.toBeNull();
+    expect(screen.getByText("外键").closest("details")).not.toBeNull();
   });
 });

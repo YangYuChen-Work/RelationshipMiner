@@ -11,6 +11,7 @@ const columns = [
     is_name: false,
     is_class_name: true,
     is_primary_key: false,
+    is_foreign_key: false,
   },
 ];
 

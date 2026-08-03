@@ -161,6 +161,17 @@ class TestListFields:
         assert columns["email"]["is_primary_key"] is False
         assert columns["class_name"]["is_primary_key"] is False
 
+    def test_marks_foreign_key_constrained_column(self, client: TestClient):
+        """Foreign-key constrained columns are explicit browse metadata."""
+        response = client.get("/api/tables/orders/fields")
+
+        columns = {
+            column["name"]: column for column in response.json()["columns"]
+        }
+        assert columns["user_id"]["is_foreign_key"] is True
+        assert columns["id"]["is_foreign_key"] is False
+        assert columns["amount"]["is_foreign_key"] is False
+
     def test_marks_classname_candidate(self, client: TestClient):
         """className 字段（驼峰命名）应被标记为 is_class_name=True。"""
         response = client.get("/api/tables/orders/fields")

@@ -19,6 +19,7 @@ class ColumnInfo(BaseModel):
     is_name: bool
     is_class_name: bool
     is_primary_key: bool
+    is_foreign_key: bool
 
 
 class TableColumnsResponse(BaseModel):

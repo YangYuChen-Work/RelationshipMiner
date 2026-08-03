@@ -68,7 +68,7 @@ def get_table_columns(
         table_name: 表名。
 
     Returns:
-        列信息列表，每项包含 name、type、is_class_name、is_primary_key 字段。
+        列信息列表，每项包含名称、类型、业务角色和主外键标记。
     """
     inspector = inspect(engine)
     columns = inspector.get_columns(table_name)
@@ -82,6 +82,16 @@ def get_table_columns(
     except Exception:
         primary_key_columns = set()
 
+    # 获取所有外键约束中的本地列名；复合外键的每个约束列都应标记。
+    try:
+        foreign_key_columns = {
+            column_name
+            for constraint in inspector.get_foreign_keys(table_name)
+            for column_name in (constraint.get("constrained_columns") or [])
+        }
+    except Exception:
+        foreign_key_columns = set()
+
     # 约定命名识别 class_name 字段
     result = []
     for col in columns:
@@ -90,6 +100,7 @@ def get_table_columns(
         is_name = is_name_field(name)
         is_class_name = is_class_name_field(name)
         is_primary_key = name in primary_key_columns
+        is_foreign_key = name in foreign_key_columns
         result.append(
             {
                 "name": name,
@@ -97,6 +108,7 @@ def get_table_columns(
                 "is_name": is_name,
                 "is_class_name": is_class_name,
                 "is_primary_key": is_primary_key,
+                "is_foreign_key": is_foreign_key,
             }
         )
     return result

@@ -36,6 +36,44 @@ describe("tables API contracts", () => {
     ]);
     expect(fetch).toHaveBeenCalledWith("/api/table-summaries");
   });
+
+  it("returns primary-key and foreign-key browse metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          table_name: "orders",
+          columns: [
+            {
+              name: "user_id",
+              type: "INTEGER",
+              is_name: false,
+              is_class_name: false,
+              is_primary_key: false,
+              is_foreign_key: true,
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    expect(await fetchTableColumns("orders")).toEqual({
+      table_name: "orders",
+      columns: [
+        {
+          name: "user_id",
+          type: "INTEGER",
+          is_name: false,
+          is_class_name: false,
+          is_primary_key: false,
+          is_foreign_key: true,
+        },
+      ],
+    });
+  });
 });
 
 describe("tables API errors", () => {

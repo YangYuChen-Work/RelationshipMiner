@@ -13,6 +13,7 @@ const columns = [
     is_name: false,
     is_class_name: false,
     is_primary_key: true,
+    is_foreign_key: false,
   },
   {
     name: "name",
@@ -20,6 +21,7 @@ const columns = [
     is_name: true,
     is_class_name: false,
     is_primary_key: false,
+    is_foreign_key: false,
   },
   {
     name: "class_name",
@@ -27,6 +29,7 @@ const columns = [
     is_name: false,
     is_class_name: true,
     is_primary_key: false,
+    is_foreign_key: false,
   },
   {
     name: "email",
@@ -34,6 +37,7 @@ const columns = [
     is_name: false,
     is_class_name: false,
     is_primary_key: false,
+    is_foreign_key: false,
   },
 ];
 

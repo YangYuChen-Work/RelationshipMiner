@@ -208,7 +208,19 @@ export default function BusinessDatasetCard({
                   className="flex items-center justify-between gap-4 text-xs"
                 >
                   <dt className="font-mono text-gray-600">{column.name}</dt>
-                  <dd className="font-mono text-gray-400">{column.type}</dd>
+                  <dd className="flex flex-wrap items-center justify-end gap-1.5">
+                    <span className="font-mono text-gray-400">{column.type}</span>
+                    {column.is_primary_key && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 font-sans font-medium text-amber-800">
+                        主键
+                      </span>
+                    )}
+                    {column.is_foreign_key && (
+                      <span className="rounded bg-cyan-100 px-1.5 py-0.5 font-sans font-medium text-cyan-800">
+                        外键
+                      </span>
+                    )}
+                  </dd>
                 </div>
               ))}
             </dl>

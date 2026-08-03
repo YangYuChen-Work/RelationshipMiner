@@ -10,6 +10,7 @@ export interface ColumnInfo {
   is_name: boolean;
   is_class_name: boolean;
   is_primary_key: boolean;
+  is_foreign_key: boolean;
 }
 
 export interface TableBusinessSummary {
