@@ -716,6 +716,42 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
   });
 
+  it("announces a semantic dataset name for a production-shaped table target", async () => {
+    const rawTableId = "satellite_assembly_records";
+    act(() => {
+      setGraph({
+        table_nodes: [{
+          id: rawTableId,
+          display_name: rawTableId,
+          entity_count: 0,
+        }],
+        entity_nodes: [],
+        table_edges: [],
+        entity_edges: [],
+      });
+      useAnalysisStore.setState({
+        tableSummaries: new Map([[
+          rawTableId,
+          {
+            table_name: rawTableId,
+            semantic_name: "卫星天线装配与检验数据",
+            row_count: 0,
+            name_samples: [],
+            status: "inferred",
+          },
+        ]]),
+      });
+    });
+    const { container } = render(<GraphCanvas />);
+    await ready();
+
+    fireEvent.focus(container.querySelector("canvas")!);
+
+    const announcement = container.querySelector("[aria-live='polite']")!;
+    expect(announcement).toHaveTextContent("卫星天线装配与检验数据，表");
+    expect(announcement).not.toHaveTextContent(rawTableId);
+  });
+
   it("never exposes a hidden isolated entity as a keyboard target", async () => {
     const isolatedGraph: SemanticGraphData = {
       table_nodes: [{ id: "bulk", display_name: "Bulk", entity_count: 3 }],

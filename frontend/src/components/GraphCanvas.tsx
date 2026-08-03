@@ -735,18 +735,17 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
 
   const keyboardTargets = useCallback((): KeyboardTarget[] => {
     if (!projectedGraph || !layout) return [];
-    const tableData = new Map(
-      projectedGraph.table_nodes.map((table) => [table.id, table]),
+    const projectedTableIds = new Set(
+      projectedGraph.table_nodes.map((table) => table.id),
     );
     const projectedEntityIds = new Set(
       projectedGraph.entity_nodes.map((entity) => entity.id),
     );
     return [
       ...layout.tableNodes.flatMap((node) => {
-        const table = tableData.get(node.id);
-        return table ? [{
-        hit: { kind: "table-node" as const, id: node.id },
-          label: `${table.display_name}，表`,
+        return projectedTableIds.has(node.id) ? [{
+          hit: { kind: "table-node" as const, id: node.id },
+          label: `${tablePresentations.get(node.id) ?? "业务数据集"}，表`,
           x: node.x,
           y: node.y,
         }] : [];
@@ -755,7 +754,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         if (!projectedEntityIds.has(node.id)) return [];
         const presentation = businessPresentations.get(node.id);
         return presentation ? [{
-        hit: { kind: "entity-node" as const, id: node.id },
+          hit: { kind: "entity-node" as const, id: node.id },
           label: `${presentation.accessibleLabel}，实体`,
           x: node.x,
           y: node.y,
@@ -764,7 +763,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     ].sort((left, right) =>
       left.y - right.y || left.x - right.x || compareText(left.hit.id, right.hit.id),
     );
-  }, [businessPresentations, layout, projectedGraph]);
+  }, [businessPresentations, layout, projectedGraph, tablePresentations]);
 
   const revealKeyboardEntity = useCallback((target: KeyboardTarget) => {
     if (
