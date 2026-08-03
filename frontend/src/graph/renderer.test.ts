@@ -215,7 +215,7 @@ describe("drawGraphScene", () => {
     expect(finalArrowOrder).toBeGreaterThan(finalNodeOrder);
   });
 
-  it("draws both active-node label lines and paints focused relation label backing first", () => {
+  it("draws the active-node business label without technical secondary text and paints focused relation label backing first", () => {
     const { context, records } = recordingContext();
 
     drawGraphScene(context, scene(), options("a"));
@@ -224,7 +224,7 @@ describe("drawGraphScene", () => {
       .filter((record) => record.kind === "fillText")
       .map((record) => record.text);
     expect(texts).toContain("Alpha");
-    expect(texts.some((text) => text?.startsWith("Source; "))).toBe(true);
+    expect(texts.some((text) => text?.includes("Source"))).toBe(false);
     const relationTextIndex = records.findIndex((record) =>
       record.kind === "fillText" && record.text === "feeds"
     );
@@ -236,13 +236,13 @@ describe("drawGraphScene", () => {
   });
 
   it.each([
-    ["connected", "a", "Alpha", "Source; "],
-    ["isolated", "isolated", "Solo", "Isolated; "],
-  ])("draws both presentation lines for an active %s overview node", (
+    ["connected", "a", "Alpha", "Source"],
+    ["isolated", "isolated", "Solo", "Isolated"],
+  ])("draws only the business presentation line for a unique active %s overview node", (
     _kind,
     nodeId,
     primary,
-    secondaryPrefix,
+    technicalText,
   ) => {
     const { context, records } = recordingContext();
 
@@ -252,7 +252,41 @@ describe("drawGraphScene", () => {
       .filter((record) => record.kind === "fillText")
       .map((record) => record.text);
     expect(texts).toContain(primary);
-    expect(texts.some((text) => text?.startsWith(secondaryPrefix))).toBe(true);
+    expect(texts.some((text) => text?.includes(technicalText))).toBe(false);
+  });
+
+  it("draws the business-code line for an active duplicate name", () => {
+    const duplicateGraph: SemanticGraphData = {
+      ...graph,
+      entity_nodes: graph.entity_nodes.map((entity) => {
+        if (entity.id === "a") {
+          return { ...entity, display_code: "ALPHA-A" };
+        }
+        if (entity.id === "b") {
+          return {
+            ...entity,
+            display_name: "Alpha",
+            display_code: "ALPHA-B",
+          };
+        }
+        return entity;
+      }),
+    };
+    const duplicateScene = buildScene({
+      graph: duplicateGraph,
+      layout: computeGroupedLayout(duplicateGraph, { width: 960, height: 600 }),
+      transform: { k: 0.2, x: 120, y: 80 },
+      confidenceThreshold: 0,
+    });
+    const { context, records } = recordingContext();
+
+    drawGraphScene(context, duplicateScene, options("a"));
+
+    const texts = records
+      .filter((record) => record.kind === "fillText")
+      .map((record) => record.text);
+    expect(texts).toContain("Alpha");
+    expect(texts).toContain("ALPHA-A");
   });
 
   it("keeps both selected table-relationship endpoints fully focused", () => {

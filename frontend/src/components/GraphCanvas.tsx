@@ -26,7 +26,8 @@ import {
 } from "../graph/renderer";
 import { buildScene, type GraphTransform, type RenderScene } from "../graph/scene";
 import { hitTest, type HitTarget } from "../graph/hitTest";
-import { visibleEntityRelations } from "../graph/semantics";
+import { buildBusinessPresentationIndex } from "../graph/businessPresentation";
+import { computeEntityDegrees, visibleEntityRelations } from "../graph/semantics";
 import { useAnalysisStore } from "../store/analysis";
 
 const FALLBACK_WIDTH = 960;
@@ -109,6 +110,14 @@ function fitTransform(
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function normalizedSearchQuery(value: string): string {
+  return value
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLocaleLowerCase();
 }
 
 function getSize(element: HTMLElement) {
@@ -197,6 +206,15 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
 
   const graph = useAnalysisStore((state) => state.graph);
   const showIsolatedNodes = useAnalysisStore((state) => state.showIsolatedNodes);
+  const businessPresentations = useMemo(
+    () => graph
+      ? buildBusinessPresentationIndex(
+        graph.entity_nodes,
+        computeEntityDegrees(graph.entity_nodes, graph.entity_edges),
+      )
+      : new Map(),
+    [graph],
+  );
   const projectedGraph = useMemo(
     () => graph ? projectGraph(graph, showIsolatedNodes) : null,
     [graph, showIsolatedNodes],
@@ -241,10 +259,11 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   selectedEntityEdgeRef.current = selectedEntityEdgeId;
   selectedTableEdgeRef.current = selectedTableEdgeId;
   const searchableEntities = useMemo(
-    () => [...(projectedGraph?.entity_nodes ?? [])].sort((left, right) =>
-      compareText(left.id, right.id),
-    ),
-    [projectedGraph],
+    () => (projectedGraph?.entity_nodes ?? []).flatMap((entity) => {
+      const presentation = businessPresentations.get(entity.id);
+      return presentation ? [{ entity, presentation }] : [];
+    }).sort((left, right) => compareText(left.entity.id, right.entity.id)),
+    [businessPresentations, projectedGraph],
   );
 
   const acquireCanvasContext = useCallback(
@@ -330,6 +349,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       layout: sourceLayout,
       transform: transformRef.current,
       confidenceThreshold: confidenceThresholdRef.current,
+      presentations: businessPresentations,
     });
     sceneRef.current = nextScene;
     drawnGenerationRef.current = null;
@@ -345,7 +365,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     setSceneGeneration(generation);
     setReadyGeneration(null);
     invalidate(generation);
-  }, [invalidate]);
+  }, [businessPresentations, invalidate]);
 
   const retireScene = useCallback(() => {
     const generation = sceneGenerationRef.current + 1;
@@ -709,9 +729,6 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     const tableData = new Map(
       projectedGraph.table_nodes.map((table) => [table.id, table]),
     );
-    const entityData = new Map(
-      projectedGraph.entity_nodes.map((entity) => [entity.id, entity]),
-    );
     return [
       ...layout.tableNodes.flatMap((node) => {
         const table = tableData.get(node.id);
@@ -723,10 +740,10 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         }] : [];
       }),
       ...layout.entityNodes.flatMap((node) => {
-        const entity = entityData.get(node.id);
-        return entity ? [{
+        const presentation = businessPresentations.get(node.id);
+        return presentation ? [{
         hit: { kind: "entity-node" as const, id: node.id },
-          label: `${entity.display_name}，实体`,
+          label: `${presentation.accessibleLabel}，实体`,
           x: node.x,
           y: node.y,
         }] : [];
@@ -734,7 +751,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     ].sort((left, right) =>
       left.y - right.y || left.x - right.x || compareText(left.hit.id, right.hit.id),
     );
-  }, [layout, projectedGraph]);
+  }, [businessPresentations, layout, projectedGraph]);
 
   const revealKeyboardEntity = useCallback((target: KeyboardTarget) => {
     if (
@@ -786,36 +803,40 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   }, [keyboardTargets, setKeyboardTarget]);
 
   const locateEntity = useCallback(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = normalizedSearchQuery(searchQuery);
     if (!query || !layout) {
       setKeyboardAnnouncement(query ? `未找到实体：${searchQuery.trim()}` : "请输入实体名称或 ID");
       return;
     }
     const rankedMatches = [
-      (entity: (typeof searchableEntities)[number]) =>
-        entity.id.toLowerCase() === query,
-      (entity: (typeof searchableEntities)[number]) =>
-        entity.display_name.toLowerCase() === query,
-      (entity: (typeof searchableEntities)[number]) =>
-        entity.id.toLowerCase().startsWith(query) ||
-        entity.display_name.toLowerCase().startsWith(query),
-      (entity: (typeof searchableEntities)[number]) =>
-        entity.id.toLowerCase().includes(query) ||
-        entity.display_name.toLowerCase().includes(query),
+      (candidate: (typeof searchableEntities)[number]) =>
+        candidate.presentation.searchText === query,
+      (candidate: (typeof searchableEntities)[number]) =>
+        candidate.presentation.searchText.startsWith(query),
+      (candidate: (typeof searchableEntities)[number]) =>
+        candidate.presentation.searchText.includes(query),
     ];
-    const entity = rankedMatches
+    const businessMatch = rankedMatches
       .map((matches) => searchableEntities.find(matches))
       .find((candidate) => candidate !== undefined);
+    const technicalCompatibilityMatch = businessMatch
+      ? undefined
+      : searchableEntities.find(({ entity }) =>
+        normalizedSearchQuery(entity.id) === query
+      );
+    const match = businessMatch ?? technicalCompatibilityMatch;
+    const entity = match?.entity;
+    const presentation = match?.presentation;
     const node = entity
       ? layout.entityNodes.find((candidate) => candidate.id === entity.id)
       : undefined;
-    if (!entity || !node) {
+    if (!entity || !presentation || !node) {
       setKeyboardAnnouncement(`未找到实体：${searchQuery.trim()}`);
       return;
     }
     setKeyboardTarget({
       hit: { kind: "entity-node", id: entity.id },
-      label: `${entity.display_name}，实体`,
+      label: `${presentation.accessibleLabel}，实体`,
       x: node.x,
       y: node.y,
     });

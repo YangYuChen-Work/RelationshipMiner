@@ -328,8 +328,10 @@ describe("hitTest", () => {
         className: null,
         presentation: {
           primary: "Malformed",
-          secondary: "0 个关系",
-          accessibleLabel: "Malformed; 0 个关系",
+          secondary: "",
+          accessibleLabel: "Malformed；0 个关系",
+          searchText: "malformed",
+          isDuplicate: false,
         },
         visibleDegree: 0,
       }],

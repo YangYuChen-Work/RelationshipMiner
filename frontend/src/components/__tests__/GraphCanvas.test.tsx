@@ -583,6 +583,71 @@ describe("GraphCanvas", () => {
     );
   });
 
+  it("searches and announces a duplicate code from the complete snapshot after filtering", async () => {
+    const duplicateGraph: SemanticGraphData = {
+      ...graph,
+      entity_nodes: graph.entity_nodes.map((entity) => {
+        if (entity.id === "a") {
+          return {
+            ...entity,
+            display_name: "重复业务对象",
+            display_code: "OBJ-A",
+          };
+        }
+        if (entity.id === "b") {
+          return {
+            ...entity,
+            display_name: "重复业务对象",
+            display_code: "OBJ-B",
+          };
+        }
+        return entity;
+      }),
+    };
+    act(() => setGraph(duplicateGraph));
+    const { container } = render(<GraphCanvas />);
+    await ready();
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    fireEvent.change(search, { target: { value: "obj-a" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
+    expect(container.querySelector("[aria-live='polite']")).toHaveTextContent(
+      "重复业务对象；OBJ-A",
+    );
+  });
+
+  it("uses the shared legacy business name for search and keyboard announcements", async () => {
+    const legacyGraph: SemanticGraphData = {
+      ...graph,
+      entity_nodes: graph.entity_nodes.map((entity) =>
+        entity.id === "a"
+          ? {
+            ...entity,
+            display_name: "0",
+            dimensions: { name: "旧快照业务对象" },
+          }
+          : entity
+      ),
+    };
+    act(() => setGraph(legacyGraph));
+    const { container } = render(<GraphCanvas />);
+    await ready();
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    fireEvent.change(search, { target: { value: "旧快照业务" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
+    expect(container.querySelector("[aria-live='polite']")).toHaveTextContent(
+      "旧快照业务对象",
+    );
+    expect(container.querySelector("[aria-live='polite']")).not.toHaveTextContent(
+      "当前目标：0，实体",
+    );
+  });
+
   it("renders empty, complete, partial, and failed analysis states", async () => {
     act(() => setGraph(null));
     const { rerender } = render(<GraphCanvas />);

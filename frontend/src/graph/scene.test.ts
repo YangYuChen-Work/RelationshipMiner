@@ -86,10 +86,10 @@ describe("buildScene", () => {
       work.layerOpacity.tableEdges,
     );
     expect(detail.entityEdges[0].direction).toBe("forward");
-    expect(detail.entityLabels[0].secondary).toContain("关系");
+    expect(detail.entityLabels[0].secondary).toBe("");
   });
 
-  it("retains a meaningful presentation and resolves mixed directions as undirected", () => {
+  it("rejects auxiliary values as primary names and resolves mixed directions as undirected", () => {
     const mixedGraph: SemanticGraphData = {
       ...graph,
       entity_nodes: [{
@@ -108,9 +108,40 @@ describe("buildScene", () => {
 
     const scene = buildScene({ ...input(0.8), graph: mixedGraph });
     expect(scene.entityDots.find((node) => node.id === "order-1")?.presentation?.primary)
-      .toBe("ORDER-001");
+      .toBe("未命名对象");
     expect(scene.entityEdges.find((edge) => edge.id === "weak-edge")?.direction)
       .toBe("undirected");
+  });
+
+  it("uses complete graph duplicates even when only one duplicate has layout", () => {
+    const duplicateGraph: SemanticGraphData = {
+      table_nodes: [{ id: "objects", display_name: "Objects", entity_count: 2 }],
+      entity_nodes: [
+        { id: "objects:a", table_id: "objects", display_name: "重复对象", display_code: "OBJ-A", class_name: "TechnicalA", dimensions: {} },
+        { id: "objects:b", table_id: "objects", display_name: "重复对象", display_code: "OBJ-B", class_name: "TechnicalB", dimensions: {} },
+      ],
+      table_edges: [],
+      entity_edges: [],
+    };
+    const filteredLayout: GraphLayout = {
+      tableNodes: [{ id: "objects", x: 0, y: 0 }],
+      entityNodes: [{ id: "objects:a", tableId: "objects", x: 0, y: 50 }],
+      tableEdges: [],
+      entityEdges: [],
+    };
+
+    const scene = buildScene({
+      graph: duplicateGraph,
+      layout: filteredLayout,
+      transform: { k: 1, x: 0, y: 0 },
+      confidenceThreshold: 0,
+    });
+
+    expect(scene.entityDots[0].presentation).toMatchObject({
+      primary: "重复对象",
+      secondary: "OBJ-A",
+      isDuplicate: true,
+    });
   });
 
   it("separates parallel scene edges deterministically including opposite directions", () => {

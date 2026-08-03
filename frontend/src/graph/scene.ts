@@ -21,7 +21,10 @@ import {
   type ScreenBounds,
 } from "./edgeGeometry";
 import { createHitIndex, type SceneHitIndex } from "./hitTest";
-import { presentEntity, type EntityPresentation } from "./presentation";
+import {
+  buildBusinessPresentationIndex,
+  type BusinessEntityPresentation,
+} from "./businessPresentation";
 import {
   computeEntityDegrees,
   visibleEntityRelations,
@@ -96,7 +99,7 @@ export interface SceneNode {
 export interface SceneEntityNode extends SceneNode {
   tableId: string;
   className: string | null;
-  presentation: EntityPresentation;
+  presentation: BusinessEntityPresentation;
   visibleDegree: number;
 }
 
@@ -155,6 +158,7 @@ export interface BuildSceneInput {
   layout: GraphLayout;
   transform: GraphTransform;
   confidenceThreshold: number;
+  presentations?: ReadonlyMap<string, BusinessEntityPresentation>;
 }
 
 function validPoint(point: WorldPoint): boolean {
@@ -533,6 +537,10 @@ export function buildScene(input: BuildSceneInput): RenderScene {
     input.graph.entity_nodes,
     renderableVisibleEntityEdges,
   );
+  const presentations = input.presentations ?? buildBusinessPresentationIndex(
+    input.graph.entity_nodes,
+    degrees,
+  );
   const tableNodes = input.layout.tableNodes.flatMap((node) => {
     const data = tableData.get(node.id);
     const command = data
@@ -577,7 +585,8 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       const data = entityData.get(node.id);
       if (!data) return [];
       const visibleDegree = degrees.get(node.id) ?? 0;
-      const presentation = presentEntity(data, visibleDegree);
+      const presentation = presentations.get(data.id);
+      if (!presentation) return [];
       const command = nodeCommand(
         node,
         presentation.primary,

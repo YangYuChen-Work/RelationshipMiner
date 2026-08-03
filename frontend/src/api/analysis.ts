@@ -17,6 +17,7 @@ export interface EntityNodeData {
   id: string;
   table_id: string;
   display_name: string;
+  display_code?: string | null;
   class_name: string | null;
   dimensions: Record<string, unknown>;
 }
