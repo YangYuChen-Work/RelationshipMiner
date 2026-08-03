@@ -15,6 +15,7 @@ import {
   confidenceBand,
 } from "../graph/businessRelations";
 import { computeEntityDegrees } from "../graph/semantics";
+import { buildBusinessTablePresentationIndex } from "../graph/businessTables";
 import { useAnalysisStore } from "../store/analysis";
 
 function fieldValue(value: unknown): string {
@@ -212,16 +213,18 @@ function TableEdgeDetails({
   edge,
   graph,
   presentations,
+  tablePresentations,
 }: {
   edge: TableEdgeData;
   graph: SemanticGraphData;
   presentations: ReadonlyMap<string, BusinessEntityPresentation>;
+  tablePresentations: ReadonlyMap<string, string>;
 }) {
   const selectEntityEdge = useAnalysisStore((state) => state.selectEntityEdge);
   const requestNodeFocus = useAnalysisStore((state) => state.requestNodeFocus);
   const edges = new Map(graph.entity_edges.map((entityEdge) => [entityEdge.id, entityEdge]));
-  const sourceTable = graph.table_nodes.find((table) => table.id === edge.source_table)?.display_name ?? edge.source_table;
-  const targetTable = graph.table_nodes.find((table) => table.id === edge.target_table)?.display_name ?? edge.target_table;
+  const sourceTable = tablePresentations.get(edge.source_table) ?? "业务数据集";
+  const targetTable = tablePresentations.get(edge.target_table) ?? "业务数据集";
   const supportingEdges = edge.supporting_entity_edges.flatMap((edgeId) => {
     const supporting = edges.get(edgeId);
     return supporting ? [supporting] : [];
@@ -234,7 +237,7 @@ function TableEdgeDetails({
   return (
     <div className="space-y-5 px-5 py-5">
       <section>
-        <h2 className="text-sm font-semibold text-slate-100">表关系汇总</h2>
+        <h2 className="text-sm font-semibold text-slate-100">业务数据关系</h2>
         <p className="mt-2 text-sm text-slate-300">{sourceTable} → {targetTable}</p>
       </section>
       <dl className="grid grid-cols-2 gap-3 rounded-lg border border-slate-700/70 p-3 text-sm">
@@ -364,6 +367,7 @@ export default function NodeDetailPanel() {
   const selectedNodeId = useAnalysisStore((state) => state.selectedNodeId);
   const selectedEntityEdgeId = useAnalysisStore((state) => state.selectedEntityEdgeId);
   const selectedTableEdgeId = useAnalysisStore((state) => state.selectedTableEdgeId);
+  const tableSummaries = useAnalysisStore((state) => state.tableSummaries);
   const node = graph?.entity_nodes.find((item) => item.id === selectedNodeId);
   const entityEdge = graph?.entity_edges.find((edge) => edge.id === selectedEntityEdgeId);
   const tableEdge = graph?.table_edges.find((edge) => edge.id === selectedTableEdgeId);
@@ -374,6 +378,9 @@ export default function NodeDetailPanel() {
       computeEntityDegrees(graph.entity_nodes, graph.entity_edges),
     )
     : new Map<string, BusinessEntityPresentation>();
+  const tablePresentations = graph
+    ? buildBusinessTablePresentationIndex(graph.table_nodes, tableSummaries)
+    : new Map<string, string>();
 
   return (
     <aside className={`${hasSelection ? "fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:w-auto lg:max-w-none lg:shadow-none" : "hidden lg:block"} min-h-0 overflow-y-auto border-l border-slate-700/70 bg-[#101c2a]`} aria-label="关系详情检查器">
@@ -384,7 +391,12 @@ export default function NodeDetailPanel() {
       {graph && entityEdge ? (
         <EntityEdgeDetails edge={entityEdge} graph={graph} presentations={presentations} />
       ) : graph && tableEdge ? (
-        <TableEdgeDetails edge={tableEdge} graph={graph} presentations={presentations} />
+        <TableEdgeDetails
+          edge={tableEdge}
+          graph={graph}
+          presentations={presentations}
+          tablePresentations={tablePresentations}
+        />
       ) : graph && node ? (
         <NodeDetails node={node} graph={graph} presentations={presentations} />
       ) : (

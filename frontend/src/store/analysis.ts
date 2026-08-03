@@ -36,7 +36,9 @@ export function isRequiredBusinessColumn(column: ColumnInfo): boolean {
 }
 
 export function isAuxiliaryColumn(column: ColumnInfo): boolean {
-  return !isRequiredBusinessColumn(column) && !column.is_primary_key;
+  return !isRequiredBusinessColumn(column) &&
+    !column.is_primary_key &&
+    !column.is_foreign_key;
 }
 
 interface AnalysisState {

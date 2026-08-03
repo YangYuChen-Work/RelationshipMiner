@@ -418,6 +418,16 @@ def test_graph_exposes_document_display_code():
     assert entity_nodes[0].display_code == "GY0000203"
 
 
+def test_graph_marks_current_display_names_as_name_derived():
+    _, entity_nodes, _, _ = build_graph(
+        [_document("orders:1", "orders")],
+        [],
+        [],
+    )
+
+    assert entity_nodes[0].display_name_source == "name"
+
+
 def test_identical_relation_decisions_remain_independent_entries():
     documents = [
         _document("orders:1", "orders"),

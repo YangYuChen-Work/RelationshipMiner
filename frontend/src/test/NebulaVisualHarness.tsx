@@ -1,10 +1,10 @@
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
 import CanvasErrorBoundary from "../components/CanvasErrorBoundary";
 import GraphCanvas from "../components/GraphCanvas";
 import NodeDetailPanel from "../components/NodeDetailPanel";
 import { useAnalysisStore } from "../store/analysis";
 import { makeNebulaGraph } from "./nebulaFixtures";
+import { mountReusableReactRoot } from "./mountReusableReactRoot";
 
 const FIXTURES = {
   20: makeNebulaGraph({ entityCount: 20 }),
@@ -111,7 +111,8 @@ const harnessRoot = document.querySelector<HTMLElement>(
   "[data-nebula-visual-root]",
 );
 if (harnessRoot) {
-  createRoot(harnessRoot).render(
+  mountReusableReactRoot(
+    harnessRoot,
     <StrictMode>
       <NebulaVisualHarness />
     </StrictMode>,

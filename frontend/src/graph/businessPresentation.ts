@@ -169,6 +169,15 @@ function normalizedText(value: unknown): string | null {
     : text;
 }
 
+function explicitBusinessName(value: unknown): string | null {
+  const text = typeof value === "string"
+    ? value.trim()
+    : typeof value === "number" && Number.isFinite(value)
+      ? String(value)
+      : "";
+  return text || null;
+}
+
 function normalizedBusinessName(value: string): string {
   return value
     .normalize("NFKC")
@@ -188,7 +197,10 @@ function displayCode(entity: EntityNodeData): string | null {
 }
 
 export function businessName(entity: EntityNodeData): string {
-  return normalizedText(entity.dimensions.name) ??
+  return explicitBusinessName(entity.dimensions.name) ??
+    (entity.display_name_source === "name"
+      ? explicitBusinessName(entity.display_name)
+      : null) ??
     normalizedText(entity.display_name) ??
     UNNAMED_OBJECT;
 }

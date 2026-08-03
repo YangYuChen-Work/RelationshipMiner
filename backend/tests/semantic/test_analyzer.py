@@ -598,17 +598,78 @@ async def test_malformed_judgement_cannot_be_complete_with_zero_edges(engine):
 
 
 @pytest.mark.asyncio
-async def test_analyzer_expands_representative_verdicts_to_all_signature_members(engine):
+async def test_analyzer_judges_equal_auxiliary_values_per_primary_context(engine):
     from engine.semantic.analyzer import RelationshipAnalyzer
 
     with engine.begin() as connection:
-        connection.execute(text("UPDATE users SET name = 'Alice' WHERE id = 2"))
-        connection.execute(text("UPDATE products SET title = 'Widget' WHERE id = 2"))
+        connection.execute(text(
+            "UPDATE users SET email = 'shared@test.com' WHERE id IN (1, 2)"
+        ))
+        connection.execute(text(
+            "UPDATE products SET title = 'shared evidence' WHERE id IN (1, 2)"
+        ))
+        connection.execute(text(
+            "UPDATE products SET class_name = 'com.example.SpecialProduct' "
+            "WHERE id = 2"
+        ))
+
+    class PrimaryContextJudge:
+        def __init__(self) -> None:
+            self.payload_contexts: list[tuple[tuple[str, str | None], tuple[str, str | None]]] = []
+
+        async def judge_groups(
+            self,
+            groups: list[object],
+            deadline: float,
+        ) -> JudgementBatchResult:
+            materialized = await _materialize_groups(groups)
+            decisions: list[RelationDecision] = []
+            outcomes: list[JudgementGroupOutcome] = []
+            for group in materialized:
+                suffix = group.source.entity_id.rsplit(":", 1)[-1]
+                target = next(
+                    candidate
+                    for candidate in group.candidates
+                    if candidate.entity_id.endswith(f":{suffix}")
+                )
+                self.payload_contexts.append((
+                    (group.source.display_name, group.source.class_name),
+                    (target.display_name, target.class_name),
+                ))
+                decisions.append(RelationDecision(
+                    source=group.source.entity_id,
+                    target=target.entity_id,
+                    relation_type=group.plan.relation_type,
+                    direction=group.plan.direction,
+                    strength="weak",
+                    confidence=0.9,
+                    explanation="Primary contexts were judged independently.",
+                    evidence=[RelationEvidence(
+                        source_field="email",
+                        source_value=group.source.dimensions["email"],
+                        target_field="title",
+                        target_value=target.dimensions["title"],
+                        method="llm_semantic_reasoning",
+                        reason="Shared auxiliary evidence.",
+                    )],
+                ))
+                outcomes.append(JudgementGroupOutcome(
+                    source_id=group.source.entity_id,
+                    candidate_count=len(group.candidates),
+                    status="completed",
+                ))
+            return JudgementBatchResult(
+                decisions=decisions,
+                completed_groups=len(materialized),
+                outcomes=outcomes,
+            )
+
+    judge = PrimaryContextJudge()
 
     result = await RelationshipAnalyzer(
         planner=_StaticPlanner([_product_plan()]),
         embedding_adapter=_ConstantEmbeddings(),
-        judge=_ApprovingJudge(),
+        judge=judge,
     ).analyze(
         engine,
         AnalysisScope(
@@ -620,13 +681,21 @@ async def test_analyzer_expands_representative_verdicts_to_all_signature_members
     )
 
     assert result.status == AnalysisStatus.COMPLETE
+    assert judge.payload_contexts == [
+        (
+            ("Alice", "com.example.User"),
+            ("Widget", "com.example.Product"),
+        ),
+        (
+            ("Bob", "com.example.Admin"),
+            ("Gadget", "com.example.SpecialProduct"),
+        ),
+    ]
     assert {
         (edge.source, edge.target)
         for edge in result.entity_edges
     } == {
         ("products:1", "users:1"),
-        ("products:1", "users:2"),
-        ("products:2", "users:1"),
         ("products:2", "users:2"),
     }
 

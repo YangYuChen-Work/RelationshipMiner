@@ -70,6 +70,26 @@ function input(k: number, confidenceThreshold = 0) {
 }
 
 describe("buildScene", () => {
+  it("uses semantic dataset names instead of raw table identifiers", () => {
+    const current = buildScene({
+      ...input(1),
+      tablePresentations: new Map([
+        ["orders", "订单业务数据"],
+        ["users", "客户业务数据"],
+        ["audit", "审计业务数据"],
+        ["orphan", "其他业务数据"],
+      ]),
+    });
+
+    expect(current.tableNodes.map((node) => node.label)).toEqual([
+      "订单业务数据",
+      "客户业务数据",
+      "审计业务数据",
+      "其他业务数据",
+    ]);
+    expect(current.tableNodes.map((node) => node.label)).not.toContain("Orders");
+  });
+
   it("clips horizontal edges around the node instead of the old right-side label width", () => {
     const horizontalGraph: SemanticGraphData = {
       table_nodes: [{ id: "objects", display_name: "业务对象", entity_count: 2 }],

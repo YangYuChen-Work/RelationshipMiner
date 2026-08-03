@@ -195,13 +195,15 @@ def group_documents_by_signature(
     documents: list[EntityDocument],
 ) -> list[EntitySignatureGroup]:
     groups: dict[
-        tuple[str, tuple[tuple[str, str], ...]],
+        tuple[str, str, str, tuple[tuple[str, str], ...]],
         EntitySignatureGroup,
     ] = {}
 
     for document in documents:
         signature = (
             document.table_name,
+            _normalize_value(document.display_name),
+            _normalize_value(document.class_name),
             tuple(sorted(document.normalized_dimensions.items())),
         )
         group = groups.get(signature)

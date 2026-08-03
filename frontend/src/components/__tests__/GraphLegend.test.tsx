@@ -35,14 +35,14 @@ describe("GraphLegend", () => {
     });
   });
 
-  it("labels solid source colors with semantic names and subdues raw table names", () => {
+  it("labels solid source colors with semantic names without exposing raw table names", () => {
     render(<GraphLegend />);
 
     const legend = screen.getByRole("group", { name: "数据来源图例" });
     expect(legend).toHaveTextContent("装配工艺数据");
     expect(legend).toHaveTextContent("检验标准数据");
-    expect(screen.getByText("来源：assembly_process")).toHaveClass("text-slate-500");
-    expect(screen.getByText("来源：inspection_standard")).toHaveClass("text-slate-500");
+    expect(legend).not.toHaveTextContent("assembly_process");
+    expect(legend).not.toHaveTextContent("inspection_standard");
     expect(screen.getByLabelText("装配工艺数据颜色")).toHaveStyle({
       backgroundColor: tableColor("assembly_process"),
     });

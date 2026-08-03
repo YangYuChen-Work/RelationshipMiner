@@ -20,6 +20,7 @@ import type {
 import { computeGroupedLayout, type GraphLayout } from "../graph/layout";
 import { quadraticPoint } from "../graph/edgeGeometry";
 import { buildScene } from "../graph/scene";
+import { buildBusinessTablePresentationIndex } from "../graph/businessTables";
 import { useAnalysisStore } from "../store/analysis";
 
 // ── Mock 数据 ──
@@ -133,7 +134,7 @@ const BUSINESS_FRIENDLY_GRAPH: SemanticGraphData = {
   table_nodes: [
     {
       id: BUSINESS_FRIENDLY_TABLE.name,
-      display_name: "卫星天线装配与检验数据",
+      display_name: BUSINESS_FRIENDLY_TABLE.name,
       entity_count: 3,
     },
   ],
@@ -954,7 +955,7 @@ describe("Integration: full user flow", () => {
 
     // Click on users table to select it
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+      screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
 
     // FieldSelector should appear with the table's fields
@@ -989,7 +990,7 @@ describe("Integration: full user flow", () => {
     });
 
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+      screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
 
     await waitFor(() => {
@@ -1015,14 +1016,15 @@ describe("Integration: full user flow", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "字段 email" }));
 
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "选择业务数据 orders" }),
+      screen.getByRole("checkbox", { name: "选择业务数据 订单数据（来源 orders）" }),
     );
     await waitFor(() => {
       expect(
-        screen.getByRole("checkbox", { name: "字段 user_id" }),
+        screen.getByRole("checkbox", { name: "字段 total" }),
       ).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("checkbox", { name: "字段 user_id" }));
+    expect(screen.queryByRole("checkbox", { name: "字段 user_id" }))
+      .not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "字段 total" }));
 
     const startBtn = screen.getByText("生成业务关系图");
@@ -1041,7 +1043,7 @@ describe("Integration: full user flow", () => {
     expect(JSON.parse(String(analyzeCall?.[1]?.body))).toEqual({
       tables: [
         { name: "users", fields: ["email"] },
-        { name: "orders", fields: ["user_id", "total"] },
+        { name: "orders", fields: ["total"] },
       ],
     });
 
@@ -1132,7 +1134,7 @@ describe("Integration: full user flow", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("表关系汇总")).toBeInTheDocument();
+      expect(screen.getByText("业务数据关系")).toBeInTheDocument();
       expect(useAnalysisStore.getState().selectedTableEdgeId).toBe(
         "users--orders",
       );
@@ -1191,7 +1193,7 @@ describe("Integration: full user flow", () => {
     expect(screen.getByText("电性能综合测试")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", {
-      name: `选择业务数据 ${BUSINESS_FRIENDLY_TABLE.name}`,
+      name: `选择业务数据 卫星天线装配与检验数据（来源 ${BUSINESS_FRIENDLY_TABLE.name}）`,
     }));
     const evidenceField = await screen.findByRole("checkbox", {
       name: "字段 test_item",
@@ -1238,12 +1240,22 @@ describe("Integration: full user flow", () => {
     expect(screen.queryByText("GY0000204")).not.toBeInTheDocument();
 
     const layout = FakeLayoutWorker.latestLayout!;
+    const currentState = useAnalysisStore.getState();
+    const tablePresentations = buildBusinessTablePresentationIndex(
+      currentState.graph!.table_nodes,
+      currentState.tableSummaries,
+    );
     const scene = buildScene({
-      graph: useAnalysisStore.getState().graph!,
+      graph: currentState.graph!,
       layout,
       transform: d3.zoomTransform(canvas),
-      confidenceThreshold: useAnalysisStore.getState().confidenceThreshold,
+      confidenceThreshold: currentState.confidenceThreshold,
+      tablePresentations,
     });
+    expect(scene.tableNodes[0]?.label).toBe("卫星天线装配与检验数据");
+    expect(scene.tableNodes[0]?.label).not.toBe(BUSINESS_FRIENDLY_TABLE.name);
+    expect(screen.queryByText(BUSINESS_FRIENDLY_TABLE.name))
+      .not.toBeInTheDocument();
     const edge = scene.entityEdges.find((item) =>
       item.id === "satellite_assembly_records:1--satellite_assembly_records:3"
     )!;
@@ -1325,7 +1337,7 @@ describe("Integration: full user flow", () => {
 
     for (const selection of BUSINESS_SELECTION) {
       const tableCheckbox = screen.getByRole("checkbox", {
-          name: `选择业务数据 ${selection.name}`,
+          name: `选择业务数据 ${selection.name} 业务数据（来源 ${selection.name}）`,
       });
       const tableCard = tableCheckbox.closest("article")!;
       fireEvent.click(tableCheckbox);
@@ -1383,7 +1395,7 @@ describe("Integration: full user flow", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("表关系汇总")).toBeInTheDocument();
+      expect(screen.getByText("业务数据关系")).toBeInTheDocument();
       expect(screen.getAllByText("工艺涉及零件").length).toBeGreaterThan(0);
       expect(useAnalysisStore.getState().selectedTableEdgeId).toBe(
         PROCESS_TABLE_EDGE_ID,
@@ -1440,7 +1452,7 @@ describe("Integration: full user flow", () => {
 
     // Select table and start analysis
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+      screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
     await waitFor(() => {
       expect(
@@ -1524,7 +1536,7 @@ describe("Integration: full user flow", () => {
 
     // Select table and run through analysis to completion
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+      screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
     await waitFor(() => {
       expect(
@@ -1628,7 +1640,7 @@ describe("Integration: full user flow", () => {
 
     // Select users table and run analysis
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+      screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
     await waitFor(() => {
       expect(
@@ -1680,7 +1692,7 @@ describe("Integration: full user flow", () => {
 
     // Select users table and run analysis
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+      screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
     await waitFor(() => {
       expect(
@@ -1781,7 +1793,7 @@ describe("Integration: full user flow", () => {
       expect(screen.getByText("users")).toBeInTheDocument();
     });
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+      screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
     await waitFor(() => {
       expect(
@@ -1850,7 +1862,7 @@ describe("Integration: full user flow", () => {
 
     // Select users table and run analysis
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "选择业务数据 users" }),
+      screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
     await waitFor(() => {
       expect(

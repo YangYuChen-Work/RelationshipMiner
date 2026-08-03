@@ -273,6 +273,36 @@ def test_identical_normalized_signatures_share_one_inference_group():
     assert groups[0].entity_ids == ["operation:1", "operation:2"]
 
 
+def test_primary_business_context_separates_equal_auxiliary_signatures():
+    groups = group_documents_by_signature(
+        [
+            EntityDocument(
+                entity_id="operation:1",
+                table_name="operation",
+                display_name="装配准备",
+                class_name="com.example.Preparation",
+                dimensions={"operator": "张三"},
+                normalized_dimensions={"operator": "张三"},
+                search_text="装配准备 com.example.Preparation 操作人：张三",
+            ),
+            EntityDocument(
+                entity_id="operation:2",
+                table_name="operation",
+                display_name="质量复核",
+                class_name="com.example.Inspection",
+                dimensions={"operator": "张三"},
+                normalized_dimensions={"operator": "张三"},
+                search_text="质量复核 com.example.Inspection 操作人：张三",
+            ),
+        ]
+    )
+
+    assert [group.entity_ids for group in groups] == [
+        ["operation:1"],
+        ["operation:2"],
+    ]
+
+
 def test_pipeline_keeps_primary_context_out_of_auxiliary_dimensions(
     engine,
     monkeypatch,

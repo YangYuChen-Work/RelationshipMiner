@@ -26,6 +26,7 @@ import {
   type BusinessEntityPresentation,
 } from "./businessPresentation";
 import { businessRelationLabel } from "./businessRelations";
+import { buildBusinessTablePresentationIndex } from "./businessTables";
 import {
   computeEntityDegrees,
   visibleEntityRelations,
@@ -163,6 +164,7 @@ export interface BuildSceneInput {
   transform: GraphTransform;
   confidenceThreshold: number;
   presentations?: ReadonlyMap<string, BusinessEntityPresentation>;
+  tablePresentations?: ReadonlyMap<string, string>;
 }
 
 function validPoint(point: WorldPoint): boolean {
@@ -527,6 +529,8 @@ export function buildScene(input: BuildSceneInput): RenderScene {
   const zoomLevel = semanticZoomLevel(transform.k);
   const threshold = normalizedThreshold(input.confidenceThreshold);
   const tableData = byId<TableNodeData>(input.graph.table_nodes);
+  const tablePresentations = input.tablePresentations ??
+    buildBusinessTablePresentationIndex(input.graph.table_nodes, new Map());
   const entityData = byId<EntityNodeData>(input.graph.entity_nodes);
   const graphEntityEdges = byId(input.graph.entity_edges);
   const tableLayouts = layoutEdgesFor(
@@ -576,7 +580,7 @@ export function buildScene(input: BuildSceneInput): RenderScene {
     const command = data
       ? nodeCommand(
         node,
-        data.display_name,
+        tablePresentations.get(data.id) ?? "业务数据集",
         tableColor(node.id),
         transform,
         TABLE_WORLD_RADIUS,

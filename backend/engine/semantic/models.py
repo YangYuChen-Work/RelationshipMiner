@@ -128,6 +128,7 @@ class EntityNode(BaseModel):
     id: str
     table_id: str
     display_name: str
+    display_name_source: Literal["name"] = "name"
     display_code: str | None = None
     class_name: str | None = None
     dimensions: dict[str, object]

@@ -285,6 +285,11 @@ describe("analysis selection store", () => {
     expect(isRequiredBusinessColumn(columns[2])).toBe(true);
     expect(isAuxiliaryColumn(columns[0])).toBe(false);
     expect(isAuxiliaryColumn(columns[3])).toBe(true);
+    expect(isAuxiliaryColumn({
+      ...columns[3],
+      name: "owner_id",
+      is_foreign_key: true,
+    })).toBe(false);
     expect(useAnalysisStore.getState().selectedTables.get("users")?.selectedFields).toEqual(
       new Set()
     );

@@ -33,6 +33,9 @@ export default function BusinessDatasetCard({
   const allAuxiliarySelected =
     auxiliaryColumns.length > 0 &&
     selectedAuxiliaryCount === auxiliaryColumns.length;
+  const selectionLabel = summary
+    ? `选择业务数据 ${summary.semantic_name}（来源 ${tableName}）`
+    : `选择业务数据 ${tableName}`;
 
   async function handleSelectionChange() {
     if (loading) return;
@@ -50,7 +53,7 @@ export default function BusinessDatasetCard({
       <div className="flex items-start gap-3 p-4">
         <input
           type="checkbox"
-          aria-label={`选择业务数据 ${tableName}`}
+          aria-label={selectionLabel}
           checked={isSelected}
           disabled={disabled || loading}
           onChange={handleSelectionChange}
@@ -123,26 +126,16 @@ export default function BusinessDatasetCard({
               系统将使用名称和对象类型判断关系。
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
-              {entry.columns
-                .filter((column) => column.is_name)
-                .map((column) => (
-                  <span
-                    key={column.name}
-                    className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-800"
-                  >
-                    名称 · {column.name}
-                  </span>
-                ))}
-              {entry.columns
-                .filter((column) => column.is_class_name)
-                .map((column) => (
-                  <span
-                    key={column.name}
-                    className="rounded bg-violet-50 px-2 py-1 text-xs text-violet-800"
-                  >
-                    对象类型 · {column.name}
-                  </span>
-                ))}
+              {entry.columns.some((column) => column.is_name) && (
+                <span className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-800">
+                  节点名称（自动使用）
+                </span>
+              )}
+              {entry.columns.some((column) => column.is_class_name) && (
+                <span className="rounded bg-violet-50 px-2 py-1 text-xs text-violet-800">
+                  对象类型由系统自动识别
+                </span>
+              )}
             </div>
           </section>
 

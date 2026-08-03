@@ -27,6 +27,7 @@ import {
 import { buildScene, type GraphTransform, type RenderScene } from "../graph/scene";
 import { hitTest, type HitTarget } from "../graph/hitTest";
 import { buildBusinessPresentationIndex } from "../graph/businessPresentation";
+import { buildBusinessTablePresentationIndex } from "../graph/businessTables";
 import { computeEntityDegrees, visibleEntityRelations } from "../graph/semantics";
 import { useAnalysisStore } from "../store/analysis";
 
@@ -205,6 +206,13 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
 
   const graph = useAnalysisStore((state) => state.graph);
+  const tableSummaries = useAnalysisStore((state) => state.tableSummaries);
+  const tablePresentations = useMemo(
+    () => graph
+      ? buildBusinessTablePresentationIndex(graph.table_nodes, tableSummaries)
+      : new Map<string, string>(),
+    [graph, tableSummaries],
+  );
   const showIsolatedNodes = useAnalysisStore((state) => state.showIsolatedNodes);
   const businessPresentations = useMemo(
     () => graph
@@ -350,6 +358,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       transform: transformRef.current,
       confidenceThreshold: confidenceThresholdRef.current,
       presentations: businessPresentations,
+      tablePresentations,
     });
     sceneRef.current = nextScene;
     drawnGenerationRef.current = null;
@@ -365,7 +374,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     setSceneGeneration(generation);
     setReadyGeneration(null);
     invalidate(generation);
-  }, [businessPresentations, invalidate]);
+  }, [businessPresentations, invalidate, tablePresentations]);
 
   const retireScene = useCallback(() => {
     const generation = sceneGenerationRef.current + 1;

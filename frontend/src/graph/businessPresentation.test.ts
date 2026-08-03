@@ -10,12 +10,14 @@ function entity(
   displayName: string,
   displayCode: string | null = null,
   dimensions: Record<string, unknown> = {},
+  displayNameSource?: "name",
 ): EntityNodeData {
   return {
     id,
     table_id: "technical_table",
     display_name: displayName,
     display_code: displayCode,
+    display_name_source: displayNameSource,
     class_name: "com.example.TechnicalClass",
     dimensions,
   };
@@ -109,6 +111,24 @@ describe("businessName", () => {
   ])("keeps a business name containing the status-like substring %s", (name) => {
     expect(businessName(entity("legacy", "Fallback", null, { name }))).toBe(name);
   });
+
+  it.each([
+    ["正常", "正常"],
+    ["已完成", "已完成"],
+    ["numeric zero", 0],
+    ["numeric one", 1],
+  ])("keeps the explicit legacy dimensions.name %s", (_case, name) => {
+    expect(businessName(entity("legacy", "legacy inferred status", null, {
+      name,
+    }))).toBe(String(name));
+  });
+
+  it.each(["正常", "已完成", "0", "1"])(
+    "keeps the current backend name %s when its source is explicit",
+    (name) => {
+      expect(businessName(entity("current", name, null, {}, "name"))).toBe(name);
+    },
+  );
 });
 
 describe("buildBusinessPresentationIndex", () => {

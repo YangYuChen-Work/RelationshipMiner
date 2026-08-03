@@ -1,4 +1,5 @@
 import { tableColor } from "../graph/scene";
+import { buildBusinessTablePresentationIndex } from "../graph/businessTables";
 import { useAnalysisStore } from "../store/analysis";
 
 export default function GraphLegend() {
@@ -6,6 +7,10 @@ export default function GraphLegend() {
   const tableSummaries = useAnalysisStore((state) => state.tableSummaries);
 
   if (!graph || graph.table_nodes.length === 0) return null;
+  const tablePresentations = buildBusinessTablePresentationIndex(
+    graph.table_nodes,
+    tableSummaries,
+  );
 
   return (
     <details
@@ -19,8 +24,7 @@ export default function GraphLegend() {
       </summary>
       <ul className="mt-3 space-y-2.5">
         {graph.table_nodes.map((table) => {
-          const semanticName = tableSummaries.get(table.id)?.semantic_name ||
-            table.display_name;
+          const semanticName = tablePresentations.get(table.id) ?? "业务数据集";
           return (
             <li key={table.id} className="flex min-w-0 items-start gap-2.5">
               <span
@@ -28,13 +32,8 @@ export default function GraphLegend() {
                 className="mt-0.5 size-3.5 shrink-0 rounded-full border-[1.5px] border-white shadow-[0_0_0_1px_rgba(148,163,184,0.35)]"
                 style={{ backgroundColor: tableColor(table.id) }}
               />
-              <span className="min-w-0">
-                <span className="block truncate text-xs font-medium text-slate-700">
-                  {semanticName}
-                </span>
-                <span className="block truncate text-[10px] text-slate-500">
-                  来源：{table.id}
-                </span>
+              <span className="min-w-0 block truncate text-xs font-medium text-slate-700">
+                {semanticName}
               </span>
             </li>
           );

@@ -37,6 +37,14 @@ const columns = [
     is_primary_key: false,
     is_foreign_key: true,
   },
+  {
+    name: "description",
+    type: "TEXT",
+    is_name: false,
+    is_class_name: false,
+    is_primary_key: false,
+    is_foreign_key: false,
+  },
 ];
 
 const summary = {
@@ -92,7 +100,18 @@ describe("BusinessDatasetCard", () => {
     expect(
       screen.queryByRole("checkbox", { name: "字段 class_name" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "字段 work_center" })).toBeVisible();
+    expect(
+      screen.queryByRole("checkbox", { name: "字段 work_center" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "字段 description" })).toBeVisible();
+
+    const primaryContext = screen.getByRole("region", {
+      name: "assembly_process 主要判断信息",
+    });
+    expect(primaryContext).toHaveTextContent("节点名称（自动使用）");
+    expect(primaryContext).toHaveTextContent("对象类型由系统自动识别");
+    expect(primaryContext).not.toHaveTextContent("class_name");
+    expect(primaryContext).not.toHaveTextContent("名称 · name");
 
     for (const type of screen.getAllByText(/^(INTEGER|VARCHAR|TEXT)$/)) {
       expect(type).not.toBeVisible();
@@ -109,5 +128,19 @@ describe("BusinessDatasetCard", () => {
     expect(screen.getByText("外键")).toBeVisible();
     expect(screen.getByText("主键").closest("details")).not.toBeNull();
     expect(screen.getByText("外键").closest("details")).not.toBeNull();
+  });
+
+  it("puts the semantic dataset name first in the checkbox accessible name", () => {
+    render(
+      <BusinessDatasetCard
+        tableName="assembly_process"
+        summary={summary}
+        disabled={false}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", {
+      name: "选择业务数据 装配工艺数据（来源 assembly_process）",
+    })).toBeVisible();
   });
 });

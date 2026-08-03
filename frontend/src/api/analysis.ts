@@ -17,6 +17,8 @@ export interface EntityNodeData {
   id: string;
   table_id: string;
   display_name: string;
+  /** Present on current payloads whose display name was derived from `name`. */
+  display_name_source?: "name";
   display_code?: string | null;
   class_name: string | null;
   dimensions: Record<string, unknown>;

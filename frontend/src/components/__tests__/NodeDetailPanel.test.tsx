@@ -6,8 +6,8 @@ import { useAnalysisStore } from "../../store/analysis";
 
 const graph: SemanticGraphData = {
   table_nodes: [
-    { id: "users", display_name: "Users", entity_count: 1 },
-    { id: "orders", display_name: "Orders", entity_count: 1 },
+    { id: "users", display_name: "users", entity_count: 1 },
+    { id: "orders", display_name: "orders", entity_count: 1 },
   ],
   entity_nodes: [
     { id: "users|1", table_id: "users", display_name: "Alice", class_name: "  com.example.User  ", dimensions: { id: 1, name: "Alice", metadata: { active: true } } },
@@ -22,7 +22,17 @@ const graph: SemanticGraphData = {
 
 describe("NodeDetailPanel", () => {
   beforeEach(() => {
-    useAnalysisStore.setState({ graph, selectedNodeId: null, selectedEntityEdgeId: null, selectedTableEdgeId: null, focusNodeRequest: null });
+    useAnalysisStore.setState({
+      graph,
+      tableSummaries: new Map([
+        ["users", { table_name: "users", semantic_name: "客户业务数据", row_count: 1, name_samples: [], status: "inferred" }],
+        ["orders", { table_name: "orders", semantic_name: "订单业务数据", row_count: 1, name_samples: [], status: "inferred" }],
+      ]),
+      selectedNodeId: null,
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
+      focusNodeRequest: null,
+    });
   });
 
   it("keeps a semantic graph overview when no item is selected", () => {
@@ -99,13 +109,19 @@ describe("NodeDetailPanel", () => {
   it("shows table aggregate data and focuses a supporting entity edge", () => {
     useAnalysisStore.setState({ selectedTableEdgeId: "users--orders" });
     render(<NodeDetailPanel />);
-    expect(screen.getByText("表关系汇总")).toBeInTheDocument();
+    expect(screen.getByText("业务数据关系")).toBeInTheDocument();
+    expect(screen.getByText("客户业务数据 → 订单业务数据")).toBeInTheDocument();
+    expect(screen.queryByText("users")).not.toBeInTheDocument();
+    expect(screen.queryByText("orders")).not.toBeInTheDocument();
     expect(screen.getAllByText("下单 · 归属").length).toBeGreaterThan(0);
     expect(screen.getByText("明确")).toBeInTheDocument();
     expect(screen.getByText("可能有关")).toBeInTheDocument();
     expect(screen.queryByText("候选关系")).not.toBeInTheDocument();
     expect(screen.queryByText("places")).not.toBeInTheDocument();
     expect(screen.queryByText("85%")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("技术依据"));
+    expect(screen.getByText("users")).toBeInTheDocument();
+    expect(screen.getByText("orders")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Alice → Order 101.*下单.*归属/ }));
     expect(useAnalysisStore.getState().selectedEntityEdgeId).toBe("users|1--orders|101");
     expect(useAnalysisStore.getState().focusNodeRequest?.nodeId).toBe("users|1");
@@ -122,7 +138,7 @@ describe("NodeDetailPanel", () => {
 
     fireEvent.click(unavailable);
 
-    expect(screen.getByText("表关系汇总")).toBeInTheDocument();
+    expect(screen.getByText("业务数据关系")).toBeInTheDocument();
     expect(useAnalysisStore.getState().selectedTableEdgeId).toBe("users--orders");
     expect(useAnalysisStore.getState().selectedEntityEdgeId).toBeNull();
   });
