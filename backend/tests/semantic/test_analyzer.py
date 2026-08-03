@@ -408,6 +408,7 @@ async def test_analyzer_keeps_completed_weak_edge_when_candidate_stream_deadline
                     "source": source["entity_id"],
                     "target": target["entity_id"],
                     "relation_type": plan["relation_type"],
+                    "display_label": plan["display_label"],
                     "direction": plan["direction"],
                     "strength": "weak",
                     "confidence": 0.91,

@@ -1,5 +1,6 @@
 import pytest
 
+from engine.semantic import graph_builder
 from engine.semantic.graph_builder import build_graph
 from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.models import (
@@ -30,11 +31,13 @@ def _relation(
     direction: str = "source_to_target",
     strength: str = "weak",
     confidence: float = 0.8,
+    display_label: str = "使用",
 ) -> RelationDecision:
     return RelationDecision(
         source=source,
         target=target,
         relation_type=relation_type,
+        display_label=display_label,
         direction=direction,
         strength=strength,
         confidence=confidence,
@@ -147,7 +150,7 @@ def test_one_strong_relation_creates_a_table_edge():
     assert edge.supporting_entity_edges == [entity_edges[0].id]
 
 
-def test_generic_semantic_placeholder_is_normalized_without_losing_specific_types():
+def test_generic_semantic_placeholder_gets_business_fallback_without_rewriting_raw_type():
     documents = [
         _document("orders:1", "orders"),
         _document("products:1", "products"),
@@ -159,6 +162,7 @@ def test_generic_semantic_placeholder_is_normalized_without_losing_specific_type
             "orders:1",
             f"products:{index}",
             relation_type="business_relationship",
+            display_label="business_relationship",
         )
         for index in range(1, 4)
     ]
@@ -181,10 +185,44 @@ def test_generic_semantic_placeholder_is_normalized_without_losing_specific_type
         for edge in entity_edges
         for relation in edge.relations
     ]
-    assert relation_types.count("语义关联") == 3
+    assert relation_types.count("business_relationship") == 3
     assert "specific_usage" in relation_types
-    assert "business_relationship" not in relation_types
-    assert table_edges[0].relation_types == ["specific_usage", "语义关联"]
+    assert {
+        relation.display_label
+        for edge in entity_edges
+        for relation in edge.relations
+        if relation.relation_type == "business_relationship"
+    } == {"相关"}
+    assert table_edges[0].relation_types == [
+        "business_relationship",
+        "specific_usage",
+    ]
+
+
+def test_graph_keeps_raw_relation_type_and_normalizes_business_label():
+    documents = [
+        _document("assemblies:1", "assemblies"),
+        _document("parts:1", "parts"),
+    ]
+
+    _, _, _, entity_edges = build_graph(
+        documents,
+        [],
+        [
+            _relation(
+                "assemblies:1",
+                "parts:1",
+                relation_type="assembly_containment",
+                display_label="  包含  ",
+            )
+        ],
+    )
+
+    relation = entity_edges[0].relations[0]
+    assert relation.relation_type == "assembly_containment"
+    assert relation.display_label == "包含"
+    assert graph_builder.normalize_relation_label("") == "相关"
+    assert graph_builder.normalize_relation_label("business_relationship") == "相关"
 
 
 def test_weak_relations_of_different_types_do_not_combine_for_threshold():

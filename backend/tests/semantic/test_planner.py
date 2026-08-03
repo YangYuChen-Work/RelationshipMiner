@@ -329,6 +329,7 @@ def _valid_plan() -> dict[str, object]:
         "source_table": "process",
         "target_table": "part",
         "relation_type": "process_uses_part",
+        "display_label": "使用",
         "direction": "source_to_target",
         "source_dimensions": ["process_name", "description"],
         "target_dimensions": ["part_name", "class_name"],
@@ -336,6 +337,22 @@ def _valid_plan() -> dict[str, object]:
         "candidate_limit_per_source": 20,
         "reason": "Process text can identify the related part.",
     }
+
+
+@pytest.mark.asyncio
+async def test_planner_preserves_internal_type_and_business_display_label():
+    plan = {
+        **_valid_plan(),
+        "relation_type": "assembly_containment",
+        "display_label": "包含",
+    }
+
+    plans = await RelationshipPlanner(
+        _RecordingLlm({"plans": [plan]})
+    ).plan(_scope(), _schemas(), _samples())
+
+    assert plans[0].relation_type == "assembly_containment"
+    assert plans[0].display_label == "包含"
 
 
 class _RecordingLlm:

@@ -41,6 +41,7 @@ const graph: SemanticGraphData = {
         source: "a",
         target: "b",
         relation_type: "feeds",
+        display_label: "供给",
         direction: "source_to_target",
         strength: "strong",
         confidence: 0.95,
@@ -58,6 +59,7 @@ const graph: SemanticGraphData = {
         source: "c",
         target: "d",
         relation_type: "mirrors",
+        display_label: "映射",
         direction: "undirected",
         strength: "strong",
         confidence: 0.9,
@@ -226,7 +228,7 @@ describe("drawGraphScene", () => {
     expect(texts).toContain("Alpha");
     expect(texts.some((text) => text?.includes("Source"))).toBe(false);
     const relationTextIndex = records.findIndex((record) =>
-      record.kind === "fillText" && record.text === "feeds"
+      record.kind === "fillText" && record.text === "供给"
     );
     const backingIndex = records.findLastIndex(
       (record, index) => record.kind === "fillRect" && index < relationTextIndex,
@@ -432,8 +434,8 @@ describe("drawGraphScene", () => {
     });
 
     const texts = vi.mocked(context.fillText).mock.calls.map(([text]) => text);
-    expect(texts.filter((text) => text === "mirrors")).toHaveLength(0);
-    expect(texts.filter((text) => text === "feeds")).toHaveLength(1);
+    expect(texts.filter((text) => text === "映射")).toHaveLength(0);
+    expect(texts.filter((text) => text === "供给")).toHaveLength(1);
   });
 });
 

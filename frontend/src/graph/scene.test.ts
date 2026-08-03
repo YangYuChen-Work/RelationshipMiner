@@ -27,13 +27,13 @@ const graph: SemanticGraphData = {
       id: "weak-edge",
       source: "order-1",
       target: "user-1",
-      relations: [{ source: "order-1", target: "user-1", relation_type: "owns", direction: "source_to_target", strength: "weak", confidence: 0.8, explanation: "", evidence: [], model_id: null, task_id: null }],
+      relations: [{ source: "order-1", target: "user-1", relation_type: "owns", display_label: "拥有", direction: "source_to_target", strength: "weak", confidence: 0.8, explanation: "", evidence: [], model_id: null, task_id: null }],
     },
     {
       id: "strong-edge",
       source: "order-2",
       target: "user-2",
-      relations: [{ source: "order-2", target: "user-2", relation_type: "created", direction: "source_to_target", strength: "strong", confidence: 0, explanation: "", evidence: [], model_id: null, task_id: null }],
+      relations: [{ source: "order-2", target: "user-2", relation_type: "created", display_label: "创建", direction: "source_to_target", strength: "strong", confidence: 0, explanation: "", evidence: [], model_id: null, task_id: null }],
     },
     { id: "missing-entity", source: "order-1", target: "missing", relations: [] },
   ],
@@ -253,23 +253,23 @@ describe("buildScene", () => {
     const scene = buildScene(input(1.2));
 
     expect(scene.entityEdges.find((edge) => edge.id === "weak-edge")).toMatchObject({
-      label: "owns",
+      label: "拥有",
       lineStyle: "dashed",
     });
     expect(scene.entityEdges.find((edge) => edge.id === "strong-edge")).toMatchObject({
-      label: "created",
+      label: "创建",
       lineStyle: "solid",
     });
     expect(scene.tableEdges.find((edge) => edge.id === "orders-users")).toMatchObject({
-      label: "owns",
+      label: "拥有",
       lineStyle: "dashed",
     });
     expect(scene.tableEdges.find((edge) => edge.id === "orders-audit")).toMatchObject({
-      label: "created",
+      label: "创建",
       lineStyle: "solid",
     });
     expect(scene.edgeLabels.map((label) => label.text)).toEqual(
-      expect.arrayContaining(["owns", "created"]),
+      expect.arrayContaining(["拥有", "创建"]),
     );
   });
 
@@ -280,7 +280,7 @@ describe("buildScene", () => {
     expect(scene.entityLabels).toHaveLength(4);
     expect(scene.edgeLabels.length).toBeGreaterThan(0);
     expect(scene.edgeLabels.every((label) => label.kind === "table")).toBe(true);
-    expect(scene.edgeLabels.map((label) => label.text)).toContain("created");
+    expect(scene.edgeLabels.map((label) => label.text)).toContain("创建");
   });
 
   it("derives mixed table-edge labels and style only from relations visible at the threshold", () => {
@@ -310,7 +310,7 @@ describe("buildScene", () => {
     });
     expect(filtered.tableEdges).toHaveLength(1);
     expect(filtered.tableEdges[0]).toMatchObject({
-      label: "created",
+      label: "创建",
       lineStyle: "solid",
     });
 
@@ -321,7 +321,7 @@ describe("buildScene", () => {
       confidenceThreshold: 0.75,
     });
     expect(inclusive.tableEdges[0]).toMatchObject({
-      label: "created · owns",
+      label: "创建 · 拥有",
       lineStyle: "solid",
     });
   });
@@ -371,7 +371,7 @@ describe("buildScene", () => {
 
     expect(scene.tableEdges).toHaveLength(1);
     expect(scene.tableEdges[0]).toMatchObject({
-      label: "mixed relationships",
+      label: "相关",
       lineStyle: "solid",
     });
     expect(scene.tableEdges[0].label).not.toContain("weak-type");
@@ -421,8 +421,8 @@ describe("buildScene", () => {
       confidenceThreshold: 0,
     }).edgeLabels[0];
 
-    expect(label.text).toBe(longType);
-    expect(label.maxWidth).toBe(344);
+    expect(label.text).toBe("相关");
+    expect(label.maxWidth).toBe(14);
   });
 
   it("bounds dense edge labels and keeps them deterministic under input reordering", () => {

@@ -16,9 +16,70 @@ from .models import (
 from .public_json import public_json_value
 
 
-_GENERIC_SEMANTIC_RELATION_TYPES = {
-    "business_relationship": "语义关联",
+_BUSINESS_RELATION_LABELS = {
+    "assembly_containment": "包含",
+    "containment": "包含",
+    "contains": "包含",
+    "包含工序": "包含",
+    "包含工步": "包含",
+    "foreign_key": "引用",
+    "外键关联": "引用",
+    "unique_identifier": "对应",
+    "relation_table": "连接",
+    "关联物料": "使用物料",
+    "结构关联": "结构关联",
+    "uses": "使用",
+    "used_by": "被使用",
+    "owns": "拥有",
+    "places": "下单",
+    "created": "创建",
+    "reviews": "审核",
 }
+_GENERIC_RELATION_LABELS = {
+    "",
+    "相关",
+    "关联",
+    "关系",
+    "business_relationship",
+    "semantic_relationship",
+    "relationship",
+    "relation",
+    "语义关联",
+    "关联关系",
+}
+
+
+def normalize_relation_label(
+    value: str | None,
+    relation_type: str | None = None,
+) -> str:
+    """Return a short business label without exposing technical categories."""
+    candidate = (value or "").strip()
+    normalized_candidate = candidate.casefold()
+    normalized_type = (relation_type or "").strip().casefold()
+
+    if normalized_candidate not in _GENERIC_RELATION_LABELS:
+        mapped = _BUSINESS_RELATION_LABELS.get(normalized_candidate)
+        if mapped is not None:
+            return mapped
+        limited = candidate[:12]
+        if len(limited) >= 2 and any(
+            "\u3400" <= character <= "\u9fff" for character in limited
+        ):
+            return limited
+
+    return _BUSINESS_RELATION_LABELS.get(normalized_type, "相关")
+
+
+def _business_relation(relation: EntityRelation) -> EntityRelation:
+    return relation.model_copy(
+        update={
+            "display_label": normalize_relation_label(
+                relation.display_label,
+                relation.relation_type,
+            )
+        }
+    )
 
 
 def build_graph(
@@ -114,7 +175,9 @@ def _merge_entity_edges(
         _check_deadline(check_deadline, "合并确定性关系时")
         _validate_relation_entities(edge.source, edge.target, documents_by_id)
         pair = _canonical_pair(edge.source, edge.target)
-        relations_by_pair[pair].extend(edge.relations)
+        relations_by_pair[pair].extend(
+            _business_relation(relation) for relation in edge.relations
+        )
 
     for decision in relation_decisions:
         _check_deadline(check_deadline, "合并语义关系时")
@@ -122,12 +185,10 @@ def _merge_entity_edges(
             decision.source, decision.target, documents_by_id
         )
         pair = _canonical_pair(decision.source, decision.target)
-        relation_data = decision.model_dump()
-        relation_data["relation_type"] = _GENERIC_SEMANTIC_RELATION_TYPES.get(
-            decision.relation_type,
-            decision.relation_type,
+        relation = EntityRelation(**decision.model_dump())
+        relations_by_pair[pair].append(
+            _business_relation(relation)
         )
-        relations_by_pair[pair].append(EntityRelation(**relation_data))
 
     entity_edges: list[EntityEdge] = []
     for source, target in sorted(relations_by_pair):

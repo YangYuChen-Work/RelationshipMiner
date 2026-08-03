@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { SemanticGraphData } from "../api/analysis";
@@ -113,9 +113,13 @@ describe("App graph error result", () => {
     expect(screen.getAllByText("仅显示已完成的关系")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "导出 JSON" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "新分析" })).toBeEnabled();
-    expect(screen.getByText("节点概览")).toBeInTheDocument();
+    expect(screen.getByText("业务对象")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "User 1" })).toBeInTheDocument();
+    expect(screen.queryByText("user-1")).not.toBeInTheDocument();
+    expect(screen.queryByText("User")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("技术依据"));
     expect(screen.getByText("user-1")).toBeInTheDocument();
-    expect(screen.getByText("users · User")).toBeInTheDocument();
+    expect(screen.getByText("User")).toBeInTheDocument();
     expect(screen.queryByText("重新选择")).not.toBeInTheDocument();
   });
 

@@ -21,7 +21,7 @@ const graph: SemanticGraphData = {
     { id: "invoice", table_id: "billing", display_name: "Invoice", class_name: "Invoice", dimensions: {} },
   ],
   table_edges: [{ id: "accounts--billing", source_table: "accounts", target_table: "billing", relation_types: ["owns"], strong_count: 1, weak_count: 0, entity_edge_count: 1, average_confidence: 0.9, supporting_entity_edges: ["a--invoice"] }],
-  entity_edges: [{ id: "a--invoice", source: "a", target: "invoice", relations: [{ source: "a", target: "invoice", relation_type: "owns", direction: "source_to_target", strength: "strong", confidence: 0.9, explanation: "fixture", evidence: [], model_id: null, task_id: null }] }],
+  entity_edges: [{ id: "a--invoice", source: "a", target: "invoice", relations: [{ source: "a", target: "invoice", relation_type: "owns", display_label: "拥有", direction: "source_to_target", strength: "strong", confidence: 0.9, explanation: "fixture", evidence: [], model_id: null, task_id: null }] }],
 };
 
 function canvasContext() {
@@ -458,16 +458,9 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const context = document.querySelector("canvas")!.getContext("2d")!;
-    const labelCall = vi.mocked(context.fillText).mock.calls.find(
-      ([text]) => text === longType,
-    );
+    const drawnText = vi.mocked(context.fillText).mock.calls.map(([text]) => text);
 
-    expect(labelCall).toEqual([
-      longType,
-      expect.any(Number),
-      expect.any(Number),
-      344,
-    ]);
+    expect(drawnText).not.toContain(longType);
   });
 
   it("draws aggregate table relation labels at fitted overview zoom", async () => {
@@ -484,7 +477,7 @@ describe("GraphCanvas", () => {
     });
 
     expect(d3.zoomTransform(canvas).k).toBe(0.02);
-    expect(vi.mocked(context.fillText).mock.calls.flat()).toContain("owns");
+    expect(vi.mocked(context.fillText).mock.calls.flat()).toContain("拥有");
     expect(vi.mocked(context.fillText).mock.calls.flat()).toContain("Account A");
   });
 

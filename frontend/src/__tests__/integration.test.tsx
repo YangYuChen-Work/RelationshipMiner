@@ -94,6 +94,7 @@ const MOCK_GRAPH: SemanticGraphData = {
           source: "users|1",
           target: "orders|1",
           relation_type: "placed_order",
+          display_label: "下单",
           direction: "source_to_target",
           strength: "strong",
           confidence: 0.98,
@@ -974,10 +975,10 @@ describe("Integration: full user flow", () => {
     expect(d3.zoomTransform(canvas)).not.toEqual(transformBeforeTableFocus);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "users|1--orders|1" }),
+      screen.getByRole("button", { name: /Alice → Order #1.*下单/ }),
     );
     await waitFor(() => {
-      expect(screen.getByText("实体关系详情")).toBeInTheDocument();
+      expect(screen.getByText("Alice → Order #1")).toBeInTheDocument();
       expect(useAnalysisStore.getState().selectedEntityEdgeId).toBe(
         "users|1--orders|1",
       );
@@ -985,18 +986,28 @@ describe("Integration: full user flow", () => {
         "users|1",
       );
     });
-    expect(screen.getByText("placed_order")).toBeInTheDocument();
-    expect(screen.getByText("源 → 目标")).toBeInTheDocument();
-    expect(screen.getByText("strong")).toBeInTheDocument();
-    expect(screen.getByText("98%")).toBeInTheDocument();
+    expect(screen.getByText("下单")).toBeInTheDocument();
+    expect(screen.getByText("明确")).toBeInTheDocument();
     expect(
       screen.getByText("订单通过 user_id 指向用户主键。"),
     ).toBeInTheDocument();
+    expect(screen.getByText("orders.user_id 外键引用 users.id")).toBeInTheDocument();
+    expect(screen.queryByText("placed_order")).not.toBeInTheDocument();
+    expect(screen.queryByText("98%")).not.toBeInTheDocument();
+    expect(screen.queryByText("foreign_key")).not.toBeInTheDocument();
+    expect(screen.queryByText("semantic-model-v1")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("技术依据"));
+    expect(screen.getByText("placed_order")).toBeInTheDocument();
+    expect(screen.getByText("98%")).toBeInTheDocument();
     expect(screen.getByText("id = 1")).toBeInTheDocument();
     expect(screen.getByText("user_id = 1")).toBeInTheDocument();
-    expect(screen.getByText(/foreign_key：orders\.user_id/)).toBeInTheDocument();
+    expect(screen.getByText("foreign_key")).toBeInTheDocument();
     expect(screen.getByText("semantic-model-v1")).toBeInTheDocument();
     expect(screen.getByText("test-task-1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("查看原始数据"));
+    expect(screen.getByText(/"alice@example.com"/)).toBeInTheDocument();
 
   });
 
@@ -1071,37 +1082,33 @@ describe("Integration: full user flow", () => {
 
     await waitFor(() => {
       expect(screen.getByText("表关系汇总")).toBeInTheDocument();
-      expect(screen.getByText("工艺涉及零件")).toBeInTheDocument();
+      expect(screen.getAllByText("工艺涉及零件").length).toBeGreaterThan(0);
       expect(useAnalysisStore.getState().selectedTableEdgeId).toBe(
         PROCESS_TABLE_EDGE_ID,
       );
     });
-    for (const edgeId of PROCESS_SUPPORTING_EDGE_IDS) {
-      expect(
-        screen.getByRole("button", { name: edgeId }),
-      ).toBeInTheDocument();
-    }
-
     fireEvent.click(
       screen.getByRole("button", {
-        name: PROCESS_SUPPORTING_EDGE_IDS[0],
+        name: /转轴 → 转子装配工艺.*工艺涉及零件/,
       }),
     );
     await waitFor(() => {
-      expect(screen.getByText("实体关系详情")).toBeInTheDocument();
+      expect(screen.getByText("转轴 → 转子装配工艺")).toBeInTheDocument();
     });
-    expect(screen.getByText("weak")).toBeInTheDocument();
-    expect(screen.getByText("94%")).toBeInTheDocument();
+    expect(screen.getByText("工艺涉及零件")).toBeInTheDocument();
+    expect(screen.getByText("明确")).toBeInTheDocument();
     expect(
       screen.getByText(
         "转子装配工艺说明明确包含转轴，该记录是实际装配零件而不是名称相似的工艺文件。",
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "description = 依次安装转轴、轴承与转子铁芯，并完成动平衡检查。",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText("工艺描述明确列出该零件名称。")).toBeInTheDocument();
+    expect(screen.queryByText("weak")).not.toBeInTheDocument();
+    expect(screen.queryByText("94%")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("技术依据"));
+    expect(screen.getByText("weak")).toBeInTheDocument();
+    expect(screen.getByText("94%")).toBeInTheDocument();
+    expect(screen.getByText(/description = 依次安装转轴/)).toBeInTheDocument();
     expect(screen.getByText("part_name = 转轴")).toBeInTheDocument();
     expect(screen.getByText("fixture-semantic-model-v1")).toBeInTheDocument();
     expect(screen.getByText("integration-task-1")).toBeInTheDocument();

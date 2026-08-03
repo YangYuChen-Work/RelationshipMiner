@@ -125,6 +125,7 @@ def _build_messages(
                 "source_table": "source_table_name",
                 "target_table": "target_table_name",
                 "relation_type": "business_relationship",
+                "display_label": "使用",
                 "direction": "source_to_target",
                 "source_dimensions": ["selected_source_dimension"],
                 "target_dimensions": ["selected_target_dimension"],
@@ -140,7 +141,10 @@ def _build_messages(
             "content": (
                 "Plan plausible cross-table semantic relationships. "
                 "Use only the provided tables and dimensions. Return "
-                "one JSON object and no prose."
+                "one JSON object and no prose. Keep relation_type as a "
+                "stable internal category. Supply display_label separately "
+                "as a concise Chinese business verb of 2 to 12 code points "
+                "for every plan."
             ),
         },
         {

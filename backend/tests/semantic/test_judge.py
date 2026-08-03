@@ -50,6 +50,7 @@ def _candidate_group(
             source_table="process",
             target_table="part",
             relation_type="process_uses_part",
+            display_label="使用",
             direction="source_to_target",
             source_dimensions=["name"],
             target_dimensions=["name"],
@@ -94,6 +95,7 @@ def _candidate_group_with_database_values() -> CandidateGroup:
             source_table="process",
             target_table="part",
             relation_type="process_uses_part",
+            display_label="使用",
             direction="source_to_target",
             source_dimensions=list(source_values),
             target_dimensions=list(target_values),
@@ -134,6 +136,7 @@ def _verdict(
     target: str = "part:1",
     approved: object = True,
     relation_type: str = "process_uses_part",
+    display_label: str = "使用",
     direction: str = "source_to_target",
     source_field: str = "name",
     target_field: str = "name",
@@ -145,6 +148,7 @@ def _verdict(
         "source": source,
         "target": target,
         "relation_type": relation_type,
+        "display_label": display_label,
         "direction": direction,
         "strength": "weak",
         "confidence": 0.91,
@@ -227,6 +231,7 @@ async def test_one_source_and_multiple_candidates_are_sent_together():
         "part:3",
     ]
     assert prompt["plan"]["relation_type"] == "process_uses_part"
+    assert prompt["plan"]["display_label"] == "使用"
     assert "private_note" not in json.dumps(prompt)
     assert [decision.target for decision in result.decisions] == [
         "part:1",
@@ -234,6 +239,7 @@ async def test_one_source_and_multiple_candidates_are_sent_together():
     ]
     first = result.decisions[0]
     assert first.relation_type == "process_uses_part"
+    assert first.display_label == "使用"
     assert first.direction == "source_to_target"
     assert first.strength == "weak"
     assert first.confidence == pytest.approx(0.91)
@@ -602,6 +608,7 @@ async def test_adapter_error_fails_only_its_group_without_judge_retry():
         _verdict(source="process:outside"),
         _verdict(target="part:outside"),
         _verdict(relation_type="unplanned_relation"),
+        _verdict(display_label="无关短语"),
         _verdict(direction="undirected"),
         _verdict(source_field="private_note"),
         _verdict(target_field="private_note"),
@@ -610,6 +617,7 @@ async def test_adapter_error_fails_only_its_group_without_judge_retry():
         "source",
         "target",
         "relation-type",
+        "display-label",
         "direction",
         "source-field",
         "target-field",

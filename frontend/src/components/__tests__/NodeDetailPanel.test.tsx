@@ -15,8 +15,8 @@ const graph: SemanticGraphData = {
   ],
   table_edges: [{ id: "users--orders", source_table: "users", target_table: "orders", relation_types: ["places"], strong_count: 1, weak_count: 1, entity_edge_count: 2, average_confidence: 0.85, supporting_entity_edges: ["users|1--orders|101", "missing-support"] }],
   entity_edges: [{ id: "users|1--orders|101", source: "users|1", target: "orders|101", relations: [
-    { source: "users|1", target: "orders|101", relation_type: "places", direction: "source_to_target", strength: "strong", confidence: 0.9, explanation: "The order belongs to the user.", evidence: [{ source_field: "id", source_value: 1, target_field: "user_id", target_value: 1, method: "foreign_key", reason: "orders.user_id references users.id" }], model_id: "model-42", task_id: "task-7" },
-    { source: "users|1", target: "orders|101", relation_type: "owns", direction: "target_to_source", strength: "weak", confidence: 0.7, explanation: "Semantic fallback.", evidence: [], model_id: null, task_id: null },
+    { source: "users|1", target: "orders|101", relation_type: "places", display_label: "下单", direction: "source_to_target", strength: "strong", confidence: 0.9, explanation: "The order belongs to the user.", evidence: [{ source_field: "id", source_value: 1, target_field: "user_id", target_value: 1, method: "foreign_key", reason: "订单记录引用该客户。" }], model_id: "model-42", task_id: "task-7" },
+    { source: "users|1", target: "orders|101", relation_type: "owns", display_label: "归属", direction: "target_to_source", strength: "weak", confidence: 0.7, explanation: "Semantic fallback.", evidence: [], model_id: null, task_id: null },
   ] }],
 };
 
@@ -30,64 +30,73 @@ describe("NodeDetailPanel", () => {
     expect(screen.getByText("2 张表 · 2 个实体 · 1 条表关系 · 1 条实体关系")).toBeInTheDocument();
   });
 
-  it("renders table and short class metadata only when a class exists", () => {
+  it("keeps technical metadata and complete dimensions behind separate disclosures", () => {
     useAnalysisStore.setState({ selectedNodeId: "users|1" });
     render(<NodeDetailPanel />);
-    expect(screen.getByText("实体类型").nextElementSibling?.textContent).toBe(
-      "users · User",
-    );
+
+    expect(screen.getByRole("heading", { name: "Alice" })).toBeInTheDocument();
+    expect(screen.queryByText("com.example.User")).not.toBeInTheDocument();
+    expect(screen.queryByText(/"active": true/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("技术依据"));
+    expect(screen.getByText("com.example.User")).toBeInTheDocument();
+    expect(screen.queryByText(/"active": true/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("查看原始数据"));
     expect(screen.getByText(/"active": true/)).toBeInTheDocument();
   });
 
-  it("omits blank or table-equivalent class suffixes", () => {
-    useAnalysisStore.setState({
-      graph: {
-        ...graph,
-        entity_nodes: [
-          { ...graph.entity_nodes[0], class_name: "   " },
-          {
-            ...graph.entity_nodes[1],
-            class_name: " com.example.ORDERS ",
-          },
-        ],
-      },
-      selectedNodeId: "users|1",
-    });
-    const { rerender } = render(<NodeDetailPanel />);
-    expect(screen.getByText("实体类型").nextElementSibling?.textContent).toBe(
-      "users",
-    );
-
-    useAnalysisStore.setState({ selectedNodeId: "orders|101" });
-    rerender(<NodeDetailPanel />);
-    expect(screen.getByText("实体类型").nextElementSibling?.textContent).toBe(
-      "orders",
-    );
-  });
-
-  it("renders every relation and its evidence for a selected entity edge", () => {
+  it("shows business relationship details before disclosure and technical facts only after it", () => {
     useAnalysisStore.setState({ selectedEntityEdgeId: "users|1--orders|101" });
     render(<NodeDetailPanel />);
+
+    expect(screen.getByText("Alice → Order 101")).toBeInTheDocument();
     expect(screen.getByText("全部关系 (2)")).toBeInTheDocument();
-    expect(screen.getByText("places")).toBeInTheDocument();
-    expect(screen.getByText("源 → 目标")).toBeInTheDocument();
-    expect(screen.getByText("strong")).toBeInTheDocument();
-    expect(screen.getByText("90%")).toBeInTheDocument();
+    expect(screen.getByText("下单")).toBeInTheDocument();
+    expect(screen.getByText("明确")).toBeInTheDocument();
+    expect(screen.getByText("归属")).toBeInTheDocument();
+    expect(screen.getByText("较可信")).toBeInTheDocument();
     expect(screen.getByText("The order belongs to the user.")).toBeInTheDocument();
-    expect(screen.getByText("id = 1")).toBeInTheDocument();
-    expect(screen.getByText("user_id = 1")).toBeInTheDocument();
+    expect(screen.getByText("订单记录引用该客户。")).toBeInTheDocument();
+    expect(screen.queryByText("places")).not.toBeInTheDocument();
+    expect(screen.queryByText("foreign_key")).not.toBeInTheDocument();
+    expect(screen.queryByText("90%")).not.toBeInTheDocument();
+    expect(screen.queryByText("com.example.User")).not.toBeInTheDocument();
+    expect(screen.queryByText("model-42")).not.toBeInTheDocument();
+    expect(screen.queryByText("task-7")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByText("技术依据")[0]);
+    expect(screen.getByText("places")).toBeInTheDocument();
+    expect(screen.getByText("foreign_key")).toBeInTheDocument();
+    expect(screen.getByText("90%")).toBeInTheDocument();
+    expect(screen.getByText("com.example.User")).toBeInTheDocument();
     expect(screen.getByText("model-42")).toBeInTheDocument();
     expect(screen.getByText("task-7")).toBeInTheDocument();
-    expect(screen.getByText("owns")).toBeInTheDocument();
+
+    expect(screen.queryByText(/"active": true/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("查看原始数据"));
+    expect(screen.getByText(/"active": true/)).toBeInTheDocument();
+  });
+
+  it("uses shared business presentations for connected-object buttons", () => {
+    useAnalysisStore.setState({ selectedNodeId: "users|1" });
+    render(<NodeDetailPanel />);
+
+    const connected = screen.getByRole("button", { name: /Order 101.*下单.*归属/ });
+    expect(connected).not.toHaveTextContent("orders|101");
+    fireEvent.click(connected);
+    expect(useAnalysisStore.getState().focusNodeRequest?.nodeId).toBe("orders|101");
   });
 
   it("shows table aggregate data and focuses a supporting entity edge", () => {
     useAnalysisStore.setState({ selectedTableEdgeId: "users--orders" });
     render(<NodeDetailPanel />);
     expect(screen.getByText("表关系汇总")).toBeInTheDocument();
-    expect(screen.getByText("places")).toBeInTheDocument();
-    expect(screen.getByText("85%")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "users|1--orders|101" }));
+    expect(screen.getAllByText("下单 · 归属").length).toBeGreaterThan(0);
+    expect(screen.getByText("明确")).toBeInTheDocument();
+    expect(screen.queryByText("places")).not.toBeInTheDocument();
+    expect(screen.queryByText("85%")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Alice → Order 101.*下单.*归属/ }));
     expect(useAnalysisStore.getState().selectedEntityEdgeId).toBe("users|1--orders|101");
     expect(useAnalysisStore.getState().focusNodeRequest?.nodeId).toBe("users|1");
   });
@@ -97,7 +106,7 @@ describe("NodeDetailPanel", () => {
     render(<NodeDetailPanel />);
 
     const unavailable = screen.getByRole("button", {
-      name: /missing-support.*支撑关系不可用/,
+      name: "支撑关系不可用",
     });
     expect(unavailable).toBeDisabled();
 

@@ -1,3 +1,4 @@
+import { useState, type ReactNode } from "react";
 import type {
   EntityEdgeData,
   EntityNodeData,
@@ -5,6 +6,15 @@ import type {
   SemanticGraphData,
   TableEdgeData,
 } from "../api/analysis";
+import {
+  buildBusinessPresentationIndex,
+  type BusinessEntityPresentation,
+} from "../graph/businessPresentation";
+import {
+  businessRelationLabel,
+  confidenceBand,
+} from "../graph/businessRelations";
+import { computeEntityDegrees } from "../graph/semantics";
 import { useAnalysisStore } from "../store/analysis";
 
 function fieldValue(value: unknown): string {
@@ -17,155 +27,311 @@ function confidenceLabel(confidence: number): string {
   return `${Math.round(confidence * 100)}%`;
 }
 
-function shortClassName(className: string | null): string | null {
-  if (!className) return null;
-  const trimmed = className.trim();
-  if (!trimmed) return null;
-  return trimmed.split(/[.$]/).filter(Boolean).at(-1)?.trim() || null;
+function relationLabels(relations: readonly EntityRelationData[]): string {
+  return [...new Set(relations.map(businessRelationLabel))].sort().join(" · ") || "相关";
 }
 
-function comparableLabel(value: string): string {
-  return value.trim().toLocaleLowerCase();
+function Disclosure({
+  summary,
+  children,
+}: {
+  summary: "技术依据" | "查看原始数据";
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details open={open} className="mt-3 rounded border border-slate-700/70 px-3 py-2 text-xs">
+      <summary
+        className="cursor-pointer select-none text-teal-200"
+        onClick={(event) => {
+          event.preventDefault();
+          setOpen((current) => !current);
+        }}
+      >
+        {summary}
+      </summary>
+      {open ? <div className="mt-3">{children}</div> : null}
+    </details>
+  );
 }
 
-function entityLabel(entity: EntityNodeData, graph: SemanticGraphData): string {
-  const tableId = entity.table_id.trim() || entity.table_id;
-  const shortName = shortClassName(entity.class_name);
-  const tableDisplayName = graph.table_nodes.find(
-    (table) => table.id === entity.table_id,
-  )?.display_name;
-  if (
-    !shortName ||
-    comparableLabel(shortName) === comparableLabel(tableId) ||
-    (tableDisplayName &&
-      comparableLabel(shortName) === comparableLabel(tableDisplayName))
-  ) {
-    return tableId;
-  }
-  return `${tableId} · ${shortName}`;
+function RawDimensions({
+  title,
+  dimensions,
+}: {
+  title: string;
+  dimensions: Record<string, unknown>;
+}) {
+  return (
+    <section className="mt-3 first:mt-0">
+      <h4 className="font-semibold text-slate-200">{title}</h4>
+      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words font-mono text-slate-300">
+        {JSON.stringify(dimensions, null, 2)}
+      </pre>
+    </section>
+  );
 }
 
-function directionLabel(direction: EntityRelationData["direction"]): string {
-  return {
-    source_to_target: "源 → 目标",
-    target_to_source: "目标 → 源",
-    undirected: "无方向",
-  }[direction];
-}
-
-function RelationDetails({ relation }: { relation: EntityRelationData }) {
+function RelationDetails({
+  relation,
+  source,
+  target,
+}: {
+  relation: EntityRelationData;
+  source: EntityNodeData;
+  target: EntityNodeData;
+}) {
   return (
     <article className="rounded-lg border border-slate-700/70 bg-slate-900/50 p-3 text-sm">
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
-        <div><dt className="text-xs text-slate-400">关系类型</dt><dd>{relation.relation_type}</dd></div>
-        <div><dt className="text-xs text-slate-400">方向</dt><dd>{directionLabel(relation.direction)}</dd></div>
-        <div><dt className="text-xs text-slate-400">强度</dt><dd>{relation.strength}</dd></div>
-        <div><dt className="text-xs text-slate-400">置信度</dt><dd>{confidenceLabel(relation.confidence)}</dd></div>
-        <div><dt className="text-xs text-slate-400">模型 ID</dt><dd className="break-all font-mono text-xs">{relation.model_id ?? "—"}</dd></div>
-        <div><dt className="text-xs text-slate-400">任务 ID</dt><dd className="break-all font-mono text-xs">{relation.task_id ?? "—"}</dd></div>
-      </dl>
-      <p className="mt-3 text-xs text-slate-400">解释</p>
-      <p className="mt-1 whitespace-pre-wrap text-slate-200">{relation.explanation || "—"}</p>
-      <div className="mt-3 space-y-2">
-        <p className="text-xs text-slate-400">证据字段和值</p>
-        {relation.evidence.length === 0 ? (
-          <p className="text-xs text-slate-500">未提供字段级证据。</p>
-        ) : relation.evidence.map((evidence, index) => (
-          <dl key={`${evidence.source_field}-${evidence.target_field}-${index}`} className="rounded border border-slate-700/60 px-2 py-2 text-xs">
-            <div><dt className="inline text-slate-400">源字段：</dt><dd className="inline font-mono text-slate-200">{evidence.source_field} = {fieldValue(evidence.source_value)}</dd></div>
-            <div className="mt-1"><dt className="inline text-slate-400">目标字段：</dt><dd className="inline font-mono text-slate-200">{evidence.target_field} = {fieldValue(evidence.target_value)}</dd></div>
-            <p className="mt-1 text-slate-400">{evidence.method}：{evidence.reason}</p>
-          </dl>
-        ))}
+      <div className="flex items-center justify-between gap-3">
+        <h4 className="font-semibold text-slate-100">
+          {businessRelationLabel(relation)}
+        </h4>
+        <span className="rounded-full bg-teal-400/10 px-2 py-1 text-xs text-teal-200">
+          {confidenceBand(relation.confidence)}
+        </span>
       </div>
+      <p className="mt-3 whitespace-pre-wrap text-slate-200">
+        {relation.explanation || "暂无业务解释。"}
+      </p>
+      <div className="mt-3">
+        <p className="text-xs text-slate-400">关系证据</p>
+        {relation.evidence.length === 0 ? (
+          <p className="mt-1 text-xs text-slate-500">暂无补充证据。</p>
+        ) : (
+          <ul className="mt-2 space-y-2 text-xs text-slate-300">
+            {relation.evidence.map((evidence, index) => (
+              <li
+                key={`${evidence.source_field}-${evidence.target_field}-${index}`}
+                className="rounded border border-slate-700/60 px-2 py-2"
+              >
+                {evidence.reason || "已有字段匹配证据。"}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <Disclosure summary="技术依据">
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-slate-300">
+          <div><dt className="text-slate-500">原始关系类型</dt><dd className="break-all font-mono">{relation.relation_type || "—"}</dd></div>
+          <div><dt className="text-slate-500">精确置信度</dt><dd>{confidenceLabel(relation.confidence)}</dd></div>
+          <div><dt className="text-slate-500">方向</dt><dd>{relation.direction}</dd></div>
+          <div><dt className="text-slate-500">强度</dt><dd>{relation.strength}</dd></div>
+          <div><dt className="text-slate-500">源 class_name</dt><dd className="break-all font-mono">{source.class_name ?? "—"}</dd></div>
+          <div><dt className="text-slate-500">目标 class_name</dt><dd className="break-all font-mono">{target.class_name ?? "—"}</dd></div>
+          <div><dt className="text-slate-500">模型 ID</dt><dd className="break-all font-mono">{relation.model_id ?? "—"}</dd></div>
+          <div><dt className="text-slate-500">任务 ID</dt><dd className="break-all font-mono">{relation.task_id ?? "—"}</dd></div>
+        </dl>
+        {relation.evidence.length > 0 ? (
+          <div className="mt-3 space-y-2">
+            {relation.evidence.map((evidence, index) => (
+              <dl
+                key={`${evidence.source_field}-${evidence.target_field}-${index}`}
+                className="rounded border border-slate-700/60 px-2 py-2"
+              >
+                <div><dt className="inline text-slate-500">源字段：</dt><dd className="inline font-mono">{evidence.source_field} = {fieldValue(evidence.source_value)}</dd></div>
+                <div><dt className="inline text-slate-500">目标字段：</dt><dd className="inline font-mono">{evidence.target_field} = {fieldValue(evidence.target_value)}</dd></div>
+                <div><dt className="inline text-slate-500">匹配方法：</dt><dd className="inline font-mono">{evidence.method}</dd></div>
+              </dl>
+            ))}
+          </div>
+        ) : null}
+      </Disclosure>
     </article>
   );
 }
 
-function EntityEdgeDetails({ edge, graph }: { edge: EntityEdgeData; graph: SemanticGraphData }) {
+function EntityEdgeDetails({
+  edge,
+  graph,
+  presentations,
+}: {
+  edge: EntityEdgeData;
+  graph: SemanticGraphData;
+  presentations: ReadonlyMap<string, BusinessEntityPresentation>;
+}) {
   const entities = new Map(graph.entity_nodes.map((entity) => [entity.id, entity]));
+  const source = entities.get(edge.source);
+  const target = entities.get(edge.target);
+  if (!source || !target) return null;
+  const sourcePresentation = presentations.get(source.id);
+  const targetPresentation = presentations.get(target.id);
+  const sourceName = sourcePresentation?.primary ?? source.display_name;
+  const targetName = targetPresentation?.primary ?? target.display_name;
   return (
     <div className="space-y-5 px-5 py-5">
       <section>
-        <h2 className="text-sm font-semibold text-slate-100">实体关系详情</h2>
-        <p className="mt-2 break-all font-mono text-xs text-teal-200">{edge.id}</p>
-        <p className="mt-2 text-sm text-slate-300">
-          {entities.get(edge.source)?.display_name ?? edge.source} → {entities.get(edge.target)?.display_name ?? edge.target}
-        </p>
+        <p className="text-xs text-slate-400">实体关系</p>
+        <h2 className="mt-2 text-base font-semibold text-slate-100">
+          {sourceName} → {targetName}
+        </h2>
       </section>
       <section className="space-y-3">
         <h3 className="text-sm font-semibold text-slate-100">全部关系 ({edge.relations.length})</h3>
-        {edge.relations.map((relation, index) => <RelationDetails key={`${relation.relation_type}-${index}`} relation={relation} />)}
+        {edge.relations.map((relation, index) => (
+          <RelationDetails
+            key={`${relation.relation_type}-${index}`}
+            relation={relation}
+            source={source}
+            target={target}
+          />
+        ))}
       </section>
+      <Disclosure summary="查看原始数据">
+        <RawDimensions title={sourceName} dimensions={source.dimensions} />
+        <RawDimensions title={targetName} dimensions={target.dimensions} />
+      </Disclosure>
     </div>
   );
 }
 
-function TableEdgeDetails({ edge, graph }: { edge: TableEdgeData; graph: SemanticGraphData }) {
+function TableEdgeDetails({
+  edge,
+  graph,
+  presentations,
+}: {
+  edge: TableEdgeData;
+  graph: SemanticGraphData;
+  presentations: ReadonlyMap<string, BusinessEntityPresentation>;
+}) {
   const selectEntityEdge = useAnalysisStore((state) => state.selectEntityEdge);
   const requestNodeFocus = useAnalysisStore((state) => state.requestNodeFocus);
   const edges = new Map(graph.entity_edges.map((entityEdge) => [entityEdge.id, entityEdge]));
+  const sourceTable = graph.table_nodes.find((table) => table.id === edge.source_table)?.display_name ?? edge.source_table;
+  const targetTable = graph.table_nodes.find((table) => table.id === edge.target_table)?.display_name ?? edge.target_table;
+  const supportingEdges = edge.supporting_entity_edges.flatMap((edgeId) => {
+    const supporting = edges.get(edgeId);
+    return supporting ? [supporting] : [];
+  });
+  const labels = supportingEdges.length > 0
+    ? relationLabels(supportingEdges.flatMap((supporting) => supporting.relations))
+    : [...new Set(edge.relation_types.map((relation_type) =>
+      businessRelationLabel({ relation_type })
+    ))].sort().join(" · ") || "相关";
   return (
     <div className="space-y-5 px-5 py-5">
       <section>
         <h2 className="text-sm font-semibold text-slate-100">表关系汇总</h2>
-        <p className="mt-2 text-sm text-slate-300">{edge.source_table} → {edge.target_table}</p>
+        <p className="mt-2 text-sm text-slate-300">{sourceTable} → {targetTable}</p>
       </section>
       <dl className="grid grid-cols-2 gap-3 rounded-lg border border-slate-700/70 p-3 text-sm">
-        <div><dt className="text-xs text-slate-400">关系类型</dt><dd>{edge.relation_types.join(" · ") || "—"}</dd></div>
-        <div><dt className="text-xs text-slate-400">平均置信度</dt><dd>{confidenceLabel(edge.average_confidence)}</dd></div>
-        <div><dt className="text-xs text-slate-400">强关系</dt><dd>{edge.strong_count}</dd></div>
-        <div><dt className="text-xs text-slate-400">弱关系</dt><dd>{edge.weak_count}</dd></div>
-        <div><dt className="text-xs text-slate-400">支持实体边</dt><dd>{edge.entity_edge_count}</dd></div>
+        <div><dt className="text-xs text-slate-400">业务关系</dt><dd>{labels}</dd></div>
+        <div><dt className="text-xs text-slate-400">可信程度</dt><dd>{confidenceBand(edge.average_confidence)}</dd></div>
+        <div><dt className="text-xs text-slate-400">明确关系</dt><dd>{edge.strong_count}</dd></div>
+        <div><dt className="text-xs text-slate-400">候选关系</dt><dd>{edge.weak_count}</dd></div>
+        <div><dt className="text-xs text-slate-400">支持对象对</dt><dd>{edge.entity_edge_count}</dd></div>
       </dl>
       <section>
-        <h3 className="text-sm font-semibold text-slate-100">支持此汇总的实体关系</h3>
-        {edge.supporting_entity_edges.length === 0 ? <p className="mt-2 text-sm text-slate-400">没有可聚焦的支持关系。</p> : (
+        <h3 className="text-sm font-semibold text-slate-100">支持此汇总的对象关系</h3>
+        {edge.supporting_entity_edges.length === 0 ? (
+          <p className="mt-2 text-sm text-slate-400">没有可聚焦的支持关系。</p>
+        ) : (
           <ul className="mt-3 space-y-2">
             {edge.supporting_entity_edges.map((edgeId) => {
-              const supportingEdge = edges.get(edgeId);
-              if (!supportingEdge) {
+              const supporting = edges.get(edgeId);
+              if (!supporting) {
                 return (
                   <li key={edgeId}>
-                    <button
-                      type="button"
-                      disabled
-                      className="w-full cursor-not-allowed rounded border border-slate-800 px-3 py-2 text-left font-mono text-xs text-slate-500"
-                    >
-                      <span className="block">{edgeId}</span>
-                      <span className="mt-1 block font-sans">支撑关系不可用</span>
+                    <button type="button" disabled className="w-full cursor-not-allowed rounded border border-slate-800 px-3 py-2 text-left text-xs text-slate-500">
+                      支撑关系不可用
                     </button>
                   </li>
                 );
               }
-              return <li key={edgeId}><button type="button" className="w-full rounded border border-slate-700 px-3 py-2 text-left font-mono text-xs text-teal-200 hover:border-teal-400" onClick={() => {
-                requestNodeFocus(supportingEdge.source);
-                selectEntityEdge(edgeId);
-              }}>{edgeId}</button></li>;
+              const sourceName = presentations.get(supporting.source)?.primary ?? "未命名对象";
+              const targetName = presentations.get(supporting.target)?.primary ?? "未命名对象";
+              return (
+                <li key={edgeId}>
+                  <button
+                    type="button"
+                    className="w-full rounded border border-slate-700 px-3 py-2 text-left text-xs text-teal-200 hover:border-teal-400"
+                    onClick={() => {
+                      requestNodeFocus(supporting.source);
+                      selectEntityEdge(edgeId);
+                    }}
+                  >
+                    <span className="block text-sm text-slate-100">{sourceName} → {targetName}</span>
+                    <span className="mt-1 block">{relationLabels(supporting.relations)}</span>
+                  </button>
+                </li>
+              );
             })}
           </ul>
         )}
       </section>
+      <Disclosure summary="技术依据">
+        <dl className="space-y-2 text-slate-300">
+          <div><dt className="text-slate-500">源表 ID</dt><dd className="font-mono">{edge.source_table}</dd></div>
+          <div><dt className="text-slate-500">目标表 ID</dt><dd className="font-mono">{edge.target_table}</dd></div>
+          <div><dt className="text-slate-500">原始关系类型</dt><dd className="font-mono">{edge.relation_types.join(" · ") || "—"}</dd></div>
+          <div><dt className="text-slate-500">精确平均置信度</dt><dd>{confidenceLabel(edge.average_confidence)}</dd></div>
+          <div><dt className="text-slate-500">支持关系 ID</dt><dd className="break-all font-mono">{edge.supporting_entity_edges.join(" · ") || "—"}</dd></div>
+        </dl>
+      </Disclosure>
     </div>
   );
 }
 
-function NodeDetails({ node, graph }: { node: EntityNodeData; graph: SemanticGraphData }) {
+function NodeDetails({
+  node,
+  graph,
+  presentations,
+}: {
+  node: EntityNodeData;
+  graph: SemanticGraphData;
+  presentations: ReadonlyMap<string, BusinessEntityPresentation>;
+}) {
   const setSelectedNode = useAnalysisStore((state) => state.setSelectedNode);
   const requestNodeFocus = useAnalysisStore((state) => state.requestNodeFocus);
   const relations = graph.entity_edges.filter((edge) => edge.source === node.id || edge.target === node.id);
+  const presentation = presentations.get(node.id);
   return (
     <div className="space-y-6 px-5 py-5">
       <section>
-        <div className="flex items-start justify-between gap-3"><h2 className="text-sm font-semibold text-slate-100">节点概览</h2><button type="button" onClick={() => setSelectedNode(null)} className="rounded p-1 text-slate-400 hover:bg-slate-800 lg:hidden" aria-label="关闭节点详情">×</button></div>
-        <dl className="mt-3 space-y-3 text-sm">
-          <div><dt className="text-xs text-slate-400">完整 ID</dt><dd className="mt-1 break-all font-mono text-xs text-slate-100">{node.id}</dd></div>
-          <div><dt className="text-xs text-slate-400">实体类型</dt><dd className="mt-1 text-slate-100">{entityLabel(node, graph)}</dd></div>
-          <div><dt className="text-xs text-slate-400">显示名称</dt><dd className="mt-1 text-slate-100">{node.display_name}</dd></div>
-        </dl>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs text-slate-400">业务对象</p>
+            <h2 className="mt-1 text-base font-semibold text-slate-100">
+              {presentation?.primary ?? node.display_name}
+            </h2>
+            {presentation?.secondary ? <p className="mt-1 text-xs text-slate-400">{presentation.secondary}</p> : null}
+          </div>
+          <button type="button" onClick={() => setSelectedNode(null)} className="rounded p-1 text-slate-400 hover:bg-slate-800 lg:hidden" aria-label="关闭节点详情">×</button>
+        </div>
+        <Disclosure summary="技术依据">
+          <dl className="space-y-2 text-slate-300">
+            <div><dt className="text-slate-500">完整 ID</dt><dd className="break-all font-mono">{node.id}</dd></div>
+            <div><dt className="text-slate-500">表 ID</dt><dd className="font-mono">{node.table_id}</dd></div>
+            <div><dt className="text-slate-500">class_name</dt><dd className="break-all font-mono">{node.class_name ?? "—"}</dd></div>
+            <div><dt className="text-slate-500">显示代码</dt><dd className="font-mono">{node.display_code ?? "—"}</dd></div>
+          </dl>
+        </Disclosure>
+        <Disclosure summary="查看原始数据">
+          <RawDimensions title="完整字段" dimensions={node.dimensions} />
+        </Disclosure>
       </section>
-      <section><h2 className="text-sm font-semibold text-slate-100">字段值</h2>{Object.keys(node.dimensions).length === 0 ? <p className="mt-3 text-sm text-slate-400">没有可显示的字段值。</p> : <dl className="mt-3 divide-y divide-slate-700/70 overflow-hidden rounded-lg border border-slate-700/70">{Object.entries(node.dimensions).map(([key, value]) => <div key={key} className="px-3 py-2.5"><dt className="font-mono text-xs text-teal-200">{key}</dt><dd className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-slate-200">{fieldValue(value)}</dd></div>)}</dl>}</section>
-      <section><h2 className="text-sm font-semibold text-slate-100">直接关系</h2>{relations.length === 0 ? <p className="mt-3 text-sm text-slate-400">没有直接关系。</p> : <ul className="mt-3 space-y-2">{relations.map((edge) => { const targetId = edge.source === node.id ? edge.target : edge.source; return <li key={edge.id}><button type="button" onClick={() => requestNodeFocus(targetId)} className="w-full rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-3 text-left hover:border-teal-500/70"><span className="block break-all font-mono text-xs text-teal-200">{targetId}</span><span className="mt-1 block text-xs text-slate-400">{edge.relations.map((relation) => relation.relation_type).join(" · ") || "关系"}</span></button></li>; })}</ul>}</section>
+      <section>
+        <h3 className="text-sm font-semibold text-slate-100">直接关系</h3>
+        {relations.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-400">没有直接关系。</p>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {relations.map((edge) => {
+              const targetId = edge.source === node.id ? edge.target : edge.source;
+              const target = presentations.get(targetId);
+              return (
+                <li key={edge.id}>
+                  <button type="button" onClick={() => requestNodeFocus(targetId)} className="w-full rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-3 text-left hover:border-teal-500/70">
+                    <span className="block text-sm text-slate-100">{target?.primary ?? "未命名对象"}</span>
+                    {target?.secondary ? <span className="mt-1 block text-xs text-slate-500">{target.secondary}</span> : null}
+                    <span className="mt-1 block text-xs text-teal-200">{relationLabels(edge.relations)}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
@@ -179,9 +345,36 @@ export default function NodeDetailPanel() {
   const entityEdge = graph?.entity_edges.find((edge) => edge.id === selectedEntityEdgeId);
   const tableEdge = graph?.table_edges.find((edge) => edge.id === selectedTableEdgeId);
   const hasSelection = Boolean(node || entityEdge || tableEdge);
+  const presentations = graph
+    ? buildBusinessPresentationIndex(
+      graph.entity_nodes,
+      computeEntityDegrees(graph.entity_nodes, graph.entity_edges),
+    )
+    : new Map<string, BusinessEntityPresentation>();
 
-  return <aside className={`${hasSelection ? "fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:w-auto lg:max-w-none lg:shadow-none" : "hidden lg:block"} min-h-0 overflow-y-auto border-l border-slate-700/70 bg-[#101c2a]`} aria-label="关系详情检查器">
-    <header className="border-b border-slate-700/70 px-5 py-4"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-300">关系详情</p><p className="mt-1 text-sm text-slate-400">选择实体边、表边或节点以查看可追溯数据。</p></header>
-    {graph && entityEdge ? <EntityEdgeDetails edge={entityEdge} graph={graph} /> : graph && tableEdge ? <TableEdgeDetails edge={tableEdge} graph={graph} /> : graph && node ? <NodeDetails node={node} graph={graph} /> : <div className="px-5 py-5"><h2 className="text-sm font-semibold text-slate-100">图谱概览</h2>{graph ? <p className="mt-2 text-sm text-slate-400">{graph.table_nodes.length} 张表 · {graph.entity_nodes.length} 个实体 · {graph.table_edges.length} 条表关系 · {graph.entity_edges.length} 条实体关系</p> : <p className="mt-2 text-sm text-slate-400">图谱生成后将在此处显示概览。</p>}<p className="mt-4 rounded-lg border border-dashed border-slate-700 px-3 py-4 text-sm text-slate-400">选择一项查看详情</p></div>}
-  </aside>;
+  return (
+    <aside className={`${hasSelection ? "fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:w-auto lg:max-w-none lg:shadow-none" : "hidden lg:block"} min-h-0 overflow-y-auto border-l border-slate-700/70 bg-[#101c2a]`} aria-label="关系详情检查器">
+      <header className="border-b border-slate-700/70 px-5 py-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-300">关系详情</p>
+        <p className="mt-1 text-sm text-slate-400">先看业务含义，需要时再展开技术依据和原始数据。</p>
+      </header>
+      {graph && entityEdge ? (
+        <EntityEdgeDetails edge={entityEdge} graph={graph} presentations={presentations} />
+      ) : graph && tableEdge ? (
+        <TableEdgeDetails edge={tableEdge} graph={graph} presentations={presentations} />
+      ) : graph && node ? (
+        <NodeDetails node={node} graph={graph} presentations={presentations} />
+      ) : (
+        <div className="px-5 py-5">
+          <h2 className="text-sm font-semibold text-slate-100">图谱概览</h2>
+          {graph ? (
+            <p className="mt-2 text-sm text-slate-400">{graph.table_nodes.length} 张表 · {graph.entity_nodes.length} 个实体 · {graph.table_edges.length} 条表关系 · {graph.entity_edges.length} 条实体关系</p>
+          ) : (
+            <p className="mt-2 text-sm text-slate-400">图谱生成后将在此处显示概览。</p>
+          )}
+          <p className="mt-4 rounded-lg border border-dashed border-slate-700 px-3 py-4 text-sm text-slate-400">选择一项查看详情。</p>
+        </div>
+      )}
+    </aside>
+  );
 }

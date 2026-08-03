@@ -47,6 +47,7 @@ class RelationshipPlan(BaseModel):
     source_table: str
     target_table: str
     relation_type: str
+    display_label: str = "相关"
     direction: Literal["source_to_target", "target_to_source", "undirected"]
     source_dimensions: list[str]
     target_dimensions: list[str]
@@ -84,6 +85,7 @@ class RelationDecision(BaseModel):
     source: str
     target: str
     relation_type: str
+    display_label: str = "相关"
     direction: Literal["source_to_target", "target_to_source", "undirected"]
     strength: Literal["strong", "weak"]
     confidence: float = Field(ge=0, le=1)

@@ -46,6 +46,7 @@ class _DecisionPayload(BaseModel):
     source: str
     target: str
     relation_type: str
+    display_label: str
     direction: Literal[
         "source_to_target",
         "target_to_source",
@@ -343,6 +344,7 @@ def _build_messages(
                 "source": "exact supplied source entity_id",
                 "target": "one exact supplied candidate entity_id",
                 "relation_type": "exact planned relation_type",
+                "display_label": "exact planned display_label",
                 "direction": "exact planned direction",
                 "strength": "weak",
                 "confidence": "number from 0 through 1",
@@ -364,7 +366,8 @@ def _build_messages(
                 "whose selected fields explicitly support the planned "
                 "relation, and mark every returned relationship with "
                 "approved=true. Omit rejected candidates. Use only the "
-                "supplied entity IDs, relation type, direction, and fields. "
+                "supplied entity IDs, relation type, display label, "
+                "direction, and fields. "
                 "business_context identifies the two objects. "
                 "auxiliary_evidence may only support or reject a "
                 "relationship. Approved relationships are weak and "
@@ -505,6 +508,7 @@ def _validated_decisions(
             payload.source != group.source.entity_id
             or payload.target not in candidates
             or payload.relation_type != group.plan.relation_type
+            or payload.display_label != group.plan.display_label
             or payload.direction != group.plan.direction
         ):
             raise ValueError("judgement is outside its candidate group")
@@ -551,6 +555,7 @@ def _validated_decisions(
                 source=payload.source,
                 target=payload.target,
                 relation_type=payload.relation_type,
+                display_label=payload.display_label,
                 direction=payload.direction,
                 strength=payload.strength,
                 confidence=payload.confidence,

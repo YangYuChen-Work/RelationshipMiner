@@ -25,6 +25,7 @@ import {
   buildBusinessPresentationIndex,
   type BusinessEntityPresentation,
 } from "./businessPresentation";
+import { businessRelationLabel } from "./businessRelations";
 import {
   computeEntityDegrees,
   visibleEntityRelations,
@@ -42,7 +43,7 @@ const EDGE_LABEL_BUCKET_WIDTH = 96;
 const EDGE_LABEL_BUCKET_HEIGHT = 32;
 const EDGE_LABEL_MAX_TEXT_WIDTH = 344;
 const EDGE_LABEL_HORIZONTAL_PADDING = 8;
-const UNRESOLVED_MIXED_RELATION_LABEL = "mixed relationships";
+const UNRESOLVED_MIXED_RELATION_LABEL = "相关";
 const LAYER_OPACITY = {
   overview: { tableEdges: 0.58, entityEdges: 0.10 },
   work: { tableEdges: 0.12, entityEdges: 0.42 },
@@ -268,8 +269,10 @@ function tableEdgeVisible(edge: TableEdgeData, threshold: number): boolean {
       edge.average_confidence >= threshold);
 }
 
-function relationLabel(values: readonly string[]): string {
-  return [...new Set(values.filter(Boolean))].sort().join(" · ");
+function relationLabel(
+  relations: readonly Pick<EntityRelationData, "display_label" | "relation_type">[],
+): string {
+  return [...new Set(relations.map(businessRelationLabel))].sort().join(" · ");
 }
 
 function byId<T extends { id: string }>(items: readonly T[]): Map<string, T> {
@@ -387,6 +390,7 @@ function buildEdgeLabels(
   tableEdges: readonly SceneEdge[],
   entityEdges: readonly SceneEdge[],
   transform: GraphTransform,
+  reservedBounds: readonly LabelBounds[],
 ): SceneEdgeLabel[] {
   const occupiedByBucket = new Map<string, LabelBounds[]>();
   const candidates = [
@@ -431,6 +435,10 @@ function buildEdgeLabels(
       top: screen.y - 10,
       bottom: screen.y + 10,
     };
+    if (
+      kind === "entity" &&
+      reservedBounds.some((reserved) => overlaps(reserved, bounds))
+    ) continue;
     const keys = bucketKeys(bounds);
     if (!keys) continue;
     const nearby = new Set(
@@ -470,7 +478,7 @@ function tableEdgeSemantics(
     );
     if (relations.length === 0) return null;
     return {
-      label: relationLabel(relations.map((relation) => relation.relation_type)),
+      label: relationLabel(relations),
       lineStyle: relations.some((relation) => relation.strength === "strong")
         ? "solid"
         : "dashed",
@@ -486,7 +494,9 @@ function tableEdgeSemantics(
     };
   }
   return {
-    label: relationLabel(edge.relation_types),
+    label: relationLabel(
+      edge.relation_types.map((relation_type) => ({ relation_type })),
+    ),
     lineStyle: edge.strong_count > 0 ? "solid" : "dashed",
     direction: "undirected",
   };
@@ -614,7 +624,7 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       const command = edgeCommand(
         layoutEdge,
         transform,
-        relationLabel(relations.map((relation) => relation.relation_type)),
+        relationLabel(relations),
         relations.some((relation) => relation.strength === "strong")
           ? "solid"
           : "dashed",
@@ -635,7 +645,20 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       world: node.world,
       screen: node.screen,
     }));
-  const edgeLabels = buildEdgeLabels(tableEdges, entityEdges, transform);
+  const edgeLabels = buildEdgeLabels(
+    tableEdges,
+    entityEdges,
+    transform,
+    entityLabels.map((label) => ({
+      left: label.screen.x + 6,
+      right: label.screen.x + 6 + Math.max(
+        label.primary.length * 7,
+        label.secondary.length * 6,
+      ),
+      top: label.screen.y - 13,
+      bottom: label.screen.y + 13,
+    })),
+  );
 
   const sceneWithoutIndex = {
     transform,

@@ -27,7 +27,7 @@ export interface RelationEvidenceData {
   source_value: unknown;
   target_field: string;
   target_value: unknown;
-  method: "foreign_key" | "unique_identifier" | "llm_semantic_reasoning";
+  method: "foreign_key" | "unique_identifier" | "relation_table" | "llm_semantic_reasoning";
   reason: string;
 }
 
@@ -35,6 +35,8 @@ export interface EntityRelationData {
   source: string;
   target: string;
   relation_type: string;
+  /** Optional while loading graph snapshots created before business labels. */
+  display_label?: string;
   direction: "source_to_target" | "target_to_source" | "undirected";
   strength: "strong" | "weak";
   confidence: number;
