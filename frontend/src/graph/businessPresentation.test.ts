@@ -90,6 +90,25 @@ describe("businessName", () => {
   ])("keeps the valid human business name %s", (name) => {
     expect(businessName(entity("legacy", "Fallback", null, { name }))).toBe(name);
   });
+
+  it.each([
+    "状态已批准",
+    "已通过",
+    "状态处理中",
+    "未通过",
+    "当前状态已拒绝",
+  ])("rejects the unseparated Chinese status-only name %s", (statusName) => {
+    expect(businessName(entity("legacy", statusName))).toBe("未命名对象");
+  });
+
+  it.each([
+    "已通过检验的通信天线",
+    "未通过滤波器",
+    "状态处理中继设备",
+    "当前状态已拒绝原因分析",
+  ])("keeps a business name containing the status-like substring %s", (name) => {
+    expect(businessName(entity("legacy", "Fallback", null, { name }))).toBe(name);
+  });
 });
 
 describe("buildBusinessPresentationIndex", () => {

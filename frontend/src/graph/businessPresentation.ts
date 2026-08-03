@@ -13,6 +13,53 @@ const NON_MEANINGFUL_LITERALS = new Set([
   "+infinity",
   "-infinity",
 ]);
+const CHINESE_STATUS_PHRASES = new Set([
+  "启用",
+  "禁用",
+  "正常",
+  "异常",
+  "完成",
+  "已完成",
+  "失败",
+  "待处理",
+  "处理中",
+  "已处理",
+  "批准",
+  "已批准",
+  "拒绝",
+  "已拒绝",
+  "接受",
+  "已接受",
+  "待审核",
+  "审核中",
+  "已审核",
+  "待审批",
+  "审批中",
+  "已审批",
+  "草稿",
+  "已删除",
+  "已归档",
+  "开放",
+  "关闭",
+  "已取消",
+  "排队中",
+  "运行中",
+  "已停止",
+  "暂停",
+  "新建",
+  "未知",
+  "有效",
+  "无效",
+  "已发布",
+  "未发布",
+  "已锁定",
+  "未锁定",
+  "已验证",
+  "未验证",
+  "通过",
+  "已通过",
+  "未通过",
+]);
 const STATUS_ONLY_TOKENS = new Set([
   "status",
   "state",
@@ -75,50 +122,7 @@ const STATUS_ONLY_TOKENS = new Set([
   "on",
   "off",
   "状态",
-  "启用",
-  "禁用",
-  "正常",
-  "异常",
-  "完成",
-  "已完成",
-  "失败",
-  "待处理",
-  "处理中",
-  "已处理",
-  "批准",
-  "已批准",
-  "拒绝",
-  "已拒绝",
-  "接受",
-  "已接受",
-  "待审核",
-  "审核中",
-  "已审核",
-  "待审批",
-  "审批中",
-  "已审批",
-  "草稿",
-  "已删除",
-  "已归档",
-  "开放",
-  "关闭",
-  "已取消",
-  "排队中",
-  "运行中",
-  "已停止",
-  "暂停",
-  "新建",
-  "未知",
-  "有效",
-  "无效",
-  "已发布",
-  "未发布",
-  "已锁定",
-  "未锁定",
-  "已验证",
-  "未验证",
-  "通过",
-  "未通过",
+  ...CHINESE_STATUS_PHRASES,
 ]);
 
 export interface BusinessEntityPresentation {
@@ -130,6 +134,14 @@ export interface BusinessEntityPresentation {
 }
 
 function isStatusOnlyText(normalized: string): boolean {
+  const compact = normalized.replace(/\s+/gu, "");
+  const unprefixedChineseStatus = compact.startsWith("当前状态")
+    ? compact.slice("当前状态".length)
+    : compact.startsWith("状态")
+      ? compact.slice("状态".length)
+      : compact;
+  if (CHINESE_STATUS_PHRASES.has(unprefixedChineseStatus)) return true;
+
   const tokens = normalized
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
