@@ -1316,6 +1316,8 @@ describe("Integration: full user flow", () => {
     await waitFor(() => expect(canvas).toHaveAttribute("data-scene-ready", "true"));
     fireEvent.change(search, { target: { value: "通信天线装配 同名 2" } });
     fireEvent.click(screen.getByRole("button", { name: "定位" }));
+    await waitFor(() => expect(screen.getByText("1 / 2")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "下一个匹配节点" }));
     await waitFor(() => expect(screen.getByText("同名 2")).toBeInTheDocument());
 
     act(() => useAnalysisStore.getState().selectEntityEdge("legacy-edge-1"));
