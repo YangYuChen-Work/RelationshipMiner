@@ -3,6 +3,7 @@
 通过 OpenAI 兼容接口调用 DeepSeek API，用于 AI 字段语义匹配决策。
 """
 
+import asyncio
 import json
 import sys
 import time
@@ -27,6 +28,7 @@ class DeepSeekJsonAdapter:
         base_url: str | None = None,
         model: str | None = None,
         client: object | None = None,
+        request_timeout_seconds: float | None = None,
     ):
         self.api_key = (
             api_key
@@ -41,6 +43,13 @@ class DeepSeekJsonAdapter:
         self.model = (
             model if model is not None else settings.DEEPSEEK_MODEL
         )
+        self.request_timeout_seconds = (
+            request_timeout_seconds
+            if request_timeout_seconds is not None
+            else settings.LLM_REQUEST_TIMEOUT_SECONDS
+        )
+        if self.request_timeout_seconds <= 0:
+            raise ValueError("request_timeout_seconds must be positive")
         self._client = client
 
     async def complete_json(
@@ -73,13 +82,19 @@ class DeepSeekJsonAdapter:
         last_error: Exception | None = None
         for attempt in range(2):
             try:
-                response = await self._client.chat.completions.create(
-                    model=self.model,
-                    messages=attempt_messages,
-                    temperature=0.1,
-                    response_format={"type": "json_object"},
-                    max_tokens=max_tokens,
-                )
+                try:
+                    async with asyncio.timeout(self.request_timeout_seconds):
+                        response = await self._client.chat.completions.create(
+                            model=self.model,
+                            messages=attempt_messages,
+                            temperature=0.1,
+                            response_format={"type": "json_object"},
+                            max_tokens=max_tokens,
+                        )
+                except TimeoutError as error:
+                    raise TimeoutError(
+                        "LLM provider attempt timed out"
+                    ) from error
                 choice = response.choices[0]
                 _elapsed = time.monotonic() - _start
                 usage = getattr(response, "usage", None)
@@ -122,8 +137,7 @@ class DeepSeekJsonAdapter:
                         "content": (
                             "The previous JSON response failed "
                             f"validation: {error}. Return one corrected "
-                            "JSON object matching the requested example "
-                            "and schema."
+                            "JSON object matching the requested contract."
                         ),
                     },
                 ]

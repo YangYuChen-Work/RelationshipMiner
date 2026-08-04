@@ -22,6 +22,9 @@ class Settings:
         "DEEPSEEK_MODEL",
         "deepseek-v4-flash",
     )
+    LLM_REQUEST_TIMEOUT_SECONDS: float = float(
+        os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "45")
+    )
 
     # Semantic retrieval
     HF_HOME: str = os.getenv("HF_HOME", "")

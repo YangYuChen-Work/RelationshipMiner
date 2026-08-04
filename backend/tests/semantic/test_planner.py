@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -125,6 +126,45 @@ async def test_json_adapter_repairs_pydantic_invalid_output_once():
     repair_prompt = create.await_args.kwargs["messages"][-1]["content"]
     assert "plans" in repair_prompt
     assert "validation" in repair_prompt.lower()
+    assert "requested example" not in repair_prompt.lower()
+    assert "requested contract" in repair_prompt.lower()
+
+
+class _NeverCompletingCreate:
+    def __init__(self):
+        self.attempts = 0
+        self.cancelled_attempts = 0
+
+    async def __call__(self, **_: object) -> SimpleNamespace:
+        self.attempts += 1
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled_attempts += 1
+            raise
+        raise AssertionError("unreachable")
+
+
+@pytest.mark.asyncio
+async def test_json_adapter_times_out_and_cancels_each_provider_attempt():
+    create = _NeverCompletingCreate()
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create),
+        )
+    )
+    adapter = DeepSeekJsonAdapter(
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        client=client,
+        request_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(LlmBatchError, match="timed out"):
+        await adapter.complete_json(_messages(), max_tokens=4096)
+
+    assert create.attempts == 2
+    assert create.cancelled_attempts == 2
 
 
 @pytest.mark.asyncio
