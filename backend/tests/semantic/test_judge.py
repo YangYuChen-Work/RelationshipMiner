@@ -6,11 +6,14 @@ import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
 
+from engine.deepseek_client import DeepSeekJsonAdapter, LlmBatchError
 from engine.semantic.deadline import DeadlineExceeded
 from engine.semantic.judge import SemanticJudge
 from engine.semantic.models import (
@@ -433,6 +436,74 @@ async def test_omitted_evidence_values_are_hydrated_from_trusted_documents():
         "Rotor assembly process:1"
     )
     assert result.decisions[0].evidence[0].target_value == "Rotor"
+
+
+@pytest.mark.asyncio
+async def test_deepseek_adapter_accepts_field_only_evidence_without_retry():
+    class _LegacyEvidencePayload(BaseModel):
+        source_field: str
+        source_value: object
+        target_field: str
+        target_value: object
+        method: str
+        reason: str
+
+    class _LegacyDecisionPayload(BaseModel):
+        approved: bool
+        source: str
+        target: str
+        relation_type: str
+        display_label: str
+        direction: str
+        strength: str
+        confidence: float
+        explanation: str
+        evidence: list[_LegacyEvidencePayload]
+
+    class _LegacyJudgementEnvelope(BaseModel):
+        decisions: list[_LegacyDecisionPayload]
+
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(
+                    content=json.dumps({"decisions": [_verdict()]})
+                ),
+            )
+        ]
+    )
+    create = AsyncMock(return_value=response)
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create),
+        )
+    )
+    adapter = DeepSeekJsonAdapter(
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        client=client,
+    )
+
+    with pytest.raises(LlmBatchError):
+        await adapter.complete_json(
+            [{"role": "user", "content": "Return judgement JSON."}],
+            max_tokens=4096,
+            response_model=_LegacyJudgementEnvelope,
+        )
+
+    assert create.await_count == 2
+    create.reset_mock()
+
+    result = await SemanticJudge(adapter).judge_groups(
+        [_candidate_group()],
+        deadline=time.monotonic() + 30,
+    )
+
+    assert create.await_count == 1
+    assert result.completed_groups == 1
+    assert result.failed_groups == 0
+    assert len(result.decisions) == 1
 
 
 @pytest.mark.asyncio
