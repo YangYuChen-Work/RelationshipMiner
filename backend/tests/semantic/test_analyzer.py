@@ -415,9 +415,7 @@ async def test_analyzer_keeps_completed_weak_edge_when_candidate_stream_deadline
                     "explanation": "The selected values support the relation.",
                     "evidence": [{
                         "source_field": "email",
-                        "source_value": source["auxiliary_evidence"]["email"],
                         "target_field": "title",
-                        "target_value": target["auxiliary_evidence"]["title"],
                         "method": "llm_semantic_reasoning",
                         "reason": "The selected values match.",
                     }],
