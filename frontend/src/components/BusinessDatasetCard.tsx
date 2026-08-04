@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { TableBusinessSummary } from "../api/tables";
 import { isAuxiliaryColumn, useAnalysisStore } from "../store/analysis";
 
@@ -12,6 +13,7 @@ export default function BusinessDatasetCard({
   summary,
   disabled,
 }: BusinessDatasetCardProps) {
+  const [fieldsExpanded, setFieldsExpanded] = useState(true);
   const selectedTables = useAnalysisStore((state) => state.selectedTables);
   const pendingTables = useAnalysisStore((state) => state.pendingTables);
   const tableErrors = useAnalysisStore((state) => state.tableErrors);
@@ -72,11 +74,23 @@ export default function BusinessDatasetCard({
                 </p>
               )}
             </div>
-            {summary && (
-              <span className="shrink-0 text-sm text-gray-500">
-                {summary.row_count} 个对象
-              </span>
-            )}
+            <div className="flex shrink-0 items-center gap-3">
+              {summary && (
+                <span className="text-sm text-gray-500">
+                  {summary.row_count} 个对象
+                </span>
+              )}
+              {isSelected && entry && (
+                <button
+                  type="button"
+                  aria-expanded={fieldsExpanded}
+                  onClick={() => setFieldsExpanded((expanded) => !expanded)}
+                  className="text-xs font-medium text-blue-700 hover:underline"
+                >
+                  {fieldsExpanded ? "收缩字段" : "展开字段"}
+                </button>
+              )}
+            </div>
           </div>
 
           {summary && summary.name_samples.length > 0 && (
@@ -118,7 +132,7 @@ export default function BusinessDatasetCard({
         </div>
       )}
 
-      {isSelected && entry && (
+      {isSelected && entry && fieldsExpanded && (
         <div className="space-y-4 border-t border-gray-200 bg-white px-4 py-4">
           <section aria-label={`${tableName} 主要判断信息`}>
             <h4 className="text-sm font-semibold text-gray-800">主要判断信息</h4>

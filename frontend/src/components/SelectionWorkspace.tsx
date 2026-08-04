@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import AnalysisLauncher from "./AnalysisLauncher";
 import BusinessDatasetCard from "./BusinessDatasetCard";
+import DatabaseInfoCard from "./DatabaseInfoCard";
 import { useAnalysisStore } from "../store/analysis";
 
 export default function SelectionWorkspace() {
@@ -53,6 +54,8 @@ export default function SelectionWorkspace() {
           {selectedCount} / {maxTables} 表
         </span>
       </div>
+
+      <DatabaseInfoCard />
 
       {selectedCount >= maxTables && (
         <p

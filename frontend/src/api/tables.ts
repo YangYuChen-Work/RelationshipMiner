@@ -4,6 +4,13 @@ export interface TableInfo {
   name: string;
 }
 
+export interface DatabaseInfo {
+  connection_status: "connected" | "unavailable";
+  database_name: string;
+  connection_address: string;
+  table_count: number;
+}
+
 export interface ColumnInfo {
   name: string;
   type: string;
@@ -63,6 +70,14 @@ export async function fetchTables(): Promise<TableInfo[]> {
   const res = await fetch(`${BASE}/tables`);
   if (!res.ok) {
     throw new Error(await apiErrorMessage(res, "获取表列表失败"));
+  }
+  return res.json();
+}
+
+export async function fetchDatabaseInfo(): Promise<DatabaseInfo> {
+  const res = await fetch(`${BASE}/database-info`);
+  if (!res.ok) {
+    throw new Error(await apiErrorMessage(res, "获取数据库信息失败"));
   }
   return res.json();
 }

@@ -22,6 +22,15 @@ class ColumnInfo(BaseModel):
     is_foreign_key: bool
 
 
+class DatabaseInfoResponse(BaseModel):
+    """Safe connection metadata for the data-selection workspace."""
+
+    connection_status: Literal["connected", "unavailable"]
+    database_name: str
+    connection_address: str
+    table_count: int
+
+
 class TableColumnsResponse(BaseModel):
     """表的列列表响应。"""
 

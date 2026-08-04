@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchTableColumns, fetchTableSummaries, fetchTables } from "./tables";
+import {
+  fetchDatabaseInfo,
+  fetchTableColumns,
+  fetchTableSummaries,
+  fetchTables,
+} from "./tables";
 
 describe("tables API contracts", () => {
   afterEach(() => {
@@ -35,6 +40,31 @@ describe("tables API contracts", () => {
       },
     ]);
     expect(fetch).toHaveBeenCalledWith("/api/table-summaries");
+  });
+
+  it("returns database information without turning it into client-side configuration", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          connection_status: "connected",
+          database_name: "operations",
+          connection_address: "db.internal:3307/operations",
+          table_count: 4,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(fetchDatabaseInfo()).resolves.toEqual({
+      connection_status: "connected",
+      database_name: "operations",
+      connection_address: "db.internal:3307/operations",
+      table_count: 4,
+    });
+    expect(fetch).toHaveBeenCalledWith("/api/database-info");
   });
 
   it("returns primary-key and foreign-key browse metadata", async () => {

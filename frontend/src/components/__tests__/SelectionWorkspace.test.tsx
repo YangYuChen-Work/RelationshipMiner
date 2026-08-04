@@ -141,4 +141,33 @@ describe("SelectionWorkspace table search", () => {
     ).toBeEnabled();
     expect(screen.queryByText("加载失败")).not.toBeInTheDocument();
   });
+
+  it("shows safe database connection facts in the selection workspace", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          connection_status: "connected",
+          database_name: "operations",
+          connection_address: "db.internal:3307/operations",
+          table_count: 4,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    render(<SelectionWorkspace />);
+
+    const databaseInfo = await screen.findByRole("region", {
+      name: "数据库信息",
+    });
+    expect(databaseInfo).toHaveTextContent("已连接");
+    expect(databaseInfo).toHaveTextContent("operations");
+    expect(databaseInfo).toHaveTextContent("db.internal:3307/operations");
+    expect(databaseInfo).toHaveTextContent("4 张表");
+    expect(databaseInfo).not.toHaveTextContent("root");
+    expect(fetch).toHaveBeenCalledWith("/api/database-info");
+  });
 });

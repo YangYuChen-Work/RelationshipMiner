@@ -143,4 +143,34 @@ describe("BusinessDatasetCard", () => {
       name: "选择业务数据 装配工艺数据（来源 assembly_process）",
     })).toBeVisible();
   });
+
+  it("collapses and restores the complete field details without changing the table selection", async () => {
+    const user = userEvent.setup();
+    render(
+      <BusinessDatasetCard
+        tableName="assembly_process"
+        summary={summary}
+        disabled={false}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "收缩字段" })).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "字段 description" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "收缩字段" }));
+
+    expect(screen.getByRole("button", { name: "展开字段" })).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: "字段 description" })).not.toBeInTheDocument();
+    expect(screen.queryByText("主要判断信息")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", {
+        name: "选择业务数据 装配工艺数据（来源 assembly_process）",
+      }),
+    ).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "展开字段" }));
+
+    expect(screen.getByRole("checkbox", { name: "字段 description" })).toBeVisible();
+    expect(screen.getByText("主要判断信息")).toBeVisible();
+  });
 });

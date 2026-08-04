@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from config import settings
 from database import (
     get_engine,
     get_table_columns,
@@ -21,6 +22,7 @@ from engine.table_semantics import (
 )
 from models.schemas import (
     ColumnInfo,
+    DatabaseInfoResponse,
     TableBusinessSummaryResponse,
     TableColumnsResponse,
     TableInfo,
@@ -68,6 +70,32 @@ def _fallback_summaries(
         )
         for summary_input in inputs
     ]
+
+
+def _database_address() -> str:
+    """Return connection location only; credentials must never reach clients."""
+    return f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+
+
+@router.get("/database-info", response_model=DatabaseInfoResponse)
+def database_info(engine: Engine = Depends(get_engine)):
+    """Return safe database connection facts for the selection workspace."""
+    try:
+        table_count = len(get_table_names(engine))
+    except (SQLAlchemyError, RuntimeError):
+        return DatabaseInfoResponse(
+            connection_status="unavailable",
+            database_name=settings.DB_NAME,
+            connection_address=_database_address(),
+            table_count=0,
+        )
+
+    return DatabaseInfoResponse(
+        connection_status="connected",
+        database_name=settings.DB_NAME,
+        connection_address=_database_address(),
+        table_count=table_count,
+    )
 
 
 @router.get("/tables", response_model=list[TableInfo])
