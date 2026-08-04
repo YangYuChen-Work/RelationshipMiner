@@ -418,6 +418,45 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBe("invoice");
   });
 
+  it("keeps an active fuzzy result when projection adds an earlier match", async () => {
+    render(<GraphCanvas />);
+    await ready();
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    fireEvent.change(search, { target: { value: "account invoice" } });
+    fireEvent.submit(search.closest("form")!);
+    fireEvent.click(screen.getByRole("button", { name: "下一个匹配节点" }));
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("invoice");
+
+    act(() => useAnalysisStore.getState().setShowIsolatedNodes(true));
+    await ready();
+
+    expect(screen.getByText("3 / 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "下一个匹配节点" }));
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
+  });
+
+  it("resets navigation to the first fuzzy result when the active result disappears", async () => {
+    act(() => useAnalysisStore.getState().setShowIsolatedNodes(true));
+    render(<GraphCanvas />);
+    await ready();
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    fireEvent.change(search, { target: { value: "account" } });
+    fireEvent.submit(search.closest("form")!);
+    fireEvent.click(screen.getByRole("button", { name: "下一个匹配节点" }));
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("b");
+
+    act(() => useAnalysisStore.getState().setShowIsolatedNodes(false));
+    await ready();
+
+    await waitFor(() => expect(screen.getByText("1 / 1")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "下一个匹配节点" }));
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
+  });
+
   it("shows an empty fuzzy search state and disables next-result navigation", async () => {
     render(<GraphCanvas />);
     await ready();

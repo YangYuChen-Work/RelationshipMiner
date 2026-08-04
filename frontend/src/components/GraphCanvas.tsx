@@ -195,7 +195,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const [canvasError, setCanvasError] = useState<string | null>(null);
   const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeSearchIndex, setActiveSearchIndex] = useState(-1);
+  const [activeSearchResultId, setActiveSearchResultId] = useState<string | null>(null);
   const [sceneGeneration, setSceneGeneration] = useState(0);
   const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
 
@@ -276,6 +276,17 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     })), searchQuery),
     [searchQuery, searchableEntities],
   );
+  const activeSearchIndex = useMemo(
+    () => activeSearchResultId
+      ? searchResults.findIndex((result) => result.id === activeSearchResultId)
+      : -1,
+    [activeSearchResultId, searchResults],
+  );
+
+  useEffect(() => {
+    if (!activeSearchResultId || activeSearchIndex >= 0) return;
+    setActiveSearchResultId(searchResults[0]?.id ?? null);
+  }, [activeSearchIndex, activeSearchResultId, searchResults]);
 
   const acquireCanvasContext = useCallback(
     (canvas: HTMLCanvasElement): CanvasRenderingContext2D | null => {
@@ -842,7 +853,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       y: node.y,
     });
     requestNodeFocus(result.id);
-    setActiveSearchIndex(index);
+    setActiveSearchResultId(result.id);
   }, [businessPresentations, layout, requestNodeFocus, searchQuery, searchResults, setKeyboardTarget]);
 
   const focusNextSearchResult = useCallback(() => {
@@ -1055,7 +1066,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
             value={searchQuery}
             onChange={(event) => {
               setSearchQuery(event.target.value);
-              setActiveSearchIndex(-1);
+              setActiveSearchResultId(null);
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
