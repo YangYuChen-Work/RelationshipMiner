@@ -298,7 +298,7 @@ class SemanticJudge:
                 async with asyncio.timeout_at(deadline):
                     payload = await self._llm.complete_json(
                         _build_messages(group),
-                        max_tokens=16384,
+                        max_tokens=4096,
                         response_model=_JudgementEnvelope,
                     )
             except TimeoutError:
@@ -348,9 +348,44 @@ def _build_messages(
                 "confidence": "number from 0 through 1",
                 "explanation": "non-empty relation explanation",
                 "evidence": (
-                    "non-empty array of selected source/target field "
-                    "values, method llm_semantic_reasoning, and reason"
+                    "non-empty array of evidence objects"
                 ),
+            },
+            "evidence_fields": {
+                "source_field": (
+                    "one supplied source auxiliary-evidence field name"
+                ),
+                "target_field": (
+                    "one supplied target auxiliary-evidence field name"
+                ),
+                "method": "llm_semantic_reasoning",
+                "reason": (
+                    "non-empty explanation of how those fields support "
+                    "the relation"
+                ),
+            },
+            "response_shape_example": {
+                "decisions": [
+                    {
+                        "approved": True,
+                        "source": "<supplied-source-id>",
+                        "target": "<supplied-target-id>",
+                        "relation_type": "<planned-relation-type>",
+                        "display_label": "<planned-display-label>",
+                        "direction": "<planned-direction>",
+                        "strength": "weak",
+                        "confidence": 0.0,
+                        "explanation": "<relation-explanation>",
+                        "evidence": [
+                            {
+                                "source_field": "<selected-source-field>",
+                                "target_field": "<selected-target-field>",
+                                "method": "llm_semantic_reasoning",
+                                "reason": "<field-support-explanation>",
+                            }
+                        ],
+                    }
+                ]
             },
         },
     }
@@ -370,7 +405,10 @@ def _build_messages(
                 "auxiliary_evidence may only support or reject a "
                 "relationship. Approved relationships are weak and "
                 "must include field evidence. Return one JSON object "
-                "with a decisions array and no prose."
+                "with a decisions array and no prose. "
+                "Evidence contains field names, method, and reason only. "
+                "Do not return source_value or target_value; the server "
+                "derives them from supplied records."
             ),
         },
         {

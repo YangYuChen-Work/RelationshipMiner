@@ -172,6 +172,7 @@ class _RecordingLlm:
     ) -> None:
         self._responder = responder
         self.calls: list[list[dict[str, object]]] = []
+        self.max_tokens: list[int] = []
         self.response_models: list[type[BaseModel] | None] = []
 
     async def complete_json(
@@ -181,6 +182,7 @@ class _RecordingLlm:
         response_model: type[BaseModel] | None = None,
     ) -> dict[str, object]:
         self.calls.append(messages)
+        self.max_tokens.append(max_tokens)
         self.response_models.append(response_model)
         payload = self._responder(messages)
         if response_model is None:
@@ -403,7 +405,16 @@ async def test_prompt_schema_does_not_preapprove_a_real_candidate():
     assert prompt["response_schema"]["decision_fields"]["approved"] == (
         "strict boolean true"
     )
+    assert prompt["response_schema"]["evidence_fields"] == {
+        "source_field": "one supplied source auxiliary-evidence field name",
+        "target_field": "one supplied target auxiliary-evidence field name",
+        "method": "llm_semantic_reasoning",
+        "reason": "non-empty explanation of how those fields support the relation",
+    }
+    assert "source_value" not in prompt_text
+    assert "target_value" not in prompt_text
     assert prompt_text.count('"part:1"') == 1
+    assert llm.max_tokens == [4096]
     assert result.completed_groups == 1
 
 
