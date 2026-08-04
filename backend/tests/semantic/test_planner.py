@@ -63,6 +63,21 @@ def _messages() -> list[dict[str, object]]:
     ]
 
 
+@pytest.mark.parametrize(
+    "invalid_timeout",
+    [0, -1, float("inf"), float("nan")],
+    ids=["zero", "negative", "infinite", "nan"],
+)
+def test_json_adapter_rejects_non_positive_or_non_finite_timeout(
+    invalid_timeout: float,
+):
+    with pytest.raises(ValueError, match="request_timeout_seconds"):
+        DeepSeekJsonAdapter(
+            api_key="test-key",
+            request_timeout_seconds=invalid_timeout,
+        )
+
+
 @pytest.mark.asyncio
 async def test_json_adapter_requests_json_output_with_planner_token_limit():
     adapter, create = _adapter_with_responses(

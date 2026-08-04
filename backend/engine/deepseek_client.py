@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import math
 import sys
 import time
 
@@ -48,7 +49,10 @@ class DeepSeekJsonAdapter:
             if request_timeout_seconds is not None
             else settings.LLM_REQUEST_TIMEOUT_SECONDS
         )
-        if self.request_timeout_seconds <= 0:
+        if not (
+            math.isfinite(self.request_timeout_seconds)
+            and self.request_timeout_seconds > 0
+        ):
             raise ValueError("request_timeout_seconds must be positive")
         self._client = client
 
