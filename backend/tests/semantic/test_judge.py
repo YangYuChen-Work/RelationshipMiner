@@ -140,8 +140,6 @@ def _verdict(
     direction: str = "source_to_target",
     source_field: str = "name",
     target_field: str = "name",
-    source_value: object = "Rotor assembly process:1",
-    target_value: object = "Rotor",
 ) -> dict[str, object]:
     return {
         "approved": approved,
@@ -156,9 +154,7 @@ def _verdict(
         "evidence": [
             {
                 "source_field": source_field,
-                "source_value": source_value,
                 "target_field": target_field,
-                "target_value": target_value,
                 "method": "llm_semantic_reasoning",
                 "reason": "The selected names have the same business meaning.",
             }
@@ -206,11 +202,9 @@ async def test_one_source_and_multiple_candidates_are_sent_together():
                 _verdict(
                     target="part:2",
                     approved=False,
-                    target_value="Bearing",
                 ),
                 _verdict(
                     target="part:3",
-                    target_value="Rotor housing",
                 ),
             ]
         }
@@ -349,8 +343,6 @@ async def test_canonical_database_values_round_trip_as_evidence():
                     target="part:typed",
                     source_field="amount",
                     target_field="available_on",
-                    source_value=canonical_decimal,
-                    target_value=canonical_date,
                 )
             ]
         }
@@ -416,16 +408,31 @@ async def test_prompt_schema_does_not_preapprove_a_real_candidate():
 
 
 @pytest.mark.asyncio
+async def test_omitted_evidence_values_are_hydrated_from_trusted_documents():
+    result = await SemanticJudge(
+        _RecordingLlm(lambda _messages: {"decisions": [_verdict()]})
+    ).judge_groups(
+        [_candidate_group()],
+        deadline=time.monotonic() + 30,
+    )
+
+    assert result.completed_groups == 1
+    assert result.failed_groups == 0
+    assert result.decisions[0].evidence[0].source_value == (
+        "Rotor assembly process:1"
+    )
+    assert result.decisions[0].evidence[0].target_value == "Rotor"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "source_value",
-    [
-        "12.30",
-        {"$type": "decimal", "value": "99.99"},
-    ],
-    ids=["wrong-type", "forged-value"],
+    ("source_field", "target_field"),
+    [("private_note", "available_on"), ("amount", "private_note")],
+    ids=["unplanned-source-field", "unplanned-target-field"],
 )
-async def test_noncanonical_or_forged_evidence_value_fails_group(
-    source_value: object,
+async def test_out_of_plan_evidence_field_fails_group(
+    source_field: str,
+    target_field: str,
 ):
     llm = _RecordingLlm(
         lambda _messages: {
@@ -433,13 +440,8 @@ async def test_noncanonical_or_forged_evidence_value_fails_group(
                 _verdict(
                     source="process:typed",
                     target="part:typed",
-                    source_field="amount",
-                    target_field="available_on",
-                    source_value=source_value,
-                    target_value={
-                        "$type": "date",
-                        "value": "2026-07-30",
-                    },
+                    source_field=source_field,
+                    target_field=target_field,
                 )
             ]
         }

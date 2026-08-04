@@ -32,9 +32,7 @@ class _EvidencePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_field: str
-    source_value: object
     target_field: str
-    target_value: object
     method: Literal["llm_semantic_reasoning"]
     reason: str
 
@@ -449,28 +447,6 @@ def _canonical_json_value(value: object) -> object:
     )
 
 
-def _same_canonical_value(left: object, right: object) -> bool:
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, dict):
-        return (
-            left.keys() == right.keys()
-            and all(
-                _same_canonical_value(left[key], right[key])
-                for key in left
-            )
-        )
-    if isinstance(left, list):
-        return (
-            len(left) == len(right)
-            and all(
-                _same_canonical_value(left_item, right_item)
-                for left_item, right_item in zip(left, right)
-            )
-        )
-    return left == right
-
-
 def _is_valid_group(group: CandidateGroup) -> bool:
     if group.source.table_name != group.plan.source_table:
         return False
@@ -520,18 +496,6 @@ def _validated_decisions(
                 not in group.plan.source_dimensions
                 or evidence.target_field
                 not in group.plan.target_dimensions
-                or not _same_canonical_value(
-                    evidence.source_value,
-                    _canonical_json_value(
-                        group.source.dimensions[evidence.source_field]
-                    ),
-                )
-                or not _same_canonical_value(
-                    evidence.target_value,
-                    _canonical_json_value(
-                        target.dimensions[evidence.target_field]
-                    ),
-                )
             ):
                 raise ValueError("judgement evidence is outside its plan")
 
@@ -561,8 +525,21 @@ def _validated_decisions(
                 confidence=payload.confidence,
                 explanation=payload.explanation,
                 evidence=[
-                    RelationEvidence.model_validate(
-                        evidence.model_dump()
+                    RelationEvidence(
+                        source_field=evidence.source_field,
+                        source_value=_canonical_json_value(
+                            group.source.dimensions[
+                                evidence.source_field
+                            ]
+                        ),
+                        target_field=evidence.target_field,
+                        target_value=_canonical_json_value(
+                            target.dimensions[
+                                evidence.target_field
+                            ]
+                        ),
+                        method=evidence.method,
+                        reason=evidence.reason,
                     )
                     for evidence in payload.evidence
                 ],
