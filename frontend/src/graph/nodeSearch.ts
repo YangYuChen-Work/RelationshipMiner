@@ -16,7 +16,7 @@ export function searchNodes(
     const text = normalize([node.primary, node.secondary, node.className, node.id].filter(Boolean).join(" "));
     return keywords.some((keyword) => text.includes(keyword));
   }).toSorted((left, right) =>
-    normalize(right.primary).localeCompare(normalize(left.primary)) || left.id.localeCompare(right.id),
+    normalize(left.primary).localeCompare(normalize(right.primary)) || left.id.localeCompare(right.id),
   );
 }
 

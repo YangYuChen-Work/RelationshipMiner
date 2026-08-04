@@ -9,7 +9,17 @@ describe("graph node search", () => {
       { id: "c", primary: "发票", secondary: "", className: "Invoice" },
     ], "  ＣＵＳＴＯＭＥＲ   发票 ");
 
-    expect(results.map((node) => node.id)).toEqual(["a", "c"]);
+    expect(results.map((node) => node.id)).toEqual(["c", "a"]);
+  });
+
+  it("sorts matching business names ascending and breaks ties by ID", () => {
+    const results = searchNodes([
+      { id: "z", primary: "Alpha", secondary: "", className: "Business" },
+      { id: "b", primary: "Bravo", secondary: "", className: "Business" },
+      { id: "a", primary: "Alpha", secondary: "", className: "Business" },
+    ], "business");
+
+    expect(results.map((node) => node.id)).toEqual(["a", "z", "b"]);
   });
 
   it("wraps navigation after the final result and keeps empty queries empty", () => {
