@@ -28,6 +28,7 @@ import { buildScene, type GraphTransform, type RenderScene } from "../graph/scen
 import { hitTest, type HitTarget } from "../graph/hitTest";
 import { buildBusinessPresentationIndex } from "../graph/businessPresentation";
 import { buildBusinessTablePresentationIndex } from "../graph/businessTables";
+import { nextSearchIndex, searchNodes } from "../graph/nodeSearch";
 import { computeEntityDegrees, visibleEntityRelations } from "../graph/semantics";
 import { useAnalysisStore } from "../store/analysis";
 
@@ -113,14 +114,6 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function normalizedSearchQuery(value: string): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ")
-    .toLocaleLowerCase();
-}
-
 function getSize(element: HTMLElement) {
   const rect = element.getBoundingClientRect();
   return {
@@ -202,6 +195,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const [canvasError, setCanvasError] = useState<string | null>(null);
   const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearchIndex, setActiveSearchIndex] = useState(-1);
   const [sceneGeneration, setSceneGeneration] = useState(0);
   const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
 
@@ -272,6 +266,15 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       return presentation ? [{ entity, presentation }] : [];
     }).sort((left, right) => compareText(left.entity.id, right.entity.id)),
     [businessPresentations, projectedGraph],
+  );
+  const searchResults = useMemo(
+    () => searchNodes(searchableEntities.map(({ entity, presentation }) => ({
+      id: entity.id,
+      primary: presentation.primary,
+      secondary: presentation.secondary,
+      className: entity.class_name,
+    })), searchQuery),
+    [searchQuery, searchableEntities],
   );
 
   const acquireCanvasContext = useCallback(
@@ -814,46 +817,37 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     setKeyboardTarget(next);
   }, [keyboardTargets, setKeyboardTarget]);
 
-  const locateEntity = useCallback(() => {
-    const query = normalizedSearchQuery(searchQuery);
-    if (!query || !layout) {
-      setKeyboardAnnouncement(query ? `未找到实体：${searchQuery.trim()}` : "请输入实体名称或 ID");
+  const focusSearchResult = useCallback((index: number) => {
+    const result = searchResults[index];
+    const node = result
+      ? layout?.entityNodes.find((candidate) => candidate.id === result.id)
+      : undefined;
+    if (!result || !node) {
+      if (!searchQuery.trim()) {
+        setKeyboardAnnouncement("请输入实体名称或 ID");
+      } else {
+        setKeyboardAnnouncement(`未找到实体：${searchQuery.trim()}`);
+      }
       return;
     }
-    const rankedMatches = [
-      (candidate: (typeof searchableEntities)[number]) =>
-        candidate.presentation.searchText === query,
-      (candidate: (typeof searchableEntities)[number]) =>
-        candidate.presentation.searchText.startsWith(query),
-      (candidate: (typeof searchableEntities)[number]) =>
-        candidate.presentation.searchText.includes(query),
-    ];
-    const businessMatch = rankedMatches
-      .map((matches) => searchableEntities.find(matches))
-      .find((candidate) => candidate !== undefined);
-    const technicalCompatibilityMatch = businessMatch
-      ? undefined
-      : searchableEntities.find(({ entity }) =>
-        normalizedSearchQuery(entity.id) === query
-      );
-    const match = businessMatch ?? technicalCompatibilityMatch;
-    const entity = match?.entity;
-    const presentation = match?.presentation;
-    const node = entity
-      ? layout.entityNodes.find((candidate) => candidate.id === entity.id)
-      : undefined;
-    if (!entity || !presentation || !node) {
+    const presentation = businessPresentations.get(result.id);
+    if (!presentation) {
       setKeyboardAnnouncement(`未找到实体：${searchQuery.trim()}`);
       return;
     }
     setKeyboardTarget({
-      hit: { kind: "entity-node", id: entity.id },
+      hit: { kind: "entity-node", id: result.id },
       label: `${presentation.accessibleLabel}，实体`,
       x: node.x,
       y: node.y,
     });
-    requestNodeFocus(entity.id);
-  }, [layout, requestNodeFocus, searchQuery, searchableEntities, setKeyboardTarget]);
+    requestNodeFocus(result.id);
+    setActiveSearchIndex(index);
+  }, [businessPresentations, layout, requestNodeFocus, searchQuery, searchResults, setKeyboardTarget]);
+
+  const focusNextSearchResult = useCallback(() => {
+    focusSearchResult(nextSearchIndex(activeSearchIndex, searchResults.length));
+  }, [activeSearchIndex, focusSearchResult, searchResults.length]);
 
   const focusSupportingRelations = useCallback((tableEdgeId: string) => {
     if (!projectedGraph || !layout || !zoomRef.current || !canvasRef.current) return;
@@ -1052,27 +1046,46 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
           className="absolute right-3 top-3 flex gap-1 rounded-md bg-slate-950/85 p-1.5"
           onSubmit={(event) => {
             event.preventDefault();
-            locateEntity();
+            focusSearchResult(0);
           }}
         >
           <input
             type="search"
             aria-label="查找实体"
             value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setActiveSearchIndex(-1);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                locateEntity();
+                focusSearchResult(0);
               }
             }}
             className="w-44 rounded bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
+          {searchQuery.trim() && (
+            <span className="self-center whitespace-nowrap px-1 text-xs text-slate-200">
+              {searchResults.length > 0
+                ? `${activeSearchIndex >= 0 ? activeSearchIndex + 1 : 0} / ${searchResults.length}`
+                : "未找到匹配节点"}
+            </span>
+          )}
           <button
             type="submit"
             className="rounded bg-teal-400 px-2 py-1 text-xs font-semibold text-slate-950"
           >
             定位
+          </button>
+          <button
+            type="button"
+            aria-label="下一个匹配节点"
+            disabled={searchResults.length === 0}
+            onClick={focusNextSearchResult}
+            className="rounded bg-slate-700 px-2 py-1 text-xs font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            下一个
           </button>
         </form>
       )}

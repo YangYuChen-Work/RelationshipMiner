@@ -24,6 +24,14 @@ const graph: SemanticGraphData = {
   entity_edges: [{ id: "a--invoice", source: "a", target: "invoice", relations: [{ source: "a", target: "invoice", relation_type: "owns", display_label: "拥有", direction: "source_to_target", strength: "strong", confidence: 0.9, explanation: "fixture", evidence: [], model_id: null, task_id: null }] }],
 };
 
+const fuzzySearchGraph: SemanticGraphData = {
+  ...graph,
+  entity_nodes: [
+    { id: "a", table_id: "accounts", display_name: "客户", class_name: "Customer", dimensions: {} },
+    { id: "invoice", table_id: "billing", display_name: "发票", class_name: "Invoice", dimensions: {} },
+  ],
+};
+
 function canvasContext() {
   return {
     arc: vi.fn(), beginPath: vi.fn(), clearRect: vi.fn(), closePath: vi.fn(), fill: vi.fn(), fillRect: vi.fn(), fillText: vi.fn(), lineTo: vi.fn(), measureText: vi.fn((text: string) => ({ width: text.length * 7 })), moveTo: vi.fn(), quadraticCurveTo: vi.fn(), restore: vi.fn(), save: vi.fn(), setLineDash: vi.fn(), setTransform: vi.fn(), stroke: vi.fn(), strokeRect: vi.fn(),
@@ -388,6 +396,66 @@ describe("GraphCanvas", () => {
     expect(canvas.getAttribute("aria-label")).toContain("3 个实体");
     fireEvent.keyDown(search, { key: "Enter" });
     expect(useAnalysisStore.getState().selectedNodeId).toBe("b");
+  });
+
+  it("navigates fuzzy matches in ascending business-name order and wraps", async () => {
+    act(() => setGraph(fuzzySearchGraph));
+    render(<GraphCanvas />);
+    await ready();
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    fireEvent.change(search, { target: { value: "客户 发票" } });
+    fireEvent.submit(search.closest("form")!);
+
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("invoice");
+
+    fireEvent.click(screen.getByRole("button", { name: "下一个匹配节点" }));
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
+
+    fireEvent.click(screen.getByRole("button", { name: "下一个匹配节点" }));
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("invoice");
+  });
+
+  it("shows an empty fuzzy search state and disables next-result navigation", async () => {
+    render(<GraphCanvas />);
+    await ready();
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    fireEvent.change(search, { target: { value: "不存在" } });
+    fireEvent.submit(search.closest("form")!);
+
+    expect(screen.getByText("未找到匹配节点")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下一个匹配节点" })).toBeDisabled();
+  });
+
+  it("focuses an exact entity ID through fuzzy search", async () => {
+    const graphWithTechnicalId: SemanticGraphData = {
+      ...fuzzySearchGraph,
+      entity_nodes: [
+        ...fuzzySearchGraph.entity_nodes,
+        { id: "entity-6999", table_id: "accounts", display_name: "归档", class_name: "Archive", dimensions: {} },
+      ],
+      entity_edges: [
+        ...fuzzySearchGraph.entity_edges,
+        {
+          id: "a--entity-6999",
+          source: "a",
+          target: "entity-6999",
+          relations: [{ source: "a", target: "entity-6999", relation_type: "contains", display_label: "包含", direction: "source_to_target", strength: "strong", confidence: 0.9, explanation: "fixture", evidence: [], model_id: null, task_id: null }],
+        },
+      ],
+    };
+    act(() => setGraph(graphWithTechnicalId));
+    render(<GraphCanvas />);
+    await ready();
+
+    const search = screen.getByRole("searchbox", { name: "查找实体" });
+    fireEvent.change(search, { target: { value: "entity-6999" } });
+    fireEvent.submit(search.closest("form")!);
+
+    expect(useAnalysisStore.getState().selectedNodeId).toBe("entity-6999");
   });
 
   it("coalesces resize bursts behind one in-flight compact worker request", async () => {
