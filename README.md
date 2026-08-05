@@ -25,7 +25,7 @@
 | 后端 | Python 3.12 + FastAPI + SQLAlchemy + NumPy + Sentence Transformers |
 | AI | DeepSeek API (deepseek-v4-flash) + BAAI/bge-small-zh-v1.5 |
 | 数据库 | MySQL (SQLAlchemy 反射) |
-| 测试 | 571 tests (Pytest 277 + Vitest 294) |
+| 测试 | Pytest + Vitest |
 
 ## 快速开始
 
@@ -98,10 +98,10 @@ npm run dev
 ## 测试
 
 ```powershell
-# 后端 (277 tests)
+# 后端
 uv run --directory backend pytest
 
-# 前端 (294 tests)
+# 前端
 cd frontend
 npm test
 
@@ -115,17 +115,19 @@ uv run --directory backend pytest; cd frontend; npm test -- --run; npm run build
 ai-graph/
 ├── backend/                    # FastAPI 后端
 │   ├── engine/                 # 分析引擎
-│   │   └── semantic/           # 语义分析核心模块
-│   ├── routers/                # API 路由（tables, analyze）
+│   │   ├── semantic/           # 语义分析核心模块
+│   │   └── natural_selection/  # 自然语言选表与字段选择
+│   ├── routers/                # API 路由（含 tables、analyze、natural-language-selection）
 │   ├── models/                 # Pydantic 数据模型
-│   ├── tests/                  # 后端测试（240 tests）
+│   ├── tests/                  # 后端测试与自然语言评测 Fixture
+│   ├── config/                 # 受版本控制的自然语言词汇表
 │   ├── config.py               # 环境配置加载
 │   ├── database.py             # 数据库连接管理
 │   └── main.py                 # FastAPI 应用入口
 ├── frontend/                   # React 前端
 │   ├── src/
 │   │   ├── api/                # 后端 API 客户端
-│   │   ├── components/         # React 组件（13 个）
+│   │   ├── components/         # React 组件
 │   │   ├── graph/              # 图谱布局、渲染、命中测试
 │   │   ├── store/              # Zustand 状态管理
 │   │   └── test/               # 测试 Fixture
