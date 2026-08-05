@@ -35,6 +35,10 @@ describe("SelectionWorkspace table search", () => {
       tableRequestTokens: new Map(),
       tableErrors: new Map(),
       maxTables: 10,
+      selectionMode: "manual",
+      selectionDirty: false,
+      pendingAIReplacement: null,
+      previousSelection: null,
     });
   });
 
@@ -52,6 +56,16 @@ describe("SelectionWorkspace table search", () => {
       expect(screen.getByText("audit_users")).toBeInTheDocument();
       expect(screen.queryByText("orders")).not.toBeInTheDocument();
     });
+  });
+
+  it("uses natural language mode by default while retaining the manual tab", () => {
+    useAnalysisStore.setState({ selectionMode: "natural" });
+    render(<SelectionWorkspace />);
+    expect(
+      screen.getByRole("tab", { name: "\u81ea\u7136\u8bed\u8a00\u9009\u53d6" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "\u624b\u52a8\u9009\u53d6" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "\u63cf\u8ff0\u8981\u5206\u6790\u7684\u4e1a\u52a1\u5173\u7cfb" })).toBeVisible();
   });
 
   it("restores the complete table list when the search is cleared", async () => {
