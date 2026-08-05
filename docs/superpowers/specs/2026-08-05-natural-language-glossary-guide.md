@@ -18,8 +18,6 @@ glossary_version: "2026-08-05.1"
 
 selection_limits:
   max_tables: 10
-  max_auxiliary_fields_per_table: 10
-  max_auxiliary_fields_total: 60
 
 ranking_defaults:
   boost_when_any: 15
@@ -119,6 +117,8 @@ examples:
 
 `terms` 是字段级证据，不能把字段本身直接选入分析；选择器仍须验证该字段在指定表中存在、且是合法辅助字段。`examples` 同时是维护提示和离线语义验收集的种子数据。
 
+当用户描述没有点名字段或字段类别时，选择器会对每张最终选中表展开全部合法辅助字段（即非 `name`、非 `class_name`、非主键、非外键字段）。词汇表中的字段 `terms` 仅帮助识别用户**明确**限定的字段；它们不改变“未明确限定即全选”的默认规则。
+
 ## 解析与排序规则
 
 1. 对用户描述做 Unicode 归一化、大小写和分隔符归一化。
@@ -126,7 +126,7 @@ examples:
 3. 对条目内每个 `targets` 独立累加基础 `weight`；`boost_when_any` 命中时加上 `ranking_defaults.boost_when_any`，`exclude_when_any` 命中时减去 `ranking_defaults.exclude_penalty` 或标记为冲突，不能从模型目录中删除该表。
 4. 同一词条命中多个表时，保留每个目标、各自证据和排序分数；不把它视为 YAML 错误，也不在词汇表层擅自裁决。
 5. 同表同字段、同一词条的重复目标是配置错误；不同表共享词条是合法配置。
-6. 模型接收当前全部核心表的摘要、合法辅助字段和上述证据，输出由后端 `SelectionValidator` 最终校验。
+6. 模型接收当前全部核心表的摘要、合法辅助字段和上述证据，输出由后端 `SelectionValidator` 最终校验；未指定字段范围时，校验器展开该表的所有合法辅助字段，不作字段数量截断。
 
 权重只定义相对优先级，禁止作为“高于某阈值即自动选中”的规则。若模型无法消解歧义，则返回 `needs_clarification`；例如“请说明是销售订单、采购订单还是生产订单”。
 

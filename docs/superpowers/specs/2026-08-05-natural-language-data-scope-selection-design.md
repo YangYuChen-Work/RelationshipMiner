@@ -15,7 +15,7 @@
 
 - `name`、`class_name` 是必需业务上下文，节点展示仍以 `name` 为准；
 - 主键、外键仍是关系计算所需的隐式字段；
-- AI 和前端选择的仅是 `dimensions`（即辅助字段）；
+- AI 和前端选择的仅是 `dimensions`（即辅助字段）；若描述未明确限定辅助字段，则所选表的全部合法辅助字段默认进入 `dimensions`；
 - 当前 `load_scoped_records` 已在读取阶段自动补齐必需上下文、业务代码、主键和相关外键，`/api/analyze` 继续只接收辅助字段数组；
 - 没有同时满足 `name` 与 `class_name` 约定的表，不进入自然语言选择器可见目录。
 
@@ -110,9 +110,9 @@ NaturalLanguageSelectionController
 - `GlossaryRepository`：加载 YAML、校验结构、预编译受控正则并给出 `glossaryVersion`。
 - `CandidateRanker`：归一化输入，产生别名、正则、排除词和元数据匹配证据及排序；不做最终选择。
 - `SelectionModelClient`：封装现有 `DeepSeekJsonAdapter` 的结构化 JSON 调用、超时和提供商错误；以协议隔离具体厂商，测试可注入 Fake client。
-- `SelectionValidator`：校验模型输出是否在同一目录快照内，表数、辅助字段预算、字段角色、去重与版本一致性是否满足要求。
+- `SelectionValidator`：校验模型输出是否在同一目录快照内，表数上限、辅助字段选择意图、字段角色、去重与版本一致性是否满足要求。
 
-模型输出只允许 `auxiliary_fields`，且允许某张选中表的辅助字段为空。接收结果由 `SelectionValidator` 拒绝以下字段：`name`、`class_name`、主键、外键、未知字段、重复字段。必需字段与关系字段由现有分析读取逻辑隐式补齐，模型和前端都不负责推断或提交它们。
+模型输出只允许辅助字段选择意图：`field_selection` 为 `all` 或 `specified`。当用户没有明确限定辅助字段时，模型必须返回 `all`；`SelectionValidator` 根据目录快照把它展开为该表的全部合法辅助字段，并在 API 响应中返回完整的 `auxiliary_fields`，以适配既有 `selectedTables` 与 `/api/analyze`。只有用户明确点名字段或字段类别时才使用 `specified`。某张选中表允许没有合法辅助字段，此时展开为 `[]`。接收结果由 `SelectionValidator` 拒绝以下字段：`name`、`class_name`、主键、外键、未知字段、重复字段。必需字段与关系字段由现有分析读取逻辑隐式补齐，模型和前端都不负责推断或提交它们。
 
 响应约定如下：
 
@@ -126,7 +126,8 @@ NaturalLanguageSelectionController
   "tables": [
     {
       "table_name": "sales_order",
-      "auxiliary_fields": ["order_status", "order_amount"],
+      "field_selection": "all",
+      "auxiliary_fields": ["order_status", "order_amount", "created_at"],
       "reason": "订单是所述关系的核心业务对象。",
       "matched_terms": ["订单"]
     }
@@ -147,16 +148,14 @@ NaturalLanguageSelectionController
 
 正则只做归一化与受控别名匹配，绝不接收用户提供的正则。它们在启动/加载时编译，受长度和复杂度限制，并采用可设置匹配超时的实现，以避免灾难性回溯。配置错误必须使该功能进入 `GLOSSARY_INVALID`，不允许静默降级为错误选择。
 
-选择预算仅约束 AI 自动生成的结果，避免改变现有手动选取能力；首版默认：
+唯一的自动选择上限沿用现有表上限：
 
 ```yaml
 selection_limits:
   max_tables: 10
-  max_auxiliary_fields_per_table: 10
-  max_auxiliary_fields_total: 60
 ```
 
-模型应保守选择与用户目标直接相关的辅助字段；超过任一预算不裁剪、不猜测，而是返回 `SCOPE_TOO_BROAD` 或 `needs_clarification`。用户仍可按原有能力在手动模式或生成后微调字段；分析提交前继续执行既有字段和表校验。
+除非用户在描述中明确限定字段或字段类别，模型默认选择每张已选表的全部合法辅助字段，不得为了优化性能而静默截断。用户随后可在自然语言或手动模式取消不需要的字段；分析提交前继续执行既有字段和表校验。只有表数超过 10 张时返回 `SCOPE_TOO_BROAD` 或 `needs_clarification`。
 
 ## 6. 一致性、隐私与可观测性
 
@@ -168,7 +167,7 @@ selection_limits:
 
 ## 7. 测试、语义验收与完成标准
 
-后端单元和接口测试覆盖：目录快照与不合格表过滤、词汇 YAML/别名歧义/受控正则、候选排序、模型请求、合法输出、未知表字段、隐式字段误选、字段和表预算、模型超时、非法 JSON、元数据不可用、HTTP 状态以及不泄露记录或内部信息。
+后端单元和接口测试覆盖：目录快照与不合格表过滤、词汇 YAML/别名歧义/受控正则、候选排序、模型请求、未指定字段时展开所有合法辅助字段、明确字段时只保留指定字段、未知表字段、隐式字段误选、表数上限、模型超时、非法 JSON、元数据不可用、HTTP 状态以及不泄露记录或内部信息。
 
 前端测试覆盖：默认自然语言模式、空值和过长校验、加载、三种返回状态、请求取消与旧响应丢弃、空选择自动写入、已编辑选择的差异确认、撤销/保留、模式切换、微调以及既有手动选择和分析提交流程。
 
