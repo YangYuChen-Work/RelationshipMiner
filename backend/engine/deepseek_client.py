@@ -11,13 +11,25 @@ import time
 
 from openai import AsyncOpenAI
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from config import settings
 
 
 class LlmBatchError(RuntimeError):
     """Raised when a structured LLM response cannot be completed."""
+
+    def __init__(
+        self,
+        message: str,
+        reason_code: str = "MODEL_UNAVAILABLE",
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
+class _StructuredOutputError(ValueError):
+    """A provider response could not satisfy the requested JSON contract."""
 
 
 class DeepSeekJsonAdapter:
@@ -109,20 +121,20 @@ class DeepSeekJsonAdapter:
                     file=sys.stderr, flush=True,
                 )
                 if choice.finish_reason == "length":
-                    raise ValueError(
+                    raise _StructuredOutputError(
                         "finish_reason=length: JSON output was truncated"
                     )
                 content = choice.message.content
                 if not content or not content.strip():
-                    raise ValueError("empty response content")
+                    raise _StructuredOutputError("empty response content")
                 try:
                     data = json.loads(content)
                 except json.JSONDecodeError as error:
-                    raise ValueError(
+                    raise _StructuredOutputError(
                         f"JSON validation error: {error}"
                     ) from error
                 if not isinstance(data, dict):
-                    raise ValueError(
+                    raise _StructuredOutputError(
                         "JSON validation error: root must be an object"
                     )
                 if response_model is not None:
@@ -146,9 +158,15 @@ class DeepSeekJsonAdapter:
                     },
                 ]
 
+        reason_code = (
+            "INVALID_MODEL_OUTPUT"
+            if isinstance(last_error, (_StructuredOutputError, ValidationError))
+            else "MODEL_UNAVAILABLE"
+        )
         raise LlmBatchError(
             "DeepSeek JSON completion failed after two attempts: "
-            f"{last_error}"
+            f"{last_error}",
+            reason_code=reason_code,
         ) from last_error
 
 

@@ -7,6 +7,8 @@ from typing import Protocol
 
 from pydantic import BaseModel, ValidationError
 
+from engine.deepseek_client import LlmBatchError
+
 from .glossary import Glossary
 from .models import (
     CatalogSnapshot,
@@ -114,6 +116,13 @@ class NaturalSelectionService:
                 max_tokens=2048,
                 response_model=ModelSelection,
             )
+        except LlmBatchError as error:
+            reason_code = (
+                "INVALID_MODEL_OUTPUT"
+                if error.reason_code == "INVALID_MODEL_OUTPUT"
+                else "MODEL_UNAVAILABLE"
+            )
+            raise SelectionUnavailable(reason_code) from error
         except (json.JSONDecodeError, ValidationError) as error:
             raise SelectionUnavailable("INVALID_MODEL_OUTPUT") from error
         except Exception as error:

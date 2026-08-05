@@ -1,9 +1,11 @@
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from engine.natural_selection.catalog import build_catalog_snapshot
+from engine.deepseek_client import DeepSeekJsonAdapter, LlmBatchError
 from engine.natural_selection.glossary import Glossary
 from engine.natural_selection.models import GlossaryMapping
 from engine.natural_selection.service import (
@@ -43,6 +45,41 @@ class FailingModel:
 class InvalidJsonModel:
     async def complete_json(self, **_: object) -> dict[str, object]:
         raise json.JSONDecodeError("invalid JSON", "{", 1)
+
+
+class InvalidJsonCompletions:
+    """Minimal provider fake that returns malformed JSON on each adapter retry."""
+
+    def __init__(self, content: str) -> None:
+        self.calls = 0
+        self.content = content
+
+    async def create(self, **_: object) -> object:
+        self.calls += 1
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content=self.content),
+                )
+            ],
+            usage=SimpleNamespace(total_tokens=1),
+        )
+
+
+class InvalidJsonAdapterClient:
+    """Minimal OpenAI-compatible client tree consumed by DeepSeekJsonAdapter."""
+
+    def __init__(self, content: str) -> None:
+        self.completions = InvalidJsonCompletions(content)
+        self.chat = SimpleNamespace(completions=self.completions)
+
+
+class AdapterUnavailableModel:
+    """Matches an adapter transport or configuration failure."""
+
+    async def complete_json(self, **_: object) -> dict[str, object]:
+        raise LlmBatchError("DeepSeek API key is not configured")
 
 
 @pytest.fixture
@@ -111,6 +148,48 @@ async def test_invalid_json_is_invalid_model_output_not_provider_unavailable(
 
     with pytest.raises(SelectionUnavailable, match="INVALID_MODEL_OUTPUT"):
         await selector(empty_glossary, InvalidJsonModel()).select("分析订单", snapshot)
+
+
+@pytest.mark.asyncio
+async def test_adapter_malformed_output_category_remains_invalid_model_output(
+    snapshot, empty_glossary
+) -> None:
+    """Discarding the adapter's parse category would misclassify production JSON failures."""
+
+    client = InvalidJsonAdapterClient("{not valid JSON")
+    model = DeepSeekJsonAdapter(api_key="test-key", client=client)
+
+    with pytest.raises(SelectionUnavailable, match="INVALID_MODEL_OUTPUT"):
+        await selector(empty_glossary, model).select("分析订单", snapshot)
+
+    assert client.completions.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_adapter_contract_failure_remains_invalid_model_output(
+    snapshot, empty_glossary
+) -> None:
+    """Discarding the adapter's schema category would hide provider contract failures."""
+
+    client = InvalidJsonAdapterClient('{"status":"not-a-selection-status"}')
+    model = DeepSeekJsonAdapter(api_key="test-key", client=client)
+
+    with pytest.raises(SelectionUnavailable, match="INVALID_MODEL_OUTPUT"):
+        await selector(empty_glossary, model).select("分析订单", snapshot)
+
+    assert client.completions.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_adapter_transport_category_remains_model_unavailable(
+    snapshot, empty_glossary
+) -> None:
+    """Adapter configuration and transport failures must not masquerade as bad JSON."""
+
+    with pytest.raises(SelectionUnavailable, match="MODEL_UNAVAILABLE"):
+        await selector(empty_glossary, AdapterUnavailableModel()).select(
+            "分析订单", snapshot
+        )
 
 
 @pytest.mark.asyncio
