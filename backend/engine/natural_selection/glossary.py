@@ -7,6 +7,8 @@ import unicodedata
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
+from yaml.constructor import ConstructorError
+from yaml.resolver import BaseResolver
 
 from .models import GlossaryHit, GlossaryMapping
 
@@ -17,6 +19,40 @@ class GlossaryError(RuntimeError):
     def __init__(self, code: str = "GLOSSARY_INVALID") -> None:
         super().__init__(code)
         self.code = code
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """SafeLoader variant that rejects duplicate mapping keys."""
+
+
+def _construct_unique_mapping(loader, node, deep=False):
+    mapping: dict[object, object] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            is_duplicate = key in mapping
+        except TypeError as error:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "found an unhashable key",
+                key_node.start_mark,
+            ) from error
+        if is_duplicate:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key ({key!r})",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeySafeLoader.add_constructor(
+    BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
 
 
 class _RawGlossaryMapping(BaseModel):
@@ -70,7 +106,10 @@ def load_glossary(path: Path, catalog_table_names: set[str]) -> Glossary:
     """Load a strict data-only glossary whose table targets exist in the catalog."""
 
     try:
-        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        payload = yaml.load(
+            path.read_text(encoding="utf-8"),
+            Loader=_UniqueKeySafeLoader,
+        )
         raw_glossary = _RawGlossary.model_validate(payload)
     except (OSError, UnicodeDecodeError, ValidationError, yaml.YAMLError) as error:
         raise GlossaryError() from error

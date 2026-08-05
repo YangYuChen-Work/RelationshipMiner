@@ -99,6 +99,32 @@ def test_malformed_yaml_is_rejected(tmp_path: Path) -> None:
         load_glossary(path, {"sales_order"})
 
 
+def test_duplicate_top_level_yaml_key_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "glossary.yaml"
+    path.write_text(
+        "schema_version: 1\nschema_version: 1\nglossary_version: \"1\"\nmappings:\n"
+        "  - aliases: [\u8ba2\u5355]\n    tables: [sales_order]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GlossaryError, match="GLOSSARY_INVALID"):
+        load_glossary(path, {"sales_order"})
+
+
+def test_duplicate_mapping_yaml_key_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "glossary.yaml"
+    path.write_text(
+        "schema_version: 1\nglossary_version: \"1\"\nmappings:\n"
+        "  - aliases: [\u8ba2\u5355]\n"
+        "    tables: [sales_order]\n"
+        "    tables: [sales_order]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GlossaryError, match="GLOSSARY_INVALID"):
+        load_glossary(path, {"sales_order"})
+
+
 def test_non_utf8_yaml_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "glossary.yaml"
     path.write_bytes(b"\xff")
