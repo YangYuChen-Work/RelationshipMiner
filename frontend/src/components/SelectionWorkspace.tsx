@@ -60,18 +60,18 @@ export default function SelectionWorkspace() {
       {selectedCount >= maxTables && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{copy.limit}</p>}
       {tableSummariesWarning && !tablesError && <p role="status" className="text-xs text-amber-700">{copy.summaryWarning}</p>}
 
-      {selectionMode === "natural" && <div className="space-y-3"><NaturalLanguageSelectionPanel />
+      <div className="space-y-3" hidden={selectionMode !== "natural"}><NaturalLanguageSelectionPanel hidden={selectionMode !== "natural"} />
         {selectedCount > 0 && <section aria-label={copy.selected} className="space-y-2"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-gray-800">{copy.selected}</h3>{previousSelection && <button type="button" onClick={undoAIReplacement} className="text-sm font-medium text-blue-700 hover:underline">{copy.undo}</button>}</div>{Array.from(selectedTables.values()).map((table) => <BusinessDatasetCard key={table.name} tableName={table.name} summary={tableSummaries.get(table.name)} disabled={false} />)}</section>}
-      </div>}
+      </div>
 
-      {selectionMode === "manual" && <section id="selection-panel-manual" role="tabpanel" aria-label="\u624b\u52a8\u9009\u53d6" className="space-y-4">
+      <section id="selection-panel-manual" role="tabpanel" aria-labelledby="selection-tab-manual" hidden={selectionMode !== "manual"} className="space-y-4">
         {!tablesLoading && !tablesError && tables.length > 0 && <input type="search" aria-label={copy.search} placeholder={copy.search} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" />}
         {tablesError && <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700"><p className="font-medium">{copy.loadFailed}</p><p className="mt-1 text-sm">{tablesError}</p><button type="button" onClick={() => void loadTables()} className="mt-2 text-sm underline">{copy.retry}</button></div>}
         {tablesLoading && <div className="space-y-2" aria-label={copy.loading}><div className="h-14 animate-pulse rounded-xl bg-gray-100" /><div className="h-14 animate-pulse rounded-xl bg-gray-100" /><div className="h-14 animate-pulse rounded-xl bg-gray-100" /></div>}
         {!tablesLoading && !tablesError && tables.length === 0 && <p className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">{copy.noTables}</p>}
         {!tablesLoading && !tablesError && tables.length > 0 && normalizedSearchQuery && filteredTables.length === 0 && <p className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">{copy.noMatches}</p>}
         {!tablesLoading && !tablesError && tables.length > 0 && <div className="space-y-2">{filteredTables.map((table) => <BusinessDatasetCard key={table.name} tableName={table.name} summary={tableSummaries.get(table.name)} disabled={!selectedTables.has(table.name) && selectedCount >= maxTables} />)}</div>}
-      </section>}
+      </section>
 
       <div className="flex items-center justify-between border-t border-gray-200 pt-4"><span className="text-xs text-gray-500">{copy.systemInfo}</span><AnalysisLauncher /></div>
       {pendingAIReplacement && <SelectionReplacementDialog current={selectedTables} proposed={pendingAIReplacement} onConfirm={confirmAIReplacement} onCancel={cancelAIReplacement} onUndo={previousSelection ? undoAIReplacement : undefined} />}

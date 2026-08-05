@@ -1,5 +1,9 @@
 import { useAnalysisStore } from "../store/analysis";
 
+interface NaturalLanguageSelectionPanelProps {
+  hidden?: boolean;
+}
+
 const copy = {
   unavailable:
     "\u5f53\u524d\u65e0\u6cd5\u5b8c\u6210\u81ea\u52a8\u9009\u53d6\uff0c\u5df2\u6709\u9009\u62e9\u672a\u53d1\u751f\u53d8\u5316\uff1b\u53ef\u7a0d\u540e\u91cd\u8bd5\u6216\u5207\u6362\u5230\u624b\u52a8\u9009\u53d6\u3002",
@@ -17,7 +21,7 @@ const copy = {
   suggestLead: "\u60a8\u53ef\u4ee5\u8865\u5145\uff1a",
 };
 
-export default function NaturalLanguageSelectionPanel() {
+export default function NaturalLanguageSelectionPanel({ hidden = false }: NaturalLanguageSelectionPanelProps) {
   const naturalLanguage = useAnalysisStore((state) => state.naturalLanguage);
   const setNaturalLanguageInput = useAnalysisStore(
     (state) => state.setNaturalLanguageInput,
@@ -32,7 +36,7 @@ export default function NaturalLanguageSelectionPanel() {
       : naturalLanguage.guidance;
 
   return (
-    <section id="selection-panel-natural" role="tabpanel" aria-label="\u81ea\u7136\u8bed\u8a00\u9009\u53d6" className="space-y-3 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+    <section id="selection-panel-natural" role="tabpanel" aria-labelledby="selection-tab-natural" hidden={hidden} className="space-y-3 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
       <div>
         <h3 className="font-semibold text-gray-900">{copy.title}</h3>
         <p className="mt-1 text-sm text-gray-600">{copy.timeHelp}</p>
