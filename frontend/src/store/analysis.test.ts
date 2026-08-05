@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAnalysisSocket } from "../api/analysis";
+import { submitAnalysis } from "../api/analysis";
 import {
   isAuxiliaryColumn,
   isRequiredBusinessColumn,
@@ -121,6 +122,21 @@ describe("analysis selection store", () => {
       tableSummaries: new Map(),
       tableSummariesWarning: null,
       maxTables: 10,
+      selectionMode: "natural",
+      selectionSource: "manual",
+      selectionDirty: false,
+      metadataRevision: null,
+      previousSelection: null,
+      pendingAIReplacement: null,
+      pendingAIReplacementMetadataRevision: null,
+      naturalLanguage: {
+        input: "",
+        status: "idle",
+        activeRequestId: null,
+        reasonCode: null,
+        guidance: null,
+        suggestedQuestions: [],
+      },
     });
   });
 
@@ -489,6 +505,163 @@ describe("analysis selection store", () => {
       tables: [{ name: "audit_log", fields: ["email"] }],
     });
     vi.unstubAllGlobals();
+  });
+
+  it("expands an AI selection atomically with all server-selected fields", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+      if (url === "/api/natural-language-selection") {
+        return Promise.resolve(new Response(JSON.stringify({
+          status: "selected",
+          request_id: "natural-selection-1",
+          metadata_revision: "meta-1",
+          glossary_version: "glossary-1",
+          selector_version: "selector-1",
+          tables: [{ table_name: "users", auxiliary_fields: ["email"], reason: "matched", matched_terms: [] }],
+          warnings: [],
+        }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      if (url === "/api/tables/users/fields") {
+        return Promise.resolve(new Response(JSON.stringify({ table_name: "users", columns }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    await useAnalysisStore.getState().requestNaturalSelection("分析用户");
+
+    const selected = useAnalysisStore.getState().selectedTables.get("users");
+    expect(selected?.selectedFields).toEqual(new Set(["email"]));
+    expect(useAnalysisStore.getState()).toMatchObject({
+      selectionSource: "ai",
+      selectionDirty: false,
+      metadataRevision: "meta-1",
+    });
+  });
+
+  it("does not partially apply an AI selection when any column load fails", async () => {
+    const existing = new Map([["existing", { name: "existing", columns, selectedFields: new Set(["email"]) }]]);
+    useAnalysisStore.setState({ selectedTables: existing });
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+      if (url === "/api/natural-language-selection") {
+        return Promise.resolve(new Response(JSON.stringify({
+          status: "selected", request_id: "natural-selection-2", metadata_revision: "meta-2",
+          glossary_version: "g", selector_version: "s",
+          tables: [
+            { table_name: "users", auxiliary_fields: ["email"], reason: "", matched_terms: [] },
+            { table_name: "orders", auxiliary_fields: [], reason: "", matched_terms: [] },
+          ], warnings: [],
+        }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      if (url === "/api/tables/users/fields") {
+        return Promise.resolve(new Response(JSON.stringify({ table_name: "users", columns }), { status: 200 }));
+      }
+      if (url === "/api/tables/orders/fields") {
+        return Promise.resolve(new Response("unavailable", { status: 503 }));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    await useAnalysisStore.getState().requestNaturalSelection("分析用户和订单");
+
+    expect(useAnalysisStore.getState().selectedTables).toEqual(existing);
+    expect(useAnalysisStore.getState().naturalLanguage.status).toBe("unavailable");
+  });
+
+  it("rejects an old natural-language response before fetching fields", async () => {
+    let resolveSelection!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input) === "/api/natural-language-selection") {
+        return new Promise<Response>((resolve) => { resolveSelection = resolve; });
+      }
+      throw new Error("field requests must not occur for a stale response");
+    });
+
+    const pending = useAnalysisStore.getState().requestNaturalSelection("分析订单");
+    useAnalysisStore.getState().setSelectionMode("manual");
+    resolveSelection(new Response(JSON.stringify({
+      status: "selected", request_id: "natural-selection-3", metadata_revision: "meta-2",
+      glossary_version: "g", selector_version: "s", tables: [{ table_name: "orders", auxiliary_fields: [], reason: "", matched_terms: [] }], warnings: [],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    await pending;
+
+    expect(useAnalysisStore.getState().selectedTables).toEqual(new Map());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves current selection for clarification and unavailable results", async () => {
+    const manual = new Map([["users", { name: "users", columns, selectedFields: new Set(["email"]) }]]);
+    useAnalysisStore.setState({ selectedTables: manual });
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: "needs_clarification", request_id: "natural-selection-4", metadata_revision: "meta",
+        glossary_version: "g", selector_version: "s", tables: [], reason_code: "AMBIGUOUS_INTENT", guidance: "请补充", suggested_questions: ["什么订单？"], warnings: [],
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: "unavailable", reason_code: "MODEL_UNAVAILABLE", guidance: "请稍后重试",
+      }), { status: 503, headers: { "content-type": "application/json" } }));
+
+    await useAnalysisStore.getState().requestNaturalSelection("不明确");
+    expect(useAnalysisStore.getState().selectedTables).toEqual(manual);
+    expect(useAnalysisStore.getState().naturalLanguage.status).toBe("needs_clarification");
+    await useAnalysisStore.getState().requestNaturalSelection("重试");
+    expect(useAnalysisStore.getState().selectedTables).toEqual(manual);
+    expect(useAnalysisStore.getState().naturalLanguage.status).toBe("unavailable");
+  });
+
+  it("requires confirmation before replacing dirty manual changes and supports cancel and undo", () => {
+    const users = new Map([["users", { name: "users", columns, selectedFields: new Set<string>(["email"]) }]]);
+    const orders = new Map([["orders", { name: "orders", columns, selectedFields: new Set<string>() }]]);
+    useAnalysisStore.setState({ selectedTables: users, selectionDirty: true, metadataRevision: null });
+
+    useAnalysisStore.getState().queueAISelection(orders, "meta-orders");
+    expect(useAnalysisStore.getState().selectedTables).toEqual(users);
+    expect(useAnalysisStore.getState().pendingAIReplacement).toEqual(orders);
+    useAnalysisStore.getState().cancelAIReplacement();
+    expect(useAnalysisStore.getState().pendingAIReplacement).toBeNull();
+    useAnalysisStore.getState().queueAISelection(orders, "meta-orders");
+    useAnalysisStore.getState().confirmAIReplacement();
+    expect(useAnalysisStore.getState().selectedTables).toEqual(orders);
+    expect(useAnalysisStore.getState().metadataRevision).toBe("meta-orders");
+    useAnalysisStore.getState().undoAIReplacement();
+    expect(useAnalysisStore.getState().selectedTables).toEqual(users);
+    expect(useAnalysisStore.getState().metadataRevision).toBeNull();
+  });
+
+  it("clears the metadata revision after a manual field mutation", () => {
+    useAnalysisStore.setState({
+      selectedTables: new Map([["users", { name: "users", columns, selectedFields: new Set(["email"]) }]]),
+      metadataRevision: "meta-ai",
+      selectionSource: "ai",
+      selectionDirty: false,
+    });
+    useAnalysisStore.getState().toggleField("users", "email");
+    expect(useAnalysisStore.getState()).toMatchObject({
+      metadataRevision: null,
+      selectionSource: "mixed",
+      selectionDirty: true,
+    });
+  });
+
+  it("omits metadata_revision for older and manually edited analyses", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ task_id: "task" }), { status: 200 }),
+    );
+    await submitAnalysis([{ name: "users", fields: [] }], null);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      tables: [{ name: "users", fields: [] }],
+    });
+  });
+
+  it("includes the AI metadata revision until a manual edit invalidates it", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ task_id: "task" }), { status: 200 }),
+    );
+    await submitAnalysis([{ name: "users", fields: [] }], "meta-ai");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      tables: [{ name: "users", fields: [] }],
+      metadata_revision: "meta-ai",
+    });
   });
 
   it("allows analysis with no selected dimensions", async () => {

@@ -17,13 +17,28 @@ import {
   fetchTables,
 } from "../api/tables";
 import { submitAnalysis, createAnalysisSocket } from "../api/analysis";
+import {
+  requestNaturalSelection as requestNaturalSelectionApi,
+} from "../api/naturalSelection";
 
 export type Phase = "select" | "analyzing" | "done" | "error";
 
-interface SelectedTable {
+export interface SelectedTable {
   name: string;
   columns: ColumnInfo[];
   selectedFields: Set<string>;
+}
+
+export type SelectionMode = "natural" | "manual";
+export type SelectionSource = "ai" | "manual" | "mixed";
+
+export interface NaturalLanguageState {
+  input: string;
+  status: "idle" | "loading" | "selected" | "needs_clarification" | "unavailable";
+  activeRequestId: string | null;
+  reasonCode: string | null;
+  guidance: string | null;
+  suggestedQuestions: string[];
 }
 
 interface FocusNodeRequest {
@@ -59,6 +74,14 @@ interface AnalysisState {
   tableRequestTokens: Map<string, number>;
   tableErrors: Map<string, string>;
   maxTables: number;
+  selectionMode: SelectionMode;
+  selectionSource: SelectionSource;
+  selectionDirty: boolean;
+  metadataRevision: string | null;
+  previousSelection: Map<string, SelectedTable> | null;
+  pendingAIReplacement: Map<string, SelectedTable> | null;
+  pendingAIReplacementMetadataRevision: string | null;
+  naturalLanguage: NaturalLanguageState;
 
   // ── 分析进度 ──
   currentPhase: string;
@@ -92,6 +115,20 @@ interface AnalysisState {
   toggleField: (tableName: string, fieldName: string) => void;
   selectAllFields: (tableName: string) => void;
   deselectAllFields: (tableName: string) => void;
+  setSelectionMode: (mode: SelectionMode) => void;
+  setNaturalLanguageInput: (input: string) => void;
+  requestNaturalSelection: (description?: string) => Promise<void>;
+  queueAISelection: (
+    selection: Map<string, SelectedTable>,
+    metadataRevision?: string,
+  ) => void;
+  applyAISelection: (
+    selection: Map<string, SelectedTable>,
+    metadataRevision: string,
+  ) => void;
+  confirmAIReplacement: () => void;
+  cancelAIReplacement: () => void;
+  undoAIReplacement: () => void;
 
   // ── 操作：分析 ──
   startAnalysis: () => Promise<void>;
@@ -123,6 +160,17 @@ function patchSelectedTable(
   return next;
 }
 
+function cloneSelectedTables(
+  selectedTables: Map<string, SelectedTable>,
+): Map<string, SelectedTable> {
+  return new Map(
+    Array.from(selectedTables, ([name, table]) => [
+      name,
+      { ...table, columns: [...table.columns], selectedFields: new Set(table.selectedFields) },
+    ]),
+  );
+}
+
 function closeAnalysisSocket(socket: WebSocket | null) {
   if (!socket) return;
   socket.onmessage = null;
@@ -137,6 +185,24 @@ function closeAnalysisSocket(socket: WebSocket | null) {
 
 let nextTableRequestToken = 0;
 let nextTableSummaryRequestToken = 0;
+let nextNaturalSelectionRequestId = 0;
+let naturalSelectionAbortController: AbortController | null = null;
+
+function abortNaturalSelectionRequest() {
+  naturalSelectionAbortController?.abort();
+  naturalSelectionAbortController = null;
+}
+
+function manualSelectionPatch(): Pick<
+  AnalysisState,
+  "selectionSource" | "selectionDirty" | "metadataRevision"
+> {
+  return {
+    selectionSource: "mixed",
+    selectionDirty: true,
+    metadataRevision: null,
+  };
+}
 
 export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   // ── 初始值 ──
@@ -152,6 +218,21 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   tableRequestTokens: new Map(),
   tableErrors: new Map(),
   maxTables: 10,
+  selectionMode: "natural",
+  selectionSource: "manual",
+  selectionDirty: false,
+  metadataRevision: null,
+  previousSelection: null,
+  pendingAIReplacement: null,
+  pendingAIReplacementMetadataRevision: null,
+  naturalLanguage: {
+    input: "",
+    status: "idle",
+    activeRequestId: null,
+    reasonCode: null,
+    guidance: null,
+    suggestedQuestions: [],
+  },
   currentPhase: "",
   progressMessage: "",
   progressValue: 0,
@@ -221,7 +302,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     if (selectedTables.has(tableName)) {
       const next = new Map(selectedTables);
       next.delete(tableName);
-      set({ selectedTables: next });
+      set({ selectedTables: next, ...manualSelectionPatch() });
     } else {
       if (selectedTables.size >= get().maxTables) return;
       const requestToken = ++nextTableRequestToken;
@@ -274,6 +355,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
           tableRequestTokens: requestTokensAfterLoad,
           tableErrors,
           errorMessage: null,
+          ...manualSelectionPatch(),
         });
       } catch (e: any) {
         const current = get();
@@ -319,7 +401,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       }
       return { ...e, selectedFields: nextFields };
     });
-    set({ selectedTables: next });
+    set({ selectedTables: next, ...manualSelectionPatch() });
   },
 
   selectAllFields: (tableName: string) => {
@@ -332,7 +414,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
           .map((column) => column.name)
       ),
     }));
-    set({ selectedTables: next });
+    set({ selectedTables: next, ...manualSelectionPatch() });
   },
 
   deselectAllFields: (tableName: string) => {
@@ -341,7 +423,193 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       ...e,
       selectedFields: new Set(),
     }));
-    set({ selectedTables: next });
+    set({ selectedTables: next, ...manualSelectionPatch() });
+  },
+
+  setSelectionMode: (mode) => {
+    if (mode !== "natural") abortNaturalSelectionRequest();
+    const naturalLanguage = get().naturalLanguage;
+    set({
+      selectionMode: mode,
+      naturalLanguage:
+        mode === "natural"
+          ? naturalLanguage
+          : { ...naturalLanguage, status: "idle", activeRequestId: null },
+    });
+  },
+
+  setNaturalLanguageInput: (input) => {
+    set({ naturalLanguage: { ...get().naturalLanguage, input } });
+  },
+
+  requestNaturalSelection: async (description) => {
+    const current = get();
+    const input = (description ?? current.naturalLanguage.input).trim();
+    if (!input || current.phase !== "select" || current.selectionMode !== "natural") return;
+
+    abortNaturalSelectionRequest();
+    const controller = new AbortController();
+    naturalSelectionAbortController = controller;
+    const requestId = `natural-selection-${++nextNaturalSelectionRequestId}`;
+    set({
+      naturalLanguage: {
+        ...current.naturalLanguage,
+        input,
+        status: "loading",
+        activeRequestId: requestId,
+        reasonCode: null,
+        guidance: null,
+        suggestedQuestions: [],
+      },
+    });
+
+    try {
+      const response = await requestNaturalSelectionApi(
+        { request_id: requestId, description: input },
+        controller.signal,
+      );
+      const owned = get();
+      if (
+        owned.phase !== "select" ||
+        owned.selectionMode !== "natural" ||
+        owned.naturalLanguage.activeRequestId !== requestId ||
+        response.status !== "unavailable" && response.request_id !== requestId
+      ) return;
+
+      if (response.status === "unavailable") {
+        set({
+          naturalLanguage: {
+            ...owned.naturalLanguage,
+            status: "unavailable",
+            activeRequestId: null,
+            reasonCode: response.reason_code,
+            guidance: response.guidance,
+          },
+        });
+        return;
+      }
+      if (response.status === "needs_clarification") {
+        set({
+          naturalLanguage: {
+            ...owned.naturalLanguage,
+            status: "needs_clarification",
+            activeRequestId: null,
+            reasonCode: response.reason_code,
+            guidance: response.guidance,
+            suggestedQuestions: response.suggested_questions,
+          },
+        });
+        return;
+      }
+
+      // Ownership was checked before this network fan-out. Check it again before commit.
+      const fetched = await Promise.all(
+        response.tables.map(async (table) => {
+          const { columns } = await fetchTableColumns(table.table_name);
+          return [
+            table.table_name,
+            {
+              name: table.table_name,
+              columns,
+              // The backend has already validated and expanded legal auxiliary fields.
+              selectedFields: new Set(table.auxiliary_fields),
+            },
+          ] as const;
+        }),
+      );
+      const currentAfterColumns = get();
+      if (
+        currentAfterColumns.phase !== "select" ||
+        currentAfterColumns.selectionMode !== "natural" ||
+        currentAfterColumns.naturalLanguage.activeRequestId !== requestId
+      ) return;
+      const selection = new Map<string, SelectedTable>(fetched);
+      get().queueAISelection(selection, response.metadata_revision);
+      const afterQueue = get();
+      set({
+        naturalLanguage: {
+          ...afterQueue.naturalLanguage,
+          status: "selected",
+          activeRequestId: null,
+          reasonCode: null,
+          guidance: null,
+          suggestedQuestions: [],
+        },
+      });
+    } catch (error) {
+      if ((error as { name?: string }).name === "AbortError") return;
+      const owned = get();
+      if (
+        owned.phase !== "select" ||
+        owned.selectionMode !== "natural" ||
+        owned.naturalLanguage.activeRequestId !== requestId
+      ) return;
+      set({
+        naturalLanguage: {
+          ...owned.naturalLanguage,
+          status: "unavailable",
+          activeRequestId: null,
+          reasonCode: "REQUEST_FAILED",
+          guidance: "当前无法完成自动选取，已有选择未发生变化；可稍后重试或切换到手动选取。",
+        },
+      });
+    } finally {
+      if (naturalSelectionAbortController === controller) {
+        naturalSelectionAbortController = null;
+      }
+    }
+  },
+
+  queueAISelection: (selection, metadataRevision) => {
+    if (get().selectionDirty) {
+      set({
+        pendingAIReplacement: cloneSelectedTables(selection),
+        pendingAIReplacementMetadataRevision: metadataRevision ?? null,
+      });
+      return;
+    }
+    get().applyAISelection(selection, metadataRevision ?? "");
+  },
+
+  applyAISelection: (selection, metadataRevision) => {
+    set({
+      selectedTables: cloneSelectedTables(selection),
+      previousSelection: cloneSelectedTables(get().selectedTables),
+      selectionSource: "ai",
+      selectionDirty: false,
+      metadataRevision: metadataRevision || null,
+      pendingTables: new Set(),
+      pendingAIReplacement: null,
+      pendingAIReplacementMetadataRevision: null,
+    });
+  },
+
+  confirmAIReplacement: () => {
+    const { pendingAIReplacement, pendingAIReplacementMetadataRevision } = get();
+    if (!pendingAIReplacement) return;
+    get().applyAISelection(
+      pendingAIReplacement,
+      pendingAIReplacementMetadataRevision ?? "",
+    );
+  },
+
+  cancelAIReplacement: () => {
+    set({
+      pendingAIReplacement: null,
+      pendingAIReplacementMetadataRevision: null,
+    });
+  },
+
+  undoAIReplacement: () => {
+    const previousSelection = get().previousSelection;
+    if (!previousSelection) return;
+    set({
+      selectedTables: cloneSelectedTables(previousSelection),
+      previousSelection: null,
+      selectionSource: "manual",
+      selectionDirty: true,
+      metadataRevision: null,
+    });
   },
 
   // ── 分析操作 ──
@@ -390,6 +658,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     }));
 
     const runGeneration = analysisGeneration + 1;
+    abortNaturalSelectionRequest();
     closeAnalysisSocket(activeSocket);
     set({
       phase: "analyzing",
@@ -412,10 +681,15 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       tableRequestTokens: new Map(),
       activeSocket: null,
       analysisGeneration: runGeneration,
+      naturalLanguage: {
+        ...get().naturalLanguage,
+        status: "idle",
+        activeRequestId: null,
+      },
     });
 
     try {
-      const taskId = await submitAnalysis(tableList);
+      const taskId = await submitAnalysis(tableList, get().metadataRevision);
       if (get().analysisGeneration !== runGeneration) return;
 
       let socket: WebSocket | null = null;
@@ -517,6 +791,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   },
 
   resetAnalysis: () => {
+    abortNaturalSelectionRequest();
     const { activeSocket, analysisGeneration } = get();
     closeAnalysisSocket(activeSocket);
     set({
@@ -544,6 +819,14 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       pendingTables: new Set(),
       tableRequestTokens: new Map(),
       tableErrors: new Map(),
+      naturalLanguage: {
+        ...get().naturalLanguage,
+        status: "idle",
+        activeRequestId: null,
+        reasonCode: null,
+        guidance: null,
+        suggestedQuestions: [],
+      },
     });
   },
 

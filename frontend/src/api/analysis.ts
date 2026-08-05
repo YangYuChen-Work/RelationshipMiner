@@ -106,12 +106,15 @@ export type ProgressMessage = AnalysisProgressMessage | AnalysisTerminalMessage;
 const BASE = "/api";
 
 export async function submitAnalysis(
-  tables: TableSelection[]
+  tables: TableSelection[],
+  metadataRevision?: string | null,
 ): Promise<string> {
   const res = await fetch(`${BASE}/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tables }),
+    body: JSON.stringify(
+      metadataRevision ? { tables, metadata_revision: metadataRevision } : { tables },
+    ),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
