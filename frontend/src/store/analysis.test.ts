@@ -548,6 +548,31 @@ describe("analysis selection store", () => {
     expect(useAnalysisStore.getState().pendingAIReplacement).toEqual(aiSelection);
   });
 
+  it("invalidates a pending manual load when confirming an AI replacement", async () => {
+    let resolveFields!: (value: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>((resolve) => { resolveFields = resolve; }),
+    );
+    useAnalysisStore.setState({ selectionMode: "manual" });
+    const loading = useAnalysisStore.getState().toggleTable("manual_orders");
+    const aiSelection = new Map([["ai_orders", {
+      name: "ai_orders", columns, selectedFields: new Set<string>(["email"]),
+    }]]);
+
+    useAnalysisStore.getState().queueAISelection(aiSelection, "ai-metadata");
+    useAnalysisStore.getState().confirmAIReplacement();
+    expect(useAnalysisStore.getState().selectedTables).toEqual(aiSelection);
+    expect(useAnalysisStore.getState().tableRequestTokens).toEqual(new Map());
+
+    resolveFields({
+      ok: true,
+      json: () => Promise.resolve({ table_name: "manual_orders", columns }),
+    } as Response);
+    await loading;
+
+    expect(useAnalysisStore.getState().selectedTables).toEqual(aiSelection);
+  });
+
   it("expands an AI selection atomically with all server-selected fields", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);

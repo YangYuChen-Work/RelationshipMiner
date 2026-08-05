@@ -589,6 +589,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       selectionDirty: false,
       metadataRevision: metadataRevision || null,
       pendingTables: new Set(),
+      tableRequestTokens: new Map(),
       pendingAIReplacement: null,
       pendingAIReplacementMetadataRevision: null,
     });
