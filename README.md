@@ -199,6 +199,6 @@ cd frontend
 npm test -- --run src/graph/scaling.test.ts
 ```
 
-`benchmark_natural_selection.py` 输出表精确率、召回率、完整集合准确率、澄清正确率、错误预选率和 P95 延迟。默认使用可注入的确定性假选择器，适用于 CI，且不会连接数据库或调用 DeepSeek。真实模型基准需要同时显式传入 `--live` 并设置 `NATURAL_SELECTION_BENCHMARK_ALLOW_LIVE=1`；它会使用当前数据库元数据和现有 DeepSeek 环境变量，可能产生模型调用费用。
+`benchmark_natural_selection.py` 输出表精确率、召回率、完整集合准确率、澄清正确率、错误预选率和 P95 延迟。默认使用独立于评测标签的确定性词面基线：它会产生可观察的误选和漏选，因此这些离线指标能够验证评测逻辑，而不会连接数据库或调用 DeepSeek。该基线只是稳定的质量下限参考，不代表生产 AI 的实际质量。真实模型基准需要同时显式传入 `--live` 并设置 `NATURAL_SELECTION_BENCHMARK_ALLOW_LIVE=1`；它会使用当前数据库元数据和现有 DeepSeek 环境变量，可能产生模型调用费用。
 
 `/api/health` 仅返回 `ready`/`degraded` 状态和固定依赖项。它不会返回 API 密钥、数据库 URL、异常信息、提示词、响应内容或实体/字段值。

@@ -1,8 +1,10 @@
-"""Offline quality benchmark for natural-language table selection.
+"""Offline benchmark for natural-language table selection.
 
-The default selector is deterministic and uses the fixture's expected result,
-so CI never reads a database or contacts a model provider.  A real provider is
-available only with both ``--live`` and ``NATURAL_SELECTION_BENCHMARK_ALLOW_LIVE=1``.
+The default selector is an intentionally simple, deterministic lexical
+baseline.  It is implemented independently from the fixture expectations, so
+the reported metrics can expose selection mistakes while CI remains offline.
+A real provider is available only with both ``--live`` and
+``NATURAL_SELECTION_BENCHMARK_ALLOW_LIVE=1``.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from pathlib import Path
 import sys
 import time
 from typing import Literal
+import unicodedata
 
 import yaml
 
@@ -50,6 +53,29 @@ EXPECTED_CATEGORY_COUNTS = {
     "prompt_injection_or_sql": 3,
     "unrelated": 2,
 }
+
+# This is deliberately a small, broad lexical baseline rather than a copy of
+# the evaluation labels.  It gives the offline command a stable lower-bound
+# reference that has observable false positives and false negatives.  Do not
+# use it for production selection.
+LEXICAL_BASELINE_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        ("需求",),
+        ("requirement", "demand_parameter", "requirement_folder"),
+    ),
+    (
+        ("工艺", "工序", "路线", "加工", "制造"),
+        ("meprocess", "mestep", "meoperation"),
+    ),
+    (
+        ("三维", "模型", "装配", "机械物料"),
+        ("assembly",),
+    ),
+    (
+        ("项目", "任务", "工作包"),
+        ("pm_proj", "pm_folder", "job_task"),
+    ),
+)
 ALLOWED_CASE_KEYS = frozenset(
     {
         "id",
@@ -177,19 +203,32 @@ def _validate_fixture_coverage(cases: Sequence[EvaluationCase]) -> None:
         raise ValueError("only time-wording cases may assert no filter")
 
 
-async def deterministic_fake_selector(case: EvaluationCase) -> SelectionOutcome:
-    """Return the fixture expectation, providing an injectable offline CI fake."""
+def _normalize_baseline_input(value: str) -> str:
+    """Normalize only enough for deterministic lexical baseline matching."""
 
-    if case.expected_status == "needs_clarification":
+    return "".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+async def lexical_baseline_selector(case: EvaluationCase) -> SelectionOutcome:
+    """Select broad table groups from literals without reading expectations.
+
+    This reference behavior intentionally cannot resolve synonyms, exclusions,
+    or the requested subset of a group.  Its non-perfect score is meaningful:
+    it proves the harness scores predictions against independent labels.
+    """
+
+    normalized = _normalize_baseline_input(case.input)
+    selected_tables: list[str] = []
+    for keywords, tables in LEXICAL_BASELINE_RULES:
+        if any(keyword in normalized for keyword in keywords):
+            selected_tables.extend(tables)
+    if not selected_tables:
         return SelectionOutcome(
-            status="needs_clarification",
-            reason_code=(
-                case.acceptable_reason_codes[0]
-                if case.acceptable_reason_codes
-                else None
-            ),
+            status="needs_clarification", reason_code="NO_RELIABLE_MATCH"
         )
-    return SelectionOutcome(status="selected", tables=case.expected_tables)
+    return SelectionOutcome(
+        status="selected", tables=tuple(dict.fromkeys(selected_tables))
+    )
 
 
 def safe_divide(numerator: int, denominator: int) -> float:
@@ -256,7 +295,7 @@ def _score_case(case: EvaluationCase, outcome: SelectionOutcome, latency_ms: flo
 
 
 async def run_benchmark(
-    cases: Sequence[EvaluationCase], selector: Selector = deterministic_fake_selector
+    cases: Sequence[EvaluationCase], selector: Selector = lexical_baseline_selector
 ) -> dict[str, float]:
     """Score an injected selector serially so production calls stay bounded."""
 
@@ -320,7 +359,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     cases = load_cases(args.cases)
-    selector: Selector = deterministic_fake_selector
+    selector: Selector = lexical_baseline_selector
     if args.live:
         if os.getenv("NATURAL_SELECTION_BENCHMARK_ALLOW_LIVE") != "1":
             raise SystemExit(

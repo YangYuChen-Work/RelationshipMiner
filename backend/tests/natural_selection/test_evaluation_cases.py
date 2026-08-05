@@ -64,3 +64,15 @@ async def test_benchmark_accepts_an_injected_fake_selector() -> None:
     assert metrics["table_precision"] == 0.0
     assert metrics["table_recall"] == 0.0
     assert metrics["false_preselection_rate"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_default_offline_baseline_can_observe_selection_mismatches() -> None:
+    """The default must score independent predictions, never fixture labels."""
+
+    metrics = await run_benchmark(load_cases(FIXTURE_PATH))
+
+    assert metrics["complete_set_accuracy"] < 1.0
+    assert metrics["table_precision"] < 1.0
+    assert metrics["table_recall"] < 1.0
+    assert metrics["false_preselection_rate"] > 0.0
