@@ -8,6 +8,7 @@ from database import get_engine
 from engine.semantic.readiness import readiness_report
 from routers.tables import router as tables_router
 from routers.analyze import router as analyze_router
+from routers.natural_language_selection import router as natural_language_selection_router
 
 app = FastAPI(
     title="AI Graph MVP",
@@ -26,6 +27,7 @@ app.add_middleware(
 
 app.include_router(tables_router)
 app.include_router(analyze_router)
+app.include_router(natural_language_selection_router)
 
 
 @app.get("/api/health")

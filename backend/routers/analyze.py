@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket
 from sqlalchemy.engine import Engine
 
 from database import get_engine, get_table_columns, get_table_names
+from engine.natural_selection.catalog import build_catalog_snapshot
 from engine.pipeline import run_analysis_pipeline
 from engine.semantic.models import AnalysisDiagnostics, AnalysisResult, AnalysisStatus
 from engine.semantic.public_json import public_model_json
@@ -50,6 +51,17 @@ def create_analysis_task(
                 "suggestion": "在左侧面板中勾选要分析的数据表",
             },
         )
+
+    if request.metadata_revision is not None:
+        current = build_catalog_snapshot(engine)
+        if current.metadata_revision != request.metadata_revision:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "metadata_changed",
+                    "message": "数据库结构已发生变化，请重新确认分析范围。",
+                },
+            )
 
     table_names = set(get_table_names(engine))
     for table in request.tables:

@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class TableInfo(BaseModel):
@@ -77,12 +77,54 @@ class AnalyzeRequest(BaseModel):
     """分析任务请求。"""
 
     tables: list[TableSelection]
+    metadata_revision: str | None = Field(default=None, max_length=80)
 
 
 class AnalyzeResponse(BaseModel):
     """分析任务创建响应。"""
 
     task_id: str
+
+
+class NaturalLanguageSelectionRequest(BaseModel):
+    """The only client-controlled inputs to natural-language selection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=1000)
+
+
+class NaturalLanguageSelectedTable(BaseModel):
+    """One safe, expanded table selection for the existing analysis UI."""
+
+    table_name: str
+    auxiliary_fields: list[str]
+    reason: str
+    matched_terms: list[str] = Field(default_factory=list)
+
+
+class NaturalLanguageSelectionResponse(BaseModel):
+    """Public selected or clarification response, with stable provenance."""
+
+    status: Literal["selected", "needs_clarification"]
+    request_id: str
+    metadata_revision: str
+    glossary_version: str
+    selector_version: str
+    tables: list[NaturalLanguageSelectedTable] = Field(default_factory=list)
+    reason_code: str | None = None
+    guidance: str | None = None
+    suggested_questions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class NaturalLanguageSelectionUnavailableResponse(BaseModel):
+    """Safe error payload that never exposes provider or configuration details."""
+
+    status: Literal["unavailable"]
+    reason_code: str
+    guidance: str
 
 
 # ── 图谱数据 ─────────────────────────────────────────────────

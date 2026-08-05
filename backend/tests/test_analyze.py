@@ -921,3 +921,41 @@ class TestAnalyzeErrorPaths:
         )
         assert response.status_code == 400
         assert "不存在" in str(response.json()["detail"])
+
+
+class TestAnalyzeMetadataRevision:
+    def test_analyze_accepts_existing_payload_without_metadata_revision(
+        self,
+        client: TestClient,
+    ):
+        response = client.post(
+            "/api/analyze",
+            json={"tables": [{"name": "orders", "fields": ["amount"]}]},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["task_id"]
+
+    def test_analyze_rejects_stale_metadata_revision(self, client: TestClient):
+        from database import get_engine
+        from engine.natural_selection.catalog import build_catalog_snapshot
+        from sqlalchemy import text
+
+        engine = client.app.dependency_overrides[get_engine]()
+        previous = build_catalog_snapshot(engine).metadata_revision
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE orders ADD COLUMN priority INTEGER"))
+
+        response = client.post(
+            "/api/analyze",
+            json={
+                "tables": [{"name": "orders", "fields": ["amount"]}],
+                "metadata_revision": previous,
+            },
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == {
+            "code": "metadata_changed",
+            "message": "数据库结构已发生变化，请重新确认分析范围。",
+        }
