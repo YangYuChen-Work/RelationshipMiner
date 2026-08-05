@@ -10,3 +10,4 @@ frontend/dist/
 .worktrees/
 .playwright-cli/
 output/
+/.superpowers/brainstorm/
