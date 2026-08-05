@@ -98,9 +98,9 @@ export default function BusinessDatasetCard({
               aria-label={`${summary.semantic_name} 示例对象`}
               className="mt-3 flex flex-wrap gap-2"
             >
-              {summary.name_samples.map((sample) => (
+              {summary.name_samples.map((sample, index) => (
                 <li
-                  key={sample}
+                  key={`${tableName}:${sample}:${index}`}
                   className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600"
                 >
                   {sample}

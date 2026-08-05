@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import BusinessDatasetCard from "../BusinessDatasetCard";
@@ -142,6 +142,23 @@ describe("BusinessDatasetCard", () => {
     expect(screen.getByRole("checkbox", {
       name: "选择业务数据 装配工艺数据（来源 assembly_process）",
     })).toBeVisible();
+  });
+
+  it("does not reuse a React key when example names repeat", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(
+      <BusinessDatasetCard
+        tableName="assembly_process"
+        summary={{ ...summary, name_samples: ["测试", "测试"] }}
+        disabled={false}
+      />,
+    );
+
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain(
+      "Encountered two children with the same key",
+    );
+    consoleError.mockRestore();
   });
 
   it("collapses and restores the complete field details without changing the table selection", async () => {

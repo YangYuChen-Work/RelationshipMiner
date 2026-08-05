@@ -37,7 +37,7 @@ export default function SelectionModeToggle({
   return (
     <div
       role="tablist"
-      aria-label="\u6570\u636e\u9009\u53d6\u65b9\u5f0f"
+      aria-label={"\u6570\u636e\u9009\u53d6\u65b9\u5f0f"}
       className="inline-flex rounded-lg bg-gray-100 p-1"
     >
       {modes.map(({ value, label }) => (

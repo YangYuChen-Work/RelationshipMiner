@@ -18,7 +18,7 @@ const copy = {
   retry: "\u91cd\u8bd5",
   loading: "\u6b63\u5728\u52a0\u8f7d\u6570\u636e\u8868",
   noTables: "\u672a\u53d1\u73b0\u4efb\u4f55\u8868\uff0c\u8bf7\u68c0\u67e5\u6570\u636e\u5e93\u8fde\u63a5\u3002",
-  noMatches: "\u672a\u627e\u5230\u5339\u914d\u7684\u6570\u636e\u8868\u3002",
+  noMatches: "\u672a\u627e\u5230\u5339\u914d\u7684\u6570\u636e\u8868",
   selected: "\u5f53\u524d\u5df2\u9009\u6570\u636e\u8868",
   undo: "\u64a4\u9500\u4e0a\u6b21 AI \u66ff\u6362",
   systemInfo: "\u7cfb\u7edf\u5c06\u4f7f\u7528\u540d\u79f0\u548c\u5bf9\u8c61\u7c7b\u578b\u5224\u65ad\u5173\u7cfb\u3002",
@@ -54,15 +54,15 @@ export default function SelectionWorkspace() {
     <section className="space-y-4" aria-label={copy.region}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div><h2 className="text-lg font-semibold text-gray-900">{copy.title}</h2><p className="mt-1 text-sm text-gray-500">{copy.description}</p></div>
-        <div className="flex flex-wrap items-center gap-3"><span className="rounded-full bg-blue-100 px-2.5 py-1 text-sm font-medium text-blue-800">{selectedCount} / {maxTables} \u5f20\u8868</span><SelectionModeToggle mode={selectionMode} onChange={setSelectionMode} /></div>
+        <div className="flex flex-wrap items-center gap-3"><span className="rounded-full bg-blue-100 px-2.5 py-1 text-sm font-medium text-blue-800">{`${selectedCount} / ${maxTables} \u5f20\u8868`}</span><SelectionModeToggle mode={selectionMode} onChange={setSelectionMode} /></div>
       </div>
       <DatabaseInfoCard />
       {selectedCount >= maxTables && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{copy.limit}</p>}
       {tableSummariesWarning && !tablesError && <p role="status" className="text-xs text-amber-700">{copy.summaryWarning}</p>}
 
-      <div className="space-y-3" hidden={selectionMode !== "natural"}><NaturalLanguageSelectionPanel hidden={selectionMode !== "natural"} />
+      {selectionMode === "natural" && <div className="space-y-3"><NaturalLanguageSelectionPanel />
         {selectedCount > 0 && <section aria-label={copy.selected} className="space-y-2"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-gray-800">{copy.selected}</h3>{previousSelection && <button type="button" onClick={undoAIReplacement} className="text-sm font-medium text-blue-700 hover:underline">{copy.undo}</button>}</div>{Array.from(selectedTables.values()).map((table) => <BusinessDatasetCard key={table.name} tableName={table.name} summary={tableSummaries.get(table.name)} disabled={false} />)}</section>}
-      </div>
+      </div>}
 
       <section id="selection-panel-manual" role="tabpanel" aria-labelledby="selection-tab-manual" hidden={selectionMode !== "manual"} className="space-y-4">
         {!tablesLoading && !tablesError && tables.length > 0 && <input type="search" aria-label={copy.search} placeholder={copy.search} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" />}

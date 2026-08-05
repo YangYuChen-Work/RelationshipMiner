@@ -121,7 +121,7 @@ describe("SelectionWorkspace table search", () => {
     await user.type(searchInput, "orders");
     await waitFor(() => {
       expect(screen.queryByText("UserAccounts")).not.toBeInTheDocument();
-      expect(screen.getByText("1 / 10 表")).toBeInTheDocument();
+      expect(screen.getByText("1 / 10 张表")).toBeInTheDocument();
     });
 
     await user.clear(searchInput);

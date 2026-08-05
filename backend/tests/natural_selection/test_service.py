@@ -8,6 +8,11 @@ from engine.natural_selection.catalog import build_catalog_snapshot
 from engine.deepseek_client import DeepSeekJsonAdapter, LlmBatchError
 from engine.natural_selection.glossary import Glossary
 from engine.natural_selection.models import GlossaryMapping
+from engine.natural_selection.models import (
+    CatalogColumn,
+    CatalogSnapshot,
+    CatalogTable,
+)
 from engine.natural_selection.service import (
     NaturalSelectionService,
     SelectionUnavailable,
@@ -151,6 +156,91 @@ async def test_invalid_json_is_invalid_model_output_not_provider_unavailable(
 
 
 @pytest.mark.asyncio
+async def test_legacy_table_selection_payload_is_validated_against_the_catalog(
+    snapshot,
+    empty_glossary,
+) -> None:
+    """A known provider payload variant must not force a user-visible 503."""
+
+    model = RecordingModel(
+        {
+            "needs_clarification": False,
+            "table_selection": ["orders"],
+            "field_selection": "all",
+            "auxiliary_fields": [],
+            "guidance": "",
+        }
+    )
+
+    result = await selector(empty_glossary, model).select("analyse orders", snapshot)
+
+    assert result.status == "selected"
+    assert [table.model_dump() for table in result.tables] == [
+        {
+            "name": "orders",
+            "auxiliary_fields": ["amount"],
+            "reason": "model selection result",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_legacy_tables_payload_is_validated_against_the_catalog(
+    snapshot,
+    empty_glossary,
+) -> None:
+    """A provider payload using `tables` still needs strict catalog validation."""
+
+    model = RecordingModel(
+        {
+            "needs_clarification": False,
+            "tables": ["orders"],
+            "field_selection": "all",
+            "auxiliary_fields": [],
+            "guidance": "",
+        }
+    )
+
+    result = await selector(empty_glossary, model).select("analyse orders", snapshot)
+
+    assert result.status == "selected"
+    assert [table.model_dump() for table in result.tables] == [
+        {
+            "name": "orders",
+            "auxiliary_fields": ["amount"],
+            "reason": "model selection result",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_legacy_tables_payload_reaches_service_normalization(
+    snapshot,
+    empty_glossary,
+) -> None:
+    """The adapter must not reject a known provider payload before validation."""
+
+    client = InvalidJsonAdapterClient(
+        json.dumps(
+            {
+                "needs_clarification": False,
+                "tables": ["orders"],
+                "field_selection": "all",
+                "auxiliary_fields": [],
+                "guidance": "",
+            }
+        )
+    )
+    model = DeepSeekJsonAdapter(api_key="test-key", client=client)
+
+    result = await selector(empty_glossary, model).select("analyse orders", snapshot)
+
+    assert result.status == "selected"
+    assert result.tables[0].name == "orders"
+    assert client.completions.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_adapter_malformed_output_category_remains_invalid_model_output(
     snapshot, empty_glossary
 ) -> None:
@@ -169,7 +259,7 @@ async def test_adapter_malformed_output_category_remains_invalid_model_output(
 async def test_adapter_contract_failure_remains_invalid_model_output(
     snapshot, empty_glossary
 ) -> None:
-    """Discarding the adapter's schema category would hide provider contract failures."""
+    """Strict service validation must still reject unsupported provider shapes."""
 
     client = InvalidJsonAdapterClient('{"status":"not-a-selection-status"}')
     model = DeepSeekJsonAdapter(api_key="test-key", client=client)
@@ -177,7 +267,7 @@ async def test_adapter_contract_failure_remains_invalid_model_output(
     with pytest.raises(SelectionUnavailable, match="INVALID_MODEL_OUTPUT"):
         await selector(empty_glossary, model).select("分析订单", snapshot)
 
-    assert client.completions.calls == 2
+    assert client.completions.calls == 1
 
 
 @pytest.mark.asyncio
@@ -229,6 +319,55 @@ async def test_multi_table_glossary_alias_is_sent_as_non_filtering_evidence(
         "users",
         "orders",
         "products",
+    }
+
+
+@pytest.mark.asyncio
+async def test_large_catalog_keeps_every_table_name_within_model_context_budget(
+    empty_glossary,
+) -> None:
+    """Full column metadata must not turn a valid selection request into HTTP 400."""
+
+    columns = [
+        CatalogColumn(
+            name=f"field_{index}",
+            type="VARCHAR(255)",
+            is_name=False,
+            is_class_name=False,
+            is_primary_key=False,
+            is_foreign_key=False,
+        )
+        for index in range(100)
+    ]
+    tables = [
+        CatalogTable(
+            name=f"table_{index:04d}",
+            columns=columns,
+        )
+        for index in range(400)
+    ]
+    snapshot = CatalogSnapshot(tables=tables, metadata_revision="sha256:large")
+    model = RecordingModel(
+        {
+            "status": "selected",
+            "tables": [
+                {
+                    "table_name": "table_0000",
+                    "field_selection": "all",
+                    "auxiliary_fields": [],
+                    "reason": "large catalog regression",
+                }
+            ],
+        }
+    )
+
+    await selector(empty_glossary, model).select("analyse one table", snapshot)
+
+    prompt = model.calls[0]["messages"][1]["content"]
+    prompt_payload = json.loads(prompt)
+    assert len(prompt) <= 500_000
+    assert {item["name"] for item in prompt_payload["tables"]} == {
+        f"table_{index:04d}" for index in range(400)
     }
 
 

@@ -20,8 +20,12 @@ from .models import (
 from .validator import (
     ClarificationRequired,
     InvalidModelOutput,
+    allowed_auxiliary_fields,
     validate_model_selection,
 )
+
+
+_MODEL_CATALOG_CHAR_LIMIT = 450_000
 
 
 SELECTION_SYSTEM_PROMPT = (
@@ -42,7 +46,7 @@ class SelectionModelClient(Protocol):
         self,
         messages: list[dict[str, object]],
         max_tokens: int,
-        response_model: type[BaseModel],
+        response_model: type[BaseModel] | None,
     ) -> dict[str, object]: ...
 
 
@@ -68,9 +72,7 @@ def _messages(
             "content": json.dumps(
                 {
                     "description": description,
-                    "tables": [
-                        table.model_dump(mode="json") for table in snapshot.tables
-                    ],
+                    "tables": _model_catalog(snapshot, hits),
                     "glossary_hits": [hit.model_dump(mode="json") for hit in hits],
                 },
                 ensure_ascii=False,
@@ -78,6 +80,90 @@ def _messages(
             ),
         },
     ]
+
+
+def _model_catalog(
+    snapshot: CatalogSnapshot,
+    hits: list[GlossaryHit],
+) -> list[dict[str, object]]:
+    """Fit model-visible table metadata within a conservative context budget."""
+
+    hit_names = {hit.table_name for hit in hits}
+    ordered_tables = sorted(
+        snapshot.tables,
+        key=lambda table: (table.name not in hit_names, table.name),
+    )
+    catalog = [
+        {"name": table.name, "auxiliary_fields": []}
+        for table in ordered_tables
+    ]
+    serialized_size = len(
+        json.dumps(catalog, ensure_ascii=False, separators=(",", ":"))
+    )
+
+    for table, entry in zip(ordered_tables, catalog, strict=True):
+        candidate = {
+            "name": table.name,
+            "auxiliary_fields": allowed_auxiliary_fields(table),
+        }
+        added_size = len(
+            json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
+        ) - len(json.dumps(entry, ensure_ascii=False, separators=(",", ":")))
+        if serialized_size + added_size > _MODEL_CATALOG_CHAR_LIMIT:
+            continue
+        entry["auxiliary_fields"] = candidate["auxiliary_fields"]
+        serialized_size += added_size
+
+    return catalog
+
+
+def _normalize_model_selection_payload(payload: object) -> object:
+    """Translate the provider's observed legacy selection shape to our contract."""
+
+    if not isinstance(payload, dict) or "status" in payload:
+        return payload
+
+    needs_clarification = payload.get("needs_clarification")
+    if needs_clarification is True:
+        return {
+            "status": "needs_clarification",
+            "reason_code": payload.get("reason_code"),
+            "guidance": payload.get("guidance"),
+            "suggested_questions": payload.get("suggested_questions", []),
+        }
+
+    selections = payload.get("table_selection", payload.get("tables"))
+    if needs_clarification is not False or not isinstance(selections, list):
+        return payload
+
+    tables = []
+    for selection in selections:
+        if isinstance(selection, str):
+            tables.append(
+                {
+                    "table_name": selection,
+                    "field_selection": payload.get("field_selection", "all"),
+                    "auxiliary_fields": payload.get("auxiliary_fields", []),
+                    "reason": "model selection result",
+                }
+            )
+        elif isinstance(selection, dict):
+            tables.append(
+                {
+                    "table_name": selection.get("table_name", selection.get("name")),
+                    "field_selection": selection.get(
+                        "field_selection", payload.get("field_selection", "all")
+                    ),
+                    "auxiliary_fields": selection.get(
+                        "auxiliary_fields", payload.get("auxiliary_fields", [])
+                    ),
+                    "reason": selection.get("reason", "model selection result"),
+                }
+            )
+        else:
+            return payload
+
+    return {"status": "selected", "tables": tables}
 
 
 def clarification_response(decision: ModelSelection) -> SelectionResponse:
@@ -114,7 +200,7 @@ class NaturalSelectionService:
             payload = await self.model.complete_json(
                 messages=_messages(description, snapshot, hits),
                 max_tokens=2048,
-                response_model=ModelSelection,
+                response_model=None,
             )
         except LlmBatchError as error:
             reason_code = (
@@ -129,7 +215,9 @@ class NaturalSelectionService:
             raise SelectionUnavailable("MODEL_UNAVAILABLE") from error
 
         try:
-            decision = ModelSelection.model_validate(payload)
+            decision = ModelSelection.model_validate(
+                _normalize_model_selection_payload(payload)
+            )
         except (TypeError, ValidationError) as error:
             raise SelectionUnavailable("INVALID_MODEL_OUTPUT") from error
 

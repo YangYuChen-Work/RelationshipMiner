@@ -218,7 +218,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   tableRequestTokens: new Map(),
   tableErrors: new Map(),
   maxTables: 10,
-  selectionMode: "natural",
+  selectionMode: "manual",
   selectionSource: "manual",
   selectionDirty: false,
   metadataRevision: null,
