@@ -5,6 +5,8 @@
 ## 功能概览
 
 - **业务数据浏览** — 自动推测每张表的语义名称，同时保留原始表名、对象数量与名称示例供核对
+- **自然语言选取（默认）** — 用业务描述自动建议数据表和辅助字段；结果可继续删除表或调整字段
+- **手动选取（保留）** — 随时切换回原有的表搜索、勾选和字段编辑工作区
 - **判断依据分层** — `name` 与 `class_name` 始终作为主要关系判断上下文；用户只需选择其他辅助判断字段
 - **三层关系发现** — Schema（外键）、数据（值精确相等）、语义（AI 推断字段匹配）
 - **实时进度** — WebSocket 推送五阶段分析进度
@@ -66,12 +68,22 @@ npm run dev
 ### 4. 使用
 
 1. 打开 http://127.0.0.1:5173
-2. 在“选择业务数据”中核对系统推测的语义名称、原始表名、对象数量和名称示例
-3. 勾选要分析的业务数据（≤10 张），再选择用于辅助判断关系的字段
+2. 默认在“自然语言选取”中描述要分析的业务关系；AI 会展示建议的数据表和辅助字段
+3. 需要时直接在已选结果中删除表、增删辅助字段，或切换到“手动选取”使用原有的搜索和勾选功能
 4. 点击“生成业务关系图”，等待分析完成（≤3 分钟）
 5. 在业务关系图中按对象名称或业务代码查找并探索关系
 
-完整流程：**选择业务数据 → 选择辅助判断依据 → 生成业务关系图**。
+完整流程：**自然语言选取（或手动选取）→ 微调辅助判断依据 → 生成业务关系图**。
+
+## 自然语言选取与词汇表运维
+
+自然语言模式是默认入口，但不会替代手动选取。输入业务意图后，后端只向 AI 提供表、字段及其结构角色等元数据；不会提供任何业务记录、数据库凭据或客户端传入的表清单。AI 无法可靠判断、范围超过 10 张表或服务暂不可用时，界面保留当前选择，并提示补充描述或切换到手动模式。
+
+建议结果不是锁定状态：可以在自然语言模式下继续删除已选表、编辑辅助字段；进行手工修改后，该选择按手动结果处理。`name`、`class_name`、主键和外键仍遵循既有展示与关系分析规则，不能作为辅助字段。若描述没有明确限定辅助字段，系统默认选中该表全部合法辅助字段；时间表述仅帮助理解选表意图，不会生成行过滤条件。
+
+开发/运维人员在仓库中维护 [backend/config/natural_language_glossary.yaml](backend/config/natural_language_glossary.yaml)。该 YAML 的第一版只支持 `aliases -> tables`：一个别名可以映射多张表，命中结果只是给 AI 的语义证据，不会限制其查看完整元数据目录。文件加载时会拒绝重复键、重复别名、空值、未知表和不支持的 schema 版本；修改后应运行后端测试。格式、维护规则和示例见 [自然语言词汇表指南](docs/superpowers/specs/2026-08-05-natural-language-glossary-guide.md)。
+
+自然语言接口使用与既有 AI 功能相同的 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`DEEPSEEK_BASE_URL` 和 `LLM_REQUEST_TIMEOUT_SECONDS` 配置。没有有效密钥或提供方不可用时，只会返回固定的安全提示，不会暴露异常详情、提示词或密钥。
 
 ## 业务展示原则
 
@@ -136,6 +148,7 @@ ai-graph/
 | `/api/tables` | GET | 返回数据库所有表名 |
 | `/api/table-summaries` | GET | 返回表的语义名称、对象数量和名称示例 |
 | `/api/tables/{name}/fields` | GET | 返回指定表的字段列表 |
+| `/api/natural-language-selection` | POST | 根据自然语言描述返回可微调的表与辅助字段建议 |
 | `/api/analyze` | POST | 提交分析任务，返回 task_id |
 | `/ws/analyze/{task_id}` | WS | 分析进度推送 + 最终图谱数据 |
 | `/api/export/{task_id}` | GET | 导出 JSON 完整快照 |
@@ -178,8 +191,11 @@ uv run --directory backend python -c "from sentence_transformers import Sentence
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\benchmark_semantic_backend.py
+uv run python scripts\benchmark_natural_selection.py --cases backend\tests\fixtures\natural_selection_cases.yaml
 cd frontend
 npm test -- --run src/graph/scaling.test.ts
 ```
+
+`benchmark_natural_selection.py` 输出表精确率、召回率、完整集合准确率、澄清正确率、错误预选率和 P95 延迟。默认使用可注入的确定性假选择器，适用于 CI，且不会连接数据库或调用 DeepSeek。真实模型基准需要同时显式传入 `--live` 并设置 `NATURAL_SELECTION_BENCHMARK_ALLOW_LIVE=1`；它会使用当前数据库元数据和现有 DeepSeek 环境变量，可能产生模型调用费用。
 
 `/api/health` 仅返回 `ready`/`degraded` 状态和固定依赖项。它不会返回 API 密钥、数据库 URL、异常信息、提示词、响应内容或实体/字段值。
