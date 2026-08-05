@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import inspect
 import json
 import math
 import sys
@@ -168,6 +169,21 @@ class DeepSeekJsonAdapter:
             f"{last_error}",
             reason_code=reason_code,
         ) from last_error
+
+    async def aclose(self) -> None:
+        """Close a lazily created async provider client when a request ends."""
+
+        client, self._client = self._client, None
+        close = getattr(client, "close", None)
+        if close is None:
+            return
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            # Provider shutdown errors must not replace a completed API response.
+            return
 
 
 class DeepSeekClient:

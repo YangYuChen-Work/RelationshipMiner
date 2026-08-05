@@ -127,6 +127,13 @@ class NaturalLanguageSelectionUnavailableResponse(BaseModel):
     guidance: str
 
 
+class NaturalLanguageSelectionInvalidRequestResponse(BaseModel):
+    """A fixed validation error that does not echo client input."""
+
+    status: Literal["invalid_request"]
+    message: str
+
+
 # ── 图谱数据 ─────────────────────────────────────────────────
 
 

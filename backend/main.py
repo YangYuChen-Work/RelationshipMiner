@@ -1,6 +1,8 @@
 """AI Graph MVP — FastAPI 应用入口。"""
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.engine import Engine
 
@@ -8,7 +10,11 @@ from database import get_engine
 from engine.semantic.readiness import readiness_report
 from routers.tables import router as tables_router
 from routers.analyze import router as analyze_router
-from routers.natural_language_selection import router as natural_language_selection_router
+from routers.natural_language_selection import (
+    invalid_request_response,
+    is_natural_language_selection_path,
+    router as natural_language_selection_router,
+)
 
 app = FastAPI(
     title="AI Graph MVP",
@@ -28,6 +34,18 @@ app.add_middleware(
 app.include_router(tables_router)
 app.include_router(analyze_router)
 app.include_router(natural_language_selection_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_response(
+    request: Request,
+    error: RequestValidationError,
+):
+    """Keep normal API validation responses intact outside selection."""
+
+    if is_natural_language_selection_path(request.url.path):
+        return invalid_request_response()
+    return await request_validation_exception_handler(request, error)
 
 
 @app.get("/api/health")

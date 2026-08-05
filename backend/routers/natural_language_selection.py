@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from models.schemas import (
     NaturalLanguageSelectedTable,
     NaturalLanguageSelectionRequest,
     NaturalLanguageSelectionResponse,
+    NaturalLanguageSelectionInvalidRequestResponse,
     NaturalLanguageSelectionUnavailableResponse,
 )
 
@@ -45,6 +47,8 @@ _SAFE_UNAVAILABLE_CODES = {
     "MODEL_UNAVAILABLE",
     "INVALID_MODEL_OUTPUT",
 }
+_SELECTION_PATH = "/api/natural-language-selection"
+_INVALID_REQUEST_MESSAGE = "请求参数无效，请检查请求编号和不超过1000个字符的分析描述。"
 
 
 @dataclass(frozen=True)
@@ -57,20 +61,21 @@ class NaturalSelectionContext:
     unavailable_reason_code: str | None = None
 
 
-def get_natural_selection_context(
+async def get_natural_selection_context(
     engine: Engine = Depends(get_engine),
-) -> NaturalSelectionContext:
+) -> AsyncIterator[NaturalSelectionContext]:
     """Build all server-owned selection dependencies without client input."""
 
     try:
         snapshot = build_catalog_snapshot(engine)
     except Exception:
-        return NaturalSelectionContext(
+        yield NaturalSelectionContext(
             snapshot=None,
             selector=None,
             glossary_version=None,
             unavailable_reason_code="METADATA_UNAVAILABLE",
         )
+        return
 
     try:
         glossary = load_glossary(
@@ -78,18 +83,53 @@ def get_natural_selection_context(
             {table.name for table in snapshot.tables},
         )
     except GlossaryError:
-        return NaturalSelectionContext(
+        yield NaturalSelectionContext(
             snapshot=None,
             selector=None,
             glossary_version=None,
             unavailable_reason_code="GLOSSARY_INVALID",
         )
+        return
 
-    return NaturalSelectionContext(
-        snapshot=snapshot,
-        selector=NaturalSelectionService(glossary, DeepSeekJsonAdapter()),
-        glossary_version=glossary.version,
+    adapter: DeepSeekJsonAdapter | None = None
+    try:
+        adapter = DeepSeekJsonAdapter()
+        selector = NaturalSelectionService(glossary, adapter)
+    except Exception:
+        if adapter is not None:
+            await adapter.aclose()
+        yield NaturalSelectionContext(
+            snapshot=None,
+            selector=None,
+            glossary_version=None,
+            unavailable_reason_code="MODEL_UNAVAILABLE",
+        )
+        return
+
+    try:
+        yield NaturalSelectionContext(
+            snapshot=snapshot,
+            selector=selector,
+            glossary_version=glossary.version,
+        )
+    finally:
+        await adapter.aclose()
+
+
+def is_natural_language_selection_path(path: str) -> bool:
+    """Limit the custom validation response to the selection endpoint."""
+
+    return path == _SELECTION_PATH
+
+
+def invalid_request_response() -> JSONResponse:
+    """Return fixed Chinese copy without serializing Pydantic error details."""
+
+    body = NaturalLanguageSelectionInvalidRequestResponse(
+        status="invalid_request",
+        message=_INVALID_REQUEST_MESSAGE,
     )
+    return JSONResponse(status_code=422, content=body.model_dump())
 
 
 def _unavailable(reason_code: str) -> JSONResponse:
