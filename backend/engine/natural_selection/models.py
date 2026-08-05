@@ -93,3 +93,15 @@ class ValidatedSelection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tables: list[ValidatedTableSelection]
+
+
+class SelectionResponse(BaseModel):
+    """Safe service result for a selection or a user clarification request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["selected", "needs_clarification"]
+    tables: list[ValidatedTableSelection] = Field(default_factory=list)
+    reason_code: str | None = None
+    guidance: str | None = None
+    suggested_questions: list[str] = Field(default_factory=list, max_length=2)
