@@ -1,0 +1,48 @@
+schema_version: 1
+glossary_version: "2026-08-05.1"
+
+mappings:
+  - aliases:
+      - 需求
+      - 需求表
+      - 需求数据
+      - 产品需求
+      - 客户需求
+    tables:
+      - requirement
+      - demand_parameter
+      - requirement_folder
+
+  - aliases:
+      - 工艺
+      - 工艺表
+      - 工艺数据
+      - 工艺路线
+      - 工艺路线表
+      - 加工路线
+      - 工序
+      - 工序表
+      - 加工步骤
+      - 工艺步骤
+    tables:
+      - meprocess
+      - mestep
+      - meoperation
+
+  - aliases:
+      - 三维模型
+      - 机械物料
+      - 装配
+      - 物理模型
+      - 样
+    tables:
+      - assembly
+
+  - aliases:
+      - 项目
+      - 作业任务
+      - 工作包
+    tables:
+      - pm_proj
+      - pm_folder
+      - job_task
