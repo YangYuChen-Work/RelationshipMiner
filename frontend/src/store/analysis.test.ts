@@ -507,6 +507,47 @@ describe("analysis selection store", () => {
     vi.unstubAllGlobals();
   });
 
+  it("records manual selection intent immediately and invalidates its load after a mode switch", async () => {
+    let resolveFields!: (value: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>((resolve) => { resolveFields = resolve; }),
+    );
+    useAnalysisStore.setState({
+      selectionMode: "manual",
+      metadataRevision: "ai-metadata",
+      selectionDirty: false,
+      selectionSource: "ai",
+    });
+
+    const loading = useAnalysisStore.getState().toggleTable("manual_orders");
+
+    expect(useAnalysisStore.getState()).toMatchObject({
+      selectionDirty: true,
+      selectionSource: "mixed",
+      metadataRevision: null,
+      pendingTables: new Set(["manual_orders"]),
+    });
+
+    const aiSelection = new Map([["ai_orders", {
+      name: "ai_orders", columns, selectedFields: new Set<string>(["email"]),
+    }]]);
+    useAnalysisStore.getState().queueAISelection(aiSelection, "new-ai-metadata");
+    expect(useAnalysisStore.getState().pendingAIReplacement).toEqual(aiSelection);
+    expect(useAnalysisStore.getState().selectedTables).toEqual(new Map());
+
+    useAnalysisStore.getState().setSelectionMode("natural");
+    expect(useAnalysisStore.getState().pendingTables).toEqual(new Set());
+    expect(useAnalysisStore.getState().tableRequestTokens).toEqual(new Map());
+    resolveFields({
+      ok: true,
+      json: () => Promise.resolve({ table_name: "manual_orders", columns }),
+    } as Response);
+    await loading;
+
+    expect(useAnalysisStore.getState().selectedTables).toEqual(new Map());
+    expect(useAnalysisStore.getState().pendingAIReplacement).toEqual(aiSelection);
+  });
+
   it("expands an AI selection atomically with all server-selected fields", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);

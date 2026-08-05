@@ -316,6 +316,10 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
         pendingTables: nextPendingTables,
         tableRequestTokens: nextRequestTokens,
         tableErrors: nextTableErrors,
+        // A manual add is a user selection as soon as it is requested, not only
+        // once its columns arrive. This prevents an in-flight AI result from
+        // replacing it as if the selection were still clean.
+        ...manualSelectionPatch(),
       });
 
       try {
@@ -428,9 +432,15 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
   setSelectionMode: (mode) => {
     if (mode !== "natural") abortNaturalSelectionRequest();
-    const naturalLanguage = get().naturalLanguage;
+    const current = get();
+    const naturalLanguage = current.naturalLanguage;
     set({
       selectionMode: mode,
+      // Field loads started from the previous mode must not append to a
+      // selection that is now owned by another mode or an AI replacement.
+      ...(mode !== current.selectionMode
+        ? { pendingTables: new Set<string>(), tableRequestTokens: new Map<string, number>() }
+        : {}),
       naturalLanguage:
         mode === "natural"
           ? naturalLanguage
@@ -605,6 +615,8 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     if (!previousSelection) return;
     set({
       selectedTables: cloneSelectedTables(previousSelection),
+      pendingTables: new Set(),
+      tableRequestTokens: new Map(),
       previousSelection: null,
       selectionSource: "manual",
       selectionDirty: true,
