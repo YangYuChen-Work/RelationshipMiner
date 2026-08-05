@@ -147,6 +147,7 @@ ai-graph/
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/api/health` | GET | 健康检查（就绪/降级） |
+| `/api/database-info` | GET | 返回不含凭据的数据库连接状态、名称、地址和表数量 |
 | `/api/tables` | GET | 返回数据库所有表名 |
 | `/api/table-summaries` | GET | 返回表的语义名称、对象数量和名称示例 |
 | `/api/tables/{name}/fields` | GET | 返回指定表的字段列表 |
