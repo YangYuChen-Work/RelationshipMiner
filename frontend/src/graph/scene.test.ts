@@ -244,9 +244,20 @@ describe("buildScene", () => {
     expect(work.tableEdges).toHaveLength(2);
     expect(overview.entityLabels.map(({ nodeId, primary, secondary, text }) =>
       ({ nodeId, primary, secondary, text })
-    )).toEqual(work.entityLabels.map(({ nodeId, primary, secondary, text }) =>
+    )).toEqual([
+      { nodeId: "order-1", primary: "Order 1", secondary: "", text: "Order 1" },
+      { nodeId: "order-2", primary: "Order 2", secondary: "", text: "Order 2" },
+      { nodeId: "user-1", primary: "Ada", secondary: "", text: "Ada" },
+      { nodeId: "user-2", primary: "Grace", secondary: "", text: "Grace" },
+    ]);
+    expect(work.entityLabels.map(({ nodeId, primary, secondary, text }) =>
       ({ nodeId, primary, secondary, text })
-    ));
+    )).toEqual([
+      { nodeId: "order-1", primary: "Order 1", secondary: "", text: "Order 1" },
+      { nodeId: "order-2", primary: "Order 2", secondary: "", text: "Order 2" },
+      { nodeId: "user-1", primary: "Ada", secondary: "", text: "Ada" },
+      { nodeId: "user-2", primary: "Grace", secondary: "", text: "Grace" },
+    ]);
   });
 
   it("rejects auxiliary values as primary names and resolves mixed directions as undirected", () => {
