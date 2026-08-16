@@ -382,6 +382,13 @@ function compareTablesByDegree(
     compareIds(left.id, right.id);
 }
 
+function compareTablesByStableKey(
+  left: LayoutTableInput,
+  right: LayoutTableInput,
+): number {
+  return compareIds(left.id, right.id);
+}
+
 function businessLaneTableAnchors(
   graph: LayoutGraph,
   tables: readonly LayoutTableInput[],
@@ -409,7 +416,7 @@ function businessLaneTableAnchors(
       .filter((lane) => lane.length > 0)
       .map((lane) => [...lane].sort(compareInLane)),
     ...unknownTables
-      .sort(compareInLane)
+      .sort(compareTablesByStableKey)
       .map((table) => [table]),
   ];
   const laneCount = Math.max(1, lanes.length);
