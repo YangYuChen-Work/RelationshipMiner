@@ -106,6 +106,45 @@ function mixedComponentGraph(sameTable: boolean): LayoutGraph {
   };
 }
 
+function packedDisconnectedComponentGraph(): LayoutGraph {
+  const entityCount = 1_201;
+  return {
+    table_nodes: [{ id: "table-0", display_name: "Table 0" }],
+    entity_nodes: Array.from({ length: entityCount }, (_, index) => ({
+      id: `packed-entity-${index}`,
+      table_id: "table-0",
+      class_name: null,
+    })),
+    table_edges: [],
+    entity_edges: Array.from({ length: 30 }, (_, index) => ({
+      id: `packed-component-${index}`,
+      source: `packed-entity-${index * 2}`,
+      target: `packed-entity-${index * 2 + 1}`,
+      weight: 1,
+    })),
+  };
+}
+
+function paddedBounds(
+  nodes: readonly { x: number; y: number }[],
+  padding: number,
+) {
+  return {
+    left: Math.min(...nodes.map((node) => node.x)) - padding,
+    right: Math.max(...nodes.map((node) => node.x)) + padding,
+    top: Math.min(...nodes.map((node) => node.y)) - padding,
+    bottom: Math.max(...nodes.map((node) => node.y)) + padding,
+  };
+}
+
+function boundsOverlap(
+  left: ReturnType<typeof paddedBounds>,
+  right: ReturnType<typeof paddedBounds>,
+) {
+  return left.right > right.left && right.right > left.left &&
+    left.bottom > right.top && right.bottom > left.top;
+}
+
 class ScalingLayoutWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
@@ -343,6 +382,60 @@ describe("7000-entity graph scaling", () => {
     expect.soft(width).toBeLessThanOrEqual(43_056);
     expect.soft(height).toBeLessThanOrEqual(25_056);
     expect.soft(visibleLinkedNodes).toHaveLength(60);
+  }, 10_000);
+
+  it("packs >1000 same-table components into deterministic padded blocks", () => {
+    const packedGraph = packedDisconnectedComponentGraph();
+    const first = computeNebulaLayout(packedGraph, VIEWPORT);
+    const second = computeNebulaLayout(packedGraph, VIEWPORT);
+    const positions = new Map(
+      first.entityNodes.map((node) => [node.id, node]),
+    );
+    const componentBounds = packedGraph.entity_edges.map((edge) => {
+      const source = positions.get(edge.source)!;
+      const target = positions.get(edge.target)!;
+      const memberDistance = Math.hypot(
+        source.x - target.x,
+        source.y - target.y,
+      );
+
+      expect(memberDistance).toBeGreaterThanOrEqual(
+        ENTITY_COLLISION_RADIUS * 2,
+      );
+      expect(memberDistance).toBeLessThan(
+        ENTITY_COLLISION_RADIUS * 2 + 0.001,
+      );
+      return paddedBounds(
+        [source, target],
+        ENTITY_COLLISION_RADIUS,
+      );
+    });
+
+    for (let left = 0; left < componentBounds.length; left += 1) {
+      for (let right = left + 1; right < componentBounds.length; right += 1) {
+        const horizontalGap = Math.max(
+          componentBounds[right].left - componentBounds[left].right,
+          componentBounds[left].left - componentBounds[right].right,
+          0,
+        );
+        const verticalGap = Math.max(
+          componentBounds[right].top - componentBounds[left].bottom,
+          componentBounds[left].top - componentBounds[right].bottom,
+          0,
+        );
+        expect(
+          boundsOverlap(componentBounds[left], componentBounds[right]),
+          `components ${left} and ${right}`,
+        ).toBe(false);
+        expect(
+          Math.max(horizontalGap, verticalGap),
+          `component gap ${left} and ${right}`,
+        ).toBeGreaterThanOrEqual(
+          ENTITY_COLLISION_RADIUS * (2 * Math.sqrt(3) - 2),
+        );
+      }
+    }
+    expect(second).toEqual(first);
   }, 10_000);
 
   it("renders through one canvas without per-entity DOM nodes", async () => {

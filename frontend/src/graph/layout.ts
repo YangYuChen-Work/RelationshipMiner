@@ -464,9 +464,31 @@ function boundedTableScatterSpan(
   );
 }
 
-function packTableOwnedStaggeredLattice(
+interface PackedLatticeBlock {
+  members: SimulationEntity[];
+  columns: number;
+  rows: number;
+  widthSlots: number;
+}
+
+function packedLatticeBlock(
+  members: SimulationEntity[],
+  preferredColumns = Math.ceil(Math.sqrt(members.length)),
+): PackedLatticeBlock {
+  const columns = Math.max(1, Math.min(members.length, preferredColumns));
+  const rows = Math.ceil(members.length / columns);
+  return {
+    members,
+    columns,
+    rows,
+    widthSlots: columns - 1 + (rows > 1 ? 0.5 : 0),
+  };
+}
+
+function packTableOwnedComponentLattice(
   nodes: SimulationEntity[],
   tableAnchors: ReadonlyMap<string, LayoutPoint>,
+  componentByNode: ReadonlyMap<string, string>,
 ) {
   const membersByTable = new Map<string, SimulationEntity[]>();
   for (const node of nodes) {
@@ -478,23 +500,76 @@ function packTableOwnedStaggeredLattice(
   const columnGap = ENTITY_COLLISION_RADIUS * 2 +
     PACKED_LATTICE_SAFETY_EPSILON;
   const rowGap = columnGap * Math.sqrt(3) / 2;
+  const horizontalComponentGapSlots = Math.max(
+    2,
+    Math.ceil(
+      (COMPONENT_BOUNDS_PADDING * 2 + PACKED_LATTICE_SAFETY_EPSILON) /
+        columnGap,
+    ),
+  );
+  const verticalComponentGapRows = Math.max(
+    2,
+    Math.ceil(
+      (COMPONENT_BOUNDS_PADDING * 2 + PACKED_LATTICE_SAFETY_EPSILON) /
+        rowGap,
+    ),
+  );
   for (const [tableId, members] of membersByTable) {
     const anchor = tableAnchors.get(tableId)!;
     members.sort((left, right) =>
       left.y - right.y || left.x - right.x || compareIds(left.id, right.id)
     );
-    const columns = Math.max(1, Math.ceil(Math.sqrt(members.length)));
+    const membersByComponent = new Map<string, SimulationEntity[]>();
+    for (const member of members) {
+      const componentId = componentByNode.get(member.id) ?? member.id;
+      const componentMembers = membersByComponent.get(componentId);
+      if (componentMembers) componentMembers.push(member);
+      else membersByComponent.set(componentId, [member]);
+    }
+    const multiNodeBlocks = [...membersByComponent.values()]
+      .filter((componentMembers) => componentMembers.length > 1)
+      .map((componentMembers) => packedLatticeBlock(componentMembers));
+    const singletonMembers = [...membersByComponent.values()]
+      .filter((componentMembers) => componentMembers.length === 1)
+      .flat();
+    const targetColumns = Math.max(
+      1,
+      ...multiNodeBlocks.map((block) => block.columns),
+      Math.ceil(Math.sqrt(
+        members.length +
+          multiNodeBlocks.length * horizontalComponentGapSlots,
+      )),
+    );
+    const blocks = singletonMembers.length > 0
+      ? [
+        ...multiNodeBlocks,
+        packedLatticeBlock(singletonMembers, targetColumns),
+      ]
+      : multiNodeBlocks;
+
+    let shelfX = 0;
+    let shelfY = 0;
+    let shelfRows = 0;
     let centroidX = 0;
     let centroidY = 0;
-    for (let index = 0; index < members.length; index += 1) {
-      const row = Math.floor(index / columns);
-      const column = index % columns;
-      const x = column * columnGap + (row % 2) * columnGap / 2;
-      const y = row * rowGap;
-      members[index].x = x;
-      members[index].y = y;
-      centroidX += x;
-      centroidY += y;
+    for (const block of blocks) {
+      if (shelfX > 0 && shelfX + block.widthSlots > targetColumns) {
+        shelfX = 0;
+        shelfY += shelfRows - 1 + verticalComponentGapRows;
+        shelfRows = 0;
+      }
+      for (let index = 0; index < block.members.length; index += 1) {
+        const row = Math.floor(index / block.columns);
+        const column = index % block.columns;
+        const x = (shelfX + column + (row % 2) / 2) * columnGap;
+        const y = (shelfY + row) * rowGap;
+        block.members[index].x = x;
+        block.members[index].y = y;
+        centroidX += x;
+        centroidY += y;
+      }
+      shelfX += block.widthSlots + horizontalComponentGapSlots;
+      shelfRows = Math.max(shelfRows, block.rows);
     }
     centroidX /= members.length;
     centroidY /= members.length;
@@ -1221,7 +1296,7 @@ export function computeNebulaLayout(
   for (let tick = 0; tick < simulationTicks; tick += 1) simulation.tick();
   simulation.stop();
   if (packedOverview) {
-    packTableOwnedStaggeredLattice(nodes, tableAnchors);
+    packTableOwnedComponentLattice(nodes, tableAnchors, componentByNode);
   } else {
     relaxPointCollisions(
       nodes,
