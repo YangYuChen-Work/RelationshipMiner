@@ -230,12 +230,14 @@ describe("7000-entity graph scaling", () => {
     expect(Math.max(...tableRows) - Math.min(...tableRows)).toBeLessThan(
       0.001,
     );
-    expect(
-      closePairStats(
-        layout.entityNodes,
-        ENTITY_COLLISION_RADIUS * 2 - 2,
-      ).closePairs,
-    ).toBe(0);
+    const stats = closePairStats(
+      layout.entityNodes,
+      ENTITY_COLLISION_RADIUS * 2,
+    );
+    expect(stats.closePairs).toBe(0);
+    expect(stats.minimumObservedDistance).toBeGreaterThanOrEqual(
+      ENTITY_COLLISION_RADIUS * 2,
+    );
     expect(tableOwnershipRatio(layout)).toBeGreaterThanOrEqual(0.8);
   });
 

@@ -98,6 +98,7 @@ const LARGE_GRAPH_THRESHOLD = 120;
 const PACKED_OVERVIEW_THRESHOLD = 1_000;
 const MAX_PACKED_SIMULATION_NODES = 512;
 const PACKED_SIMULATION_TICKS = 120;
+const PACKED_LATTICE_SAFETY_EPSILON = 1e-9;
 
 interface SimulationEntity extends SimulationNodeDatum {
   id: string;
@@ -474,7 +475,8 @@ function packTableOwnedStaggeredLattice(
     else membersByTable.set(node.tableId, [node]);
   }
 
-  const columnGap = ENTITY_COLLISION_RADIUS * 2;
+  const columnGap = ENTITY_COLLISION_RADIUS * 2 +
+    PACKED_LATTICE_SAFETY_EPSILON;
   const rowGap = columnGap * Math.sqrt(3) / 2;
   for (const [tableId, members] of membersByTable) {
     const anchor = tableAnchors.get(tableId)!;
