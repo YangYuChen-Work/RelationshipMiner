@@ -4,26 +4,78 @@ import ProgressIndicator from "../ProgressIndicator";
 import { useAnalysisStore } from "../../store/analysis";
 
 describe("ProgressIndicator", () => {
-  beforeEach(() => useAnalysisStore.setState({ phase: "analyzing", currentPhase: "semantic_judging", progressMessage: "Judging candidates", progressValue: 0.76 }));
-  it("renders string phase and analysis status instead of a numeric phase counter", () => {
-    render(<ProgressIndicator />);
-    expect(screen.getByText("正在判断对象关系")).toBeInTheDocument();
-    expect(screen.getByText("正在生成业务关系图")).toBeInTheDocument();
-    expect(screen.queryByText("语义判断")).not.toBeInTheDocument();
-    expect(screen.queryByText(/阶段 .*\//)).not.toBeInTheDocument();
+  beforeEach(() => {
+    useAnalysisStore.setState({
+      phase: "analyzing",
+      currentPhase: "semantic_judging",
+      progressMessage: "Judging candidates",
+      progressValue: 0.76,
+      selectedTables: new Map(),
+      diagnostics: null,
+    });
   });
 
-  it("keeps an unknown pipeline phase out of the business-facing heading", () => {
+  it("shows the current stage, completed stages, and live diagnostic counts", () => {
     useAnalysisStore.setState({
-      currentPhase: "candidate_retry_queue",
-      progressMessage: "Retrying candidate queue",
+      currentPhase: "candidates",
+      progressValue: 0.52,
+      progressMessage: "候选对象已整理",
+      selectedTables: new Map([
+        [
+          "users",
+          {
+            name: "users",
+            columns: [],
+            selectedFields: new Set(),
+          },
+        ],
+        [
+          "orders",
+          {
+            name: "orders",
+            columns: [],
+            selectedFields: new Set(),
+          },
+        ],
+      ]),
+      diagnostics: {
+        entities_read: 128,
+        plans_created: 24,
+        candidates_retrieved: 76,
+        candidates_completed: 18,
+        candidates_pending: 58,
+        strong_edges_created: 6,
+        weak_edges_created: 11,
+      },
     });
 
     render(<ProgressIndicator />);
 
-    expect(screen.getByText("正在处理业务对象关系")).toBeInTheDocument();
-    const technicalDetails = screen.getByText("技术详情").closest("details");
-    expect(technicalDetails).not.toHaveAttribute("open");
-    expect(technicalDetails).toHaveTextContent("candidate_retry_queue");
+    expect(screen.getByRole("list", { name: "分析阶段" })).toBeInTheDocument();
+    expect(screen.getByText("寻找候选对象").closest("li")).toHaveAttribute(
+      "data-stage-state",
+      "current",
+    );
+    expect(screen.getByText("读取业务数据").closest("li")).toHaveAttribute(
+      "data-stage-state",
+      "complete",
+    );
+    expect(screen.getByText("128")).toBeInTheDocument();
+    expect(screen.getByText("58")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("uses waiting labels instead of invented diagnostic values", () => {
+    useAnalysisStore.setState({
+      diagnostics: null,
+      currentPhase: "schema",
+      progressValue: 0.08,
+      selectedTables: new Map(),
+    });
+
+    render(<ProgressIndicator />);
+
+    expect(screen.getAllByText("等待数据").length).toBeGreaterThan(0);
+    expect(screen.queryByText("0 个对象")).not.toBeInTheDocument();
   });
 });
