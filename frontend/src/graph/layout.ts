@@ -282,7 +282,7 @@ function stableUnitVector(key: string): LayoutPoint {
   return { x: x / magnitude, y: y / magnitude };
 }
 
-function seededOrganicAnchors(
+export function seededOrganicAnchors(
   ids: readonly string[],
   seed: number,
   viewport: Viewport,
@@ -309,7 +309,14 @@ function seededOrganicAnchors(
       y: Math.sin(angle) * radius / aspect,
     };
   });
-  return new Map(points.map(({ id, x, y }) => [id, { x, y }]));
+  const centroid = points.reduce(
+    (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
+    { x: 0, y: 0 },
+  );
+  return new Map(points.map(({ id, x, y }) => [id, {
+    x: x - centroid.x / points.length,
+    y: y - centroid.y / points.length,
+  }]));
 }
 
 function tableScatterSpan(memberCount: number): number {

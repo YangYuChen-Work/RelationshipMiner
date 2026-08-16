@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as layoutModule from "./layout";
 import type { SemanticGraphData } from "../api/analysis";
 import { makeNebulaGraph } from "../test/nebulaFixtures";
 import {
@@ -253,6 +254,33 @@ describe("computeNebulaLayout", () => {
     expect(firstLayout.tableNodes.every(({ x, y }) =>
       Number.isFinite(x) && Number.isFinite(y)
     )).toBe(true);
+  });
+
+  it("centers deterministic organic anchors around the origin", () => {
+    const seededOrganicAnchors = (layoutModule as typeof layoutModule & {
+      seededOrganicAnchors?: (
+        ids: readonly string[],
+        seed: number,
+        viewport: { width: number; height: number },
+        minimumGap: number,
+      ) => Map<string, { x: number; y: number }>;
+    }).seededOrganicAnchors;
+
+    expect(seededOrganicAnchors).toBeTypeOf("function");
+    const anchors = seededOrganicAnchors!([
+      "component-d",
+      "component-a",
+      "component-c",
+      "component-b",
+    ], 42, { width: 1_280, height: 720 }, 260);
+    const points = [...anchors.values()];
+    const centroid = points.reduce(
+      (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
+      { x: 0, y: 0 },
+    );
+
+    expect(centroid.x / points.length).toBeCloseTo(0, 12);
+    expect(centroid.y / points.length).toBeCloseTo(0, 12);
   });
 
   it.each([20, 200] as const)(
