@@ -75,7 +75,7 @@ function AnalysisNotice() {
     );
   }
   if (analysisStatus === "complete" && graph.entity_edges.length === 0 && graph.table_edges.length === 0) {
-    return <section role="status" className="mx-3 mt-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">暂未发现对象之间的业务关系。可调整业务数据或辅助判断依据后重新分析。</section>;
+    return <section role="status" className="graph-notice mx-3 mt-3 rounded-lg border px-4 py-3 text-sm">暂未发现对象之间的业务关系。可调整业务数据或辅助判断依据后重新分析。</section>;
   }
   return null;
 }
