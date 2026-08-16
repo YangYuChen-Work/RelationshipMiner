@@ -125,6 +125,28 @@ function packedDisconnectedComponentGraph(): LayoutGraph {
   };
 }
 
+function packedCrossTableComponentGraph(): LayoutGraph {
+  const entityCount = 1_202;
+  return {
+    table_nodes: [
+      { id: "table-0", display_name: "MEProcess" },
+      { id: "table-1", display_name: "MEOperation" },
+    ],
+    entity_nodes: Array.from({ length: entityCount }, (_, index) => ({
+      id: `cross-table-entity-${index}`,
+      table_id: `table-${index % 2}`,
+      class_name: null,
+    })),
+    table_edges: [],
+    entity_edges: Array.from({ length: 30 }, (_, index) => ({
+      id: `cross-table-component-${index}`,
+      source: `cross-table-entity-${index * 2}`,
+      target: `cross-table-entity-${index * 2 + 1}`,
+      weight: 1,
+    })),
+  };
+}
+
 function paddedBounds(
   nodes: readonly { x: number; y: number }[],
   padding: number,
@@ -433,6 +455,36 @@ describe("7000-entity graph scaling", () => {
         ).toBeGreaterThanOrEqual(
           ENTITY_COLLISION_RADIUS * (2 * Math.sqrt(3) - 2),
         );
+      }
+    }
+    expect(second).toEqual(first);
+  }, 10_000);
+
+  it("separates >1000 cross-table components without losing deterministic spacing", () => {
+    const packedGraph = packedCrossTableComponentGraph();
+    const first = computeNebulaLayout(packedGraph, VIEWPORT);
+    const second = computeNebulaLayout(packedGraph, VIEWPORT);
+    const positions = new Map(
+      first.entityNodes.map((node) => [node.id, node]),
+    );
+    const componentBounds = packedGraph.entity_edges.map((edge) => {
+      const source = positions.get(edge.source)!;
+      const target = positions.get(edge.target)!;
+      expect(source.tableId).not.toBe(target.tableId);
+      expect(Math.hypot(source.x - target.x, source.y - target.y))
+        .toBeGreaterThanOrEqual(ENTITY_COLLISION_RADIUS * 2);
+      return paddedBounds(
+        [source, target],
+        ENTITY_COLLISION_RADIUS,
+      );
+    });
+
+    for (let left = 0; left < componentBounds.length; left += 1) {
+      for (let right = left + 1; right < componentBounds.length; right += 1) {
+        expect(
+          boundsOverlap(componentBounds[left], componentBounds[right]),
+          `components ${left} and ${right}`,
+        ).toBe(false);
       }
     }
     expect(second).toEqual(first);

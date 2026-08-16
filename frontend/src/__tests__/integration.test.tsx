@@ -844,6 +844,13 @@ function setupBusinessFriendlyFetchMock() {
   });
 }
 
+async function expandSelectedTableFields() {
+  const expandButton = await screen.findByRole("button", {
+    name: "展开字段",
+  });
+  fireEvent.click(expandButton);
+}
+
 describe("Integration: full user flow", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -958,7 +965,8 @@ describe("Integration: full user flow", () => {
       screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
 
-    // FieldSelector should appear with the table's fields
+    // FieldSelector is user-controlled and stays collapsed until explicitly opened.
+    await expandSelectedTableFields();
     await waitFor(() => {
       expect(
         screen.getByRole("checkbox", { name: "字段 email" }),
@@ -993,6 +1001,7 @@ describe("Integration: full user flow", () => {
       screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
 
+    await expandSelectedTableFields();
     await waitFor(() => {
       expect(
         screen.getByRole("checkbox", { name: "字段 email" }),
@@ -1018,6 +1027,7 @@ describe("Integration: full user flow", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "选择业务数据 订单数据（来源 orders）" }),
     );
+    await expandSelectedTableFields();
     await waitFor(() => {
       expect(
         screen.getByRole("checkbox", { name: "字段 total" }),
@@ -1201,6 +1211,7 @@ describe("Integration: full user flow", () => {
     fireEvent.click(screen.getByRole("checkbox", {
       name: `选择业务数据 卫星天线装配与检验数据（来源 ${BUSINESS_FRIENDLY_TABLE.name}）`,
     }));
+    await expandSelectedTableFields();
     const evidenceField = await screen.findByRole("checkbox", {
       name: "字段 test_item",
     });
@@ -1317,7 +1328,7 @@ describe("Integration: full user flow", () => {
       .not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", {
-      name: /显示未关联对象/,
+      name: /显示无关联对象/,
     }));
     await waitFor(() => expect(canvas).toHaveAttribute("data-scene-ready", "true"));
     fireEvent.change(search, { target: { value: "通信天线装配 同名 2" } });
@@ -1349,6 +1360,10 @@ describe("Integration: full user flow", () => {
       });
       const tableCard = tableCheckbox.closest("article")!;
       fireEvent.click(tableCheckbox);
+      const expandButton = await within(tableCard).findByRole("button", {
+        name: "展开字段",
+      });
+      fireEvent.click(expandButton);
       await waitFor(() => {
         expect(
           within(tableCard).getByRole("checkbox", {
@@ -1462,6 +1477,7 @@ describe("Integration: full user flow", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
+    await expandSelectedTableFields();
     await waitFor(() => {
       expect(
         screen.getByRole("checkbox", { name: "字段 email" }),
@@ -1546,6 +1562,7 @@ describe("Integration: full user flow", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
+    await expandSelectedTableFields();
     await waitFor(() => {
       expect(
         screen.getByRole("checkbox", { name: "字段 email" }),
@@ -1650,6 +1667,7 @@ describe("Integration: full user flow", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
+    await expandSelectedTableFields();
     await waitFor(() => {
       expect(
         screen.getByRole("checkbox", { name: "字段 email" }),
@@ -1702,6 +1720,7 @@ describe("Integration: full user flow", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
+    await expandSelectedTableFields();
     await waitFor(() => {
       expect(
         screen.getByRole("checkbox", { name: "字段 email" }),
@@ -1803,6 +1822,7 @@ describe("Integration: full user flow", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
+    await expandSelectedTableFields();
     await waitFor(() => {
       expect(
         screen.getByRole("checkbox", { name: "字段 email" }),
@@ -1874,6 +1894,7 @@ describe("Integration: full user flow", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "选择业务数据 用户数据（来源 users）" }),
     );
+    await expandSelectedTableFields();
     await waitFor(() => {
       expect(
         screen.getByRole("checkbox", { name: "字段 email" }),

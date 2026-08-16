@@ -873,6 +873,7 @@ function compactOversizedComponents(
 function separateComponentBounds(
   components: readonly Component[],
   nodes: SimulationEntity[],
+  compactOversized = true,
 ) {
   if (
     components.length < 2 ||
@@ -881,7 +882,7 @@ function separateComponentBounds(
     return;
   }
   const positions = new Map(nodes.map((node) => [node.id, node]));
-  if (compactOversizedComponents(components, positions)) {
+  if (compactOversized && compactOversizedComponents(components, positions)) {
     relaxPointCollisions(nodes, ENTITY_COLLISION_RADIUS * 2, 96);
   }
   if (
@@ -1297,6 +1298,11 @@ export function computeNebulaLayout(
   simulation.stop();
   if (packedOverview) {
     packTableOwnedComponentLattice(nodes, tableAnchors, componentByNode);
+    // The packed lattice is table-owned so the business lanes remain legible,
+    // but a connected component can still cross two or more lanes. Re-run the
+    // component bounds pass globally so those cross-lane components cannot
+    // overlap one another after the per-table packing step.
+    separateComponentBounds(components, nodes, false);
   } else {
     relaxPointCollisions(
       nodes,

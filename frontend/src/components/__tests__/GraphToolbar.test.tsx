@@ -53,7 +53,7 @@ describe("GraphToolbar", () => {
     // This fails if filtering relationship visibility changes the node count or ignores confidence.
     render(<GraphToolbar />);
 
-    expect(screen.getByRole("heading", { name: "业务关系图" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "关系宇宙总览" })).toBeInTheDocument();
     expect(screen.getByText("4 个对象")).toBeInTheDocument();
     expect(screen.getByText("3 条业务关系")).toBeInTheDocument();
     expect(screen.getByText("2 条当前可见")).toBeInTheDocument();
@@ -63,13 +63,13 @@ describe("GraphToolbar", () => {
   it("lets users include the one isolated entity that is hidden by default", () => {
     render(<GraphToolbar />);
 
-    const isolatedNodes = screen.getByRole("checkbox", { name: "显示未关联对象（隐藏 1 个）" });
+    const isolatedNodes = screen.getByRole("checkbox", { name: "显示无关联对象（隐藏 1 个）" });
     expect(isolatedNodes).not.toBeChecked();
 
     fireEvent.click(isolatedNodes);
     expect(useAnalysisStore.getState().showIsolatedNodes).toBe(true);
     expect(
-      screen.getByRole("checkbox", { name: "显示未关联对象（隐藏 0 个）" }),
+      screen.getByRole("checkbox", { name: "显示无关联对象（隐藏 0 个）" }),
     ).toBeChecked();
   });
 
@@ -78,7 +78,7 @@ describe("GraphToolbar", () => {
     render(<GraphToolbar />);
 
     fireEvent.click(screen.getByRole("button", { name: "适应视图" }));
-    fireEvent.click(screen.getByRole("button", { name: "重新生成布局" }));
+    fireEvent.click(screen.getByRole("button", { name: "整理全网布局" }));
 
     expect(useAnalysisStore.getState().fitViewRequest).toBe(1);
     expect(useAnalysisStore.getState().relayoutRequest).toBe(1);
@@ -92,9 +92,9 @@ describe("GraphToolbar", () => {
 
     const toolbar = screen.getByRole("toolbar", { name: "图谱操作" });
     const actions = [
-      within(toolbar).getByLabelText("关系可信程度"),
+      within(toolbar).getByLabelText("关系可靠程度"),
       within(toolbar).getByRole("button", { name: "适应视图" }),
-      within(toolbar).getByRole("button", { name: "重新生成布局" }),
+      within(toolbar).getByRole("button", { name: "整理全网布局" }),
       within(toolbar).getByRole("button", { name: "导出 JSON" }),
       within(toolbar).getByRole("button", { name: "新分析" }),
     ];
