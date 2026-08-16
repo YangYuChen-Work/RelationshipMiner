@@ -46,9 +46,9 @@ const EDGE_LABEL_MAX_TEXT_WIDTH = 344;
 const EDGE_LABEL_HORIZONTAL_PADDING = 8;
 const UNRESOLVED_MIXED_RELATION_LABEL = "相关";
 const LAYER_OPACITY = {
-  overview: { tableEdges: 0.58, entityEdges: 0.10 },
-  work: { tableEdges: 0.12, entityEdges: 0.42 },
-  detail: { tableEdges: 0.06, entityEdges: 0.55 },
+  overview: { tableEdges: 0.08, entityEdges: 0.24 },
+  work: { tableEdges: 0.10, entityEdges: 0.54 },
+  detail: { tableEdges: 0.08, entityEdges: 0.68 },
 } as const;
 const TABLE_PALETTE = [
   "#38bdf8",
@@ -639,6 +639,25 @@ export function buildScene(input: BuildSceneInput): RenderScene {
         }]
         : [];
     });
+  const overviewLabelIds = new Set<string>();
+  if (zoomLevel === "overview" && entityDots.length <= 1_000) {
+    const representativesByTable = new Set<string>();
+    for (const node of [...entityDots].sort((left, right) =>
+      right.visibleDegree - left.visibleDegree || compareCodeUnits(left.id, right.id)
+    )) {
+      if (node.visibleDegree <= 0) continue;
+      if (representativesByTable.has(node.tableId)) continue;
+      representativesByTable.add(node.tableId);
+      if (node.visibleDegree > 0) overviewLabelIds.add(node.id);
+    }
+    for (const node of [...entityDots]
+      .sort((left, right) =>
+        right.visibleDegree - left.visibleDegree || compareCodeUnits(left.id, right.id)
+      )
+      .slice(0, 24)) {
+      if (node.visibleDegree > 0) overviewLabelIds.add(node.id);
+    }
+  }
   const sceneEntities = byId(entityDots);
   const entityEdges = input.graph.entity_edges.flatMap((edge) => {
       const layoutEdge = entityLayouts.get(edge.id);
@@ -661,7 +680,7 @@ export function buildScene(input: BuildSceneInput): RenderScene {
       return command ? [command] : [];
     });
   const entityLabels = entityDots
-    .filter((node) => zoomLevel !== "overview" || node.visibleDegree > 0)
+    .filter((node) => zoomLevel !== "overview" || overviewLabelIds.has(node.id))
     .map((node) => ({
       nodeId: node.id,
       text: node.presentation.primary,

@@ -230,6 +230,25 @@ describe("buildScene", () => {
       .toMatchObject({ primary: "Order 1", secondary: "" });
   });
 
+  it("prioritizes entity relations without changing scene labels or table edges", () => {
+    const overview = buildScene(input(0.4));
+    const work = buildScene(input(0.8));
+
+    expect(overview.layerOpacity.entityEdges).toBeGreaterThan(
+      overview.layerOpacity.tableEdges,
+    );
+    expect(work.layerOpacity.entityEdges).toBeGreaterThan(
+      work.layerOpacity.tableEdges,
+    );
+    expect(overview.tableEdges).toHaveLength(2);
+    expect(work.tableEdges).toHaveLength(2);
+    expect(overview.entityLabels.map(({ nodeId, primary, secondary, text }) =>
+      ({ nodeId, primary, secondary, text })
+    )).toEqual(work.entityLabels.map(({ nodeId, primary, secondary, text }) =>
+      ({ nodeId, primary, secondary, text })
+    ));
+  });
+
   it("rejects auxiliary values as primary names and resolves mixed directions as undirected", () => {
     const mixedGraph: SemanticGraphData = {
       ...graph,
