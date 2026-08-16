@@ -982,6 +982,49 @@ describe("analysis socket ownership", () => {
     });
   });
 
+  it("merges live progress diagnostics without inventing strong or weak edge counts", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ task_id: "task-live-diagnostics" }),
+    } as Response);
+
+    await useAnalysisStore.getState().startAnalysis();
+    const socket = ControllableWebSocket.instances[0];
+    socket.onmessage?.({
+      data: JSON.stringify({
+        phase: "candidates",
+        message: "正在检索候选关系...",
+        progress: 0.6,
+        entities_read: 3,
+        plans_created: 1,
+        candidates_retrieved: 4,
+        candidates_completed: 1,
+        candidates_pending: 3,
+        entity_edges_created: 2,
+      }),
+    } as MessageEvent);
+
+    expect(useAnalysisStore.getState()).toMatchObject({
+      phase: "analyzing",
+      currentPhase: "candidates",
+      progressMessage: "正在检索候选关系...",
+      progressValue: 0.6,
+      diagnostics: {
+        entities_read: 3,
+        plans_created: 1,
+        candidates_retrieved: 4,
+        candidates_completed: 1,
+        candidates_pending: 3,
+      },
+    });
+    expect(
+      useAnalysisStore.getState().diagnostics?.strong_edges_created,
+    ).toBeUndefined();
+    expect(
+      useAnalysisStore.getState().diagnostics?.weak_edges_created,
+    ).toBeUndefined();
+  });
+
   it("clears a previous result and every graph interaction before a new submission resolves", async () => {
     let resolveSubmission!: (value: Response) => void;
     vi.spyOn(globalThis, "fetch").mockImplementation(

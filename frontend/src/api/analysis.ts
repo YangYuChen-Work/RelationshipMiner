@@ -86,10 +86,20 @@ export interface AnalysisDiagnostics {
   weak_edges_created: number;
 }
 
-export interface AnalysisProgressMessage {
+type LiveAnalysisDiagnostics = Pick<
+  AnalysisDiagnostics,
+  | "entities_read"
+  | "plans_created"
+  | "candidates_retrieved"
+  | "candidates_completed"
+  | "candidates_pending"
+>;
+
+export interface AnalysisProgressMessage extends Partial<LiveAnalysisDiagnostics> {
   phase: string;
   message: string;
   progress: number;
+  entity_edges_created?: number;
 }
 
 export interface AnalysisTerminalMessage {

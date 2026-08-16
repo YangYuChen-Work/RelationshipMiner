@@ -8,6 +8,7 @@ import type {
 } from "../api/tables";
 import type {
   AnalysisDiagnostics,
+  AnalysisProgressMessage,
   AnalysisStatus,
   SemanticGraphData,
 } from "../api/analysis";
@@ -92,7 +93,7 @@ interface AnalysisState {
   graph: SemanticGraphData | null;
   analysisStatus: AnalysisStatus | null;
   warnings: string[];
-  diagnostics: AnalysisDiagnostics | null;
+  diagnostics: Partial<AnalysisDiagnostics> | null;
   taskId: string | null;
   activeSocket: WebSocket | null;
   analysisGeneration: number;
@@ -202,6 +203,30 @@ function manualSelectionPatch(): Pick<
     selectionDirty: true,
     metadataRevision: null,
   };
+}
+
+function readLiveDiagnostics(
+  message: AnalysisProgressMessage,
+): Partial<AnalysisDiagnostics> | null {
+  const diagnostics: Partial<AnalysisDiagnostics> = {};
+
+  if (message.entities_read !== undefined) {
+    diagnostics.entities_read = message.entities_read;
+  }
+  if (message.plans_created !== undefined) {
+    diagnostics.plans_created = message.plans_created;
+  }
+  if (message.candidates_retrieved !== undefined) {
+    diagnostics.candidates_retrieved = message.candidates_retrieved;
+  }
+  if (message.candidates_completed !== undefined) {
+    diagnostics.candidates_completed = message.candidates_completed;
+  }
+  if (message.candidates_pending !== undefined) {
+    diagnostics.candidates_pending = message.candidates_pending;
+  }
+
+  return Object.keys(diagnostics).length > 0 ? diagnostics : null;
 }
 
 export const useAnalysisStore = create<AnalysisState>((set, get) => ({
@@ -760,11 +785,15 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
               });
             }
           } else {
-            set({
+            const liveDiagnostics = readLiveDiagnostics(msg);
+            set((state) => ({
               currentPhase: msg.phase,
               progressMessage: msg.message,
               progressValue: msg.progress,
-            });
+              diagnostics: liveDiagnostics
+                ? { ...(state.diagnostics ?? {}), ...liveDiagnostics }
+                : state.diagnostics,
+            }));
           }
         },
         (_err) => {

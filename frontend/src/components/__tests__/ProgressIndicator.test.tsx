@@ -86,6 +86,42 @@ describe("ProgressIndicator", () => {
     expect(container.querySelector(".analysis-progress-details")).toBeNull();
   });
 
+  it("shows live counters while keeping missing edge splits in the waiting state", () => {
+    useAnalysisStore.setState({
+      diagnostics: {
+        entities_read: 3,
+        plans_created: 1,
+        candidates_retrieved: 4,
+        candidates_completed: 1,
+        candidates_pending: 3,
+      },
+      currentPhase: "candidates",
+      progressMessage: "正在检索候选关系...",
+      progressValue: 0.6,
+      selectedTables: new Map(),
+    });
+
+    render(<ProgressIndicator />);
+
+    const readCard = screen.getByText("已读取对象").closest("div");
+    const pendingCard = screen.getByText("待判断候选").closest("div");
+    const completedCard = screen.getByText("已完成候选").closest("div");
+    const strongCard = screen.getByText("已生成强关系").closest("div");
+    const weakCard = screen.getByText("已生成弱关系").closest("div");
+
+    expect(readCard).not.toBeNull();
+    expect(pendingCard).not.toBeNull();
+    expect(completedCard).not.toBeNull();
+    expect(strongCard).not.toBeNull();
+    expect(weakCard).not.toBeNull();
+
+    expect(readCard).toHaveTextContent("3");
+    expect(pendingCard).toHaveTextContent("3");
+    expect(completedCard).toHaveTextContent("1");
+    expect(strongCard).toHaveTextContent("等待数据");
+    expect(weakCard).toHaveTextContent("等待数据");
+  });
+
   it("keeps an unknown backend phase neutral instead of marking the first stage current", () => {
     useAnalysisStore.setState({
       currentPhase: "retrieval",
