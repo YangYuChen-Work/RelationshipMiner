@@ -477,7 +477,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       setLayoutPending(false);
     };
     layoutTransitionFrameRef.current = requestAnimationFrame(frame);
-  }, [commitScene, graph]);
+  }, [commitScene]);
 
   const retireScene = useCallback(() => {
     const generation = sceneGenerationRef.current + 1;
@@ -577,7 +577,8 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     const client = layoutClientRef.current ?? createLayoutClient();
     layoutClientRef.current = client;
     client.reset();
-    void client.layoutGraph(graph, viewport, relayoutRequest).then(
+    const layoutInput = projectedGraph ?? graph;
+    void client.layoutGraph(layoutInput, viewport, relayoutRequest).then(
       (next) => {
         const currentProjection = projectedGraphRef.current;
         if (active && currentProjection) {
@@ -620,7 +621,15 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         layoutTransitionFrameRef.current = null;
       }
     };
-  }, [animateLayout, commitScene, graph, relayoutRequest, retireScene, viewport]);
+  }, [
+    animateLayout,
+    commitScene,
+    graph,
+    projectedGraph,
+    relayoutRequest,
+    retireScene,
+    viewport,
+  ]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SemanticGraphData } from "../../api/analysis";
 import { quadraticPoint } from "../../graph/edgeGeometry";
 import { computeGroupedLayout } from "../../graph/layout";
+import { projectGraph } from "../../graph/projection";
 import { buildScene } from "../../graph/scene";
 import { useAnalysisStore } from "../../store/analysis";
 import { makeNebulaGraph } from "../../test/nebulaFixtures";
@@ -77,6 +78,16 @@ async function ready() {
   await waitFor(() => expect(screen.getByRole("img", { name: /语义关系图/ })).toHaveAttribute("data-scene-ready", "true"));
 }
 
+function canvasLayout(
+  input: SemanticGraphData,
+  viewport: { width: number; height: number },
+) {
+  return computeGroupedLayout(
+    projectGraph(input, useAnalysisStore.getState().showIsolatedNodes),
+    viewport,
+  );
+}
+
 function edgeMidpoint(
   canvas: Element,
   graph: SemanticGraphData,
@@ -86,7 +97,7 @@ function edgeMidpoint(
 ) {
   const transform = d3.zoomTransform(canvas);
   const scene = buildScene({
-    graph,
+    graph: projectGraph(graph, useAnalysisStore.getState().showIsolatedNodes),
     layout,
     transform,
     confidenceThreshold: useAnalysisStore.getState().confidenceThreshold,
@@ -269,7 +280,7 @@ describe("GraphCanvas", () => {
     });
     expect(canvas).toHaveAttribute("data-scene-ready", "false");
 
-    const entity = computeGroupedLayout(graph, { width: 960, height: 600 })
+    const entity = canvasLayout(graph, { width: 960, height: 600 })
       .entityNodes.find((node) => node.id === "a")!;
     const readyPoint = d3.zoomTransform(canvas).apply([entity.x, entity.y]);
     fireEvent.click(canvas, { clientX: readyPoint[0], clientY: readyPoint[1] });
@@ -357,7 +368,7 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedNodeId).toBe("a");
   });
 
-  it("keeps worker layout stable while projection changes counts and search", async () => {
+  it("sends the current projection to the Worker when isolated entities are hidden", async () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = document.querySelector("canvas")!;
@@ -365,12 +376,10 @@ describe("GraphCanvas", () => {
 
     expect(firstWorker.messages[0].graph.entity_nodes.map((node) => node.id)).toEqual([
       "a",
-      "b",
       "invoice",
     ]);
     expect(firstWorker.messages[0].graph.entity_nodes).toEqual([
       { id: "a", table_id: "accounts", class_name: "Account" },
-      { id: "b", table_id: "accounts", class_name: "Account" },
       { id: "invoice", table_id: "billing", class_name: "Invoice" },
     ]);
     expect(firstWorker.messages[0].graph.table_edges).toEqual([
@@ -392,7 +401,12 @@ describe("GraphCanvas", () => {
     act(() => useAnalysisStore.getState().setShowIsolatedNodes(true));
     await ready();
 
-    expect(firstWorker.messages).toHaveLength(1);
+    expect(firstWorker.messages).toHaveLength(2);
+    expect(firstWorker.messages[1].graph.entity_nodes.map((node) => node.id)).toEqual([
+      "a",
+      "b",
+      "invoice",
+    ]);
     expect(canvas.getAttribute("aria-label")).toContain("3 个实体");
     fireEvent.keyDown(search, { key: "Enter" });
     expect(useAnalysisStore.getState().selectedNodeId).toBe("b");
@@ -621,7 +635,7 @@ describe("GraphCanvas", () => {
     await ready();
     const canvas = document.querySelector("canvas")!;
     const transform = d3.zoomTransform(canvas);
-    const layout = computeGroupedLayout(largeGraph, { width: 960, height: 600 });
+    const layout = canvasLayout(largeGraph, { width: 960, height: 600 });
     const screenPoints = [...layout.tableNodes, ...layout.entityNodes]
       .map((point) => transform.apply([point.x, point.y]));
 
@@ -653,7 +667,7 @@ describe("GraphCanvas", () => {
     await waitFor(() => expect(d3.zoomTransform(canvas).k).toBeGreaterThanOrEqual(1.2));
     expect(vi.mocked(context.fillText).mock.calls.length).toBeLessThanOrEqual(501);
     const transform = d3.zoomTransform(canvas);
-    const visibleEntity = computeGroupedLayout(
+    const visibleEntity = canvasLayout(
       useAnalysisStore.getState().graph!,
       { width: 960, height: 600 },
     ).entityNodes.find((entity) => {
@@ -672,7 +686,7 @@ describe("GraphCanvas", () => {
     fireEvent.keyDown(search, { key: "Enter" });
 
     expect(useAnalysisStore.getState().selectedNodeId).toBe("entity-6999");
-    const remote = computeGroupedLayout(
+    const remote = canvasLayout(
       useAnalysisStore.getState().graph!,
       { width: 960, height: 600 },
     ).entityNodes.find((entity) => entity.id === "entity-6999")!;
@@ -780,7 +794,7 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = screen.getByRole("img", { name: /语义关系图/ });
-    const entity = computeGroupedLayout(graph, { width: 960, height: 600 }).entityNodes.find((node) => node.id === "a")!;
+    const entity = canvasLayout(graph, { width: 960, height: 600 }).entityNodes.find((node) => node.id === "a")!;
     const point = d3.zoomTransform(canvas).apply([entity.x, entity.y]);
     fireEvent.pointerMove(canvas, { clientX: point[0], clientY: point[1] });
     fireEvent.click(canvas, { clientX: point[0], clientY: point[1] });
@@ -790,11 +804,14 @@ describe("GraphCanvas", () => {
   });
 
   it("selects an entity edge through the real canvas and clears node selection", async () => {
-    act(() => useAnalysisStore.setState({ selectedNodeId: "b" }));
+    act(() => useAnalysisStore.setState({
+      selectedNodeId: "b",
+      showIsolatedNodes: true,
+    }));
     render(<GraphCanvas />);
     await ready();
     const canvas = screen.getByRole("img", { name: /语义关系图/ });
-    const layout = computeGroupedLayout(graph, {
+    const layout = canvasLayout(graph, {
       width: 960,
       height: 600,
     });
@@ -941,11 +958,13 @@ describe("GraphCanvas", () => {
     fireEvent.keyDown(canvas, { key: "Enter" });
 
     const focused = d3.zoomTransform(canvas);
-    const accounts = computeGroupedLayout(graph, {
+    const targetTable = [...canvasLayout(graph, {
       width: 960,
       height: 600,
-    }).tableNodes.find((node) => node.id === "accounts")!;
-    const [x, y] = focused.apply([accounts.x, accounts.y]);
+    }).tableNodes].sort((left, right) =>
+      left.y - right.y || left.x - right.x || left.id.localeCompare(right.id)
+    )[0];
+    const [x, y] = focused.apply([targetTable.x, targetTable.y]);
     expect(focused).not.toEqual(displaced);
     expect(x).toBeCloseTo(480, 5);
     expect(y).toBeCloseTo(300, 5);
@@ -957,7 +976,7 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = screen.getByRole("img", { name: /语义关系图/ });
-    const layout = computeGroupedLayout(graph, { width: 960, height: 600 });
+    const layout = canvasLayout(graph, { width: 960, height: 600 });
     const edge = layout.tableEdges[0];
     const transform = d3.zoomTransform(canvas);
     const point = edgeMidpoint(canvas, graph, layout, edge.id, "table");
@@ -965,7 +984,7 @@ describe("GraphCanvas", () => {
     expect(useAnalysisStore.getState().selectedTableEdgeId).toBe("accounts--billing");
     expect(useAnalysisStore.getState().selectedEntityEdgeId).toBeNull();
 
-    const supporting = computeGroupedLayout(graph, {
+    const supporting = canvasLayout(graph, {
       width: 960,
       height: 600,
     }).entityEdges[0];
@@ -1015,7 +1034,7 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = document.querySelector("canvas")!;
-    const layout = computeGroupedLayout(mixedGraph, { width: 960, height: 600 });
+    const layout = canvasLayout(mixedGraph, { width: 960, height: 600 });
     const tableEdge = layout.tableEdges[0];
     const tablePoint = edgeMidpoint(canvas, mixedGraph, layout, tableEdge.id, "table");
 
@@ -1043,7 +1062,7 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = document.querySelector("canvas")!;
-    const layout = computeGroupedLayout(graphWithoutSupport, {
+    const layout = canvasLayout(graphWithoutSupport, {
       width: 960,
       height: 600,
     });
@@ -1219,7 +1238,7 @@ describe("GraphCanvas", () => {
       expect(text).not.toContain("0");
       expect(text).toContain("总装测试");
 
-      const layout = computeGroupedLayout(nebula, { width: 960, height: 600 });
+      const layout = canvasLayout(nebula, { width: 960, height: 600 });
       const scene = buildScene({
         graph: nebula,
         layout,
@@ -1256,7 +1275,7 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const worker = LayoutWorker.instances[0];
-    const layout = computeGroupedLayout(nebula, { width: 960, height: 600 });
+    const layout = canvasLayout(nebula, { width: 960, height: 600 });
     const overview = buildScene({
       graph: nebula,
       layout,
@@ -1295,7 +1314,7 @@ describe("GraphCanvas", () => {
     const nebula = makeNebulaGraph({ entityCount: 20 });
     const scene = buildScene({
       graph: nebula,
-      layout: computeGroupedLayout(nebula, { width: 366, height: 700 }),
+      layout: canvasLayout(nebula, { width: 366, height: 700 }),
       transform: { k: 1, x: 0, y: 0 },
       confidenceThreshold: 0,
     });
@@ -1345,7 +1364,7 @@ describe("GraphCanvas", () => {
     render(<GraphCanvas />);
     await ready();
     const canvas = document.querySelector("canvas")!;
-    const entity = computeGroupedLayout(graph, { width: 960, height: 600 })
+    const entity = canvasLayout(graph, { width: 960, height: 600 })
       .entityNodes.find((node) => node.id === "a")!;
     const point = d3.zoomTransform(canvas).apply([entity.x, entity.y]);
 
@@ -1400,7 +1419,7 @@ describe("GraphCanvas", () => {
       hasPointerCapture: { value: () => true },
     });
     const worker = LayoutWorker.instances[0];
-    const node = computeGroupedLayout(graph, { width: 960, height: 600 })
+    const node = canvasLayout(graph, { width: 960, height: 600 })
       .entityNodes.find((entity) => entity.id === "a")!;
     const start = d3.zoomTransform(canvas).apply([node.x, node.y]);
     const target = [start[0] + 80, start[1] + 45];
@@ -1443,7 +1462,7 @@ describe("GraphCanvas", () => {
       releasePointerCapture: { value: vi.fn() },
       hasPointerCapture: { value: () => true },
     });
-    const node = computeGroupedLayout(graph, { width: 960, height: 600 })
+    const node = canvasLayout(graph, { width: 960, height: 600 })
       .entityNodes.find((entity) => entity.id === "a")!;
     const start = d3.zoomTransform(canvas).apply([node.x, node.y]);
 
@@ -1478,7 +1497,7 @@ describe("GraphCanvas", () => {
       releasePointerCapture: { value: vi.fn() },
       hasPointerCapture: { value: () => false },
     });
-    const layout = computeGroupedLayout(graph, { width: 960, height: 600 });
+    const layout = canvasLayout(graph, { width: 960, height: 600 });
     const source = layout.entityNodes.find((entity) => entity.id === "a")!;
     const target = layout.entityNodes.find((entity) => entity.id === "invoice")!;
     const sourcePoint = d3.zoomTransform(canvas).apply([source.x, source.y]);
@@ -1541,7 +1560,7 @@ describe("GraphCanvas", () => {
       releasePointerCapture: { value: vi.fn() },
       hasPointerCapture: { value: () => true },
     });
-    const node = computeGroupedLayout(largeGraph, { width: 960, height: 600 })
+    const node = canvasLayout(largeGraph, { width: 960, height: 600 })
       .entityNodes[0];
     const start = d3.zoomTransform(canvas).apply([node.x, node.y]);
     const frames = controlledFrames();
@@ -1589,7 +1608,7 @@ describe("GraphCanvas", () => {
       releasePointerCapture: { value: vi.fn() },
       hasPointerCapture: { value: () => true },
     });
-    const node = computeGroupedLayout(graph, { width: 960, height: 600 })
+    const node = canvasLayout(graph, { width: 960, height: 600 })
       .entityNodes.find((entity) => entity.id === "a")!;
     const start = d3.zoomTransform(canvas).apply([node.x, node.y]);
     fireEvent.pointerDown(canvas, {

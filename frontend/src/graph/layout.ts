@@ -82,14 +82,7 @@ export interface LayoutOptions {
 
 export const ENTITY_COLLISION_RADIUS = 58;
 
-const PROCESS_CLASS_ORDER = [
-  "MEProcess",
-  "MEOperation",
-  "MEStep",
-  "Assembly",
-] as const;
 const UINT32_RANGE = 4_294_967_296;
-const TABLE_ANCHOR_GAP = 320;
 const COMPONENT_ANCHOR_GAP = 260;
 const COMPONENT_BOUNDS_PADDING = ENTITY_COLLISION_RADIUS;
 // Compose the observatory view before the graph reaches four digits. A
@@ -97,8 +90,13 @@ const COMPONENT_BOUNDS_PADDING = ENTITY_COLLISION_RADIUS;
 const LARGE_GRAPH_THRESHOLD = 120;
 const PACKED_OVERVIEW_THRESHOLD = 1_000;
 const MAX_PACKED_SIMULATION_NODES = 512;
-const PACKED_SIMULATION_TICKS = 120;
-const PACKED_LATTICE_SAFETY_EPSILON = 1e-9;
+const STRONG_LINK_DISTANCE = 112;
+const WEAK_LINK_DISTANCE = 164;
+const STRONG_LINK_STRENGTH = 0.9;
+const WEAK_LINK_STRENGTH = 0.28;
+const ORGANIC_CHARGE = -108;
+const ORGANIC_COMPONENT_STRENGTH = 0.018;
+const ORGANIC_SIMULATION_TICKS = 420;
 
 interface SimulationEntity extends SimulationNodeDatum {
   id: string;
@@ -123,21 +121,8 @@ function compareIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function processClassIndex(table: LayoutTableInput): number {
-  const id = table.id.toLowerCase();
-  const displayName = table.display_name.toLowerCase();
-  const index = PROCESS_CLASS_ORDER.findIndex((known) => {
-    const normalized = known.toLowerCase();
-    return id === normalized || displayName === normalized;
-  });
-  return index < 0 ? PROCESS_CLASS_ORDER.length : index;
-}
-
 function sortedTables(tables: readonly LayoutTableInput[]): LayoutTableInput[] {
-  return [...tables].sort((left, right) => {
-    const classOrder = processClassIndex(left) - processClassIndex(right);
-    return classOrder || compareIds(left.id, right.id);
-  });
+  return [...tables].sort((left, right) => compareIds(left.id, right.id));
 }
 
 function sortedEntities(
@@ -297,38 +282,34 @@ function stableUnitVector(key: string): LayoutPoint {
   return { x: x / magnitude, y: y / magnitude };
 }
 
-function seededRectangularAnchors(
+function seededOrganicAnchors(
   ids: readonly string[],
   seed: number,
   viewport: Viewport,
   minimumGap: number,
 ): Map<string, LayoutPoint> {
   if (ids.length === 0) return new Map();
-  const columns = Math.max(1, Math.ceil(Math.sqrt(
-    ids.length * viewport.width / viewport.height,
-  )));
-  const rows = Math.max(1, Math.ceil(ids.length / columns));
-  const width = Math.max(viewport.width, columns * minimumGap * 1.35);
-  const height = Math.max(viewport.height, rows * minimumGap * 1.35);
-  const randomX = randomFromSeed(seed ^ 0x9e37_79b9);
-  const randomY = randomFromSeed(seed ^ 0x85eb_ca6b);
-  const points = ids.map((id) => ({
-    id,
-    x: (randomX() - 0.5) * width,
-    y: (randomY() - 0.5) * height,
-  }));
-  relaxPointCollisions(points, minimumGap, 80);
+  const sortedIds = [...ids].sort(compareIds);
+  const random = randomFromSeed(seed ^ 0x9e37_79b9);
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  const aspect = Math.sqrt(Math.max(
+    0.6,
+    Math.min(1.6, viewport.width / viewport.height),
+  ));
+  // The phyllotaxis nearest-neighbor spacing is roughly scale × √π, so this
+  // keeps anchors close to the requested gap while the radius grows with √n.
+  const radiusScale = minimumGap * 0.9 / Math.sqrt(Math.PI);
+  const points = sortedIds.map((id, index) => {
+    const radius = Math.sqrt(index + 0.5) * radiusScale +
+      (random() - 0.5) * minimumGap * 0.18;
+    const angle = index * goldenAngle + (random() - 0.5) * 0.16;
+    return {
+      id,
+      x: Math.cos(angle) * radius * aspect,
+      y: Math.sin(angle) * radius / aspect,
+    };
+  });
   return new Map(points.map(({ id, x, y }) => [id, { x, y }]));
-}
-
-function tableMemberCounts(
-  entities: readonly LayoutEntityInput[],
-): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const entity of entities) {
-    counts.set(entity.table_id, (counts.get(entity.table_id) ?? 0) + 1);
-  }
-  return counts;
 }
 
 function tableScatterSpan(memberCount: number): number {
@@ -336,248 +317,6 @@ function tableScatterSpan(memberCount: number): number {
     ENTITY_COLLISION_RADIUS * 4,
     Math.sqrt(memberCount) * ENTITY_COLLISION_RADIUS * 2.4,
   );
-}
-
-function scalableTableAnchorGap(
-  countsByTable: ReadonlyMap<string, number>,
-): number {
-  const largestTable = Math.max(1, ...countsByTable.values());
-  return Math.max(
-    TABLE_ANCHOR_GAP,
-    tableScatterSpan(largestTable) * 1.25,
-  );
-}
-
-function tableDegrees(
-  graph: LayoutGraph,
-  entities: readonly LayoutEntityInput[],
-): Map<string, number> {
-  const degrees = new Map(
-    graph.table_nodes.map((table) => [table.id, 0]),
-  );
-  const tableByEntity = new Map(
-    entities.map((entity) => [entity.id, entity.table_id]),
-  );
-  for (const edge of graph.table_edges) {
-    if (degrees.has(edge.source_table)) {
-      degrees.set(edge.source_table, (degrees.get(edge.source_table) ?? 0) + 1);
-    }
-    if (degrees.has(edge.target_table)) {
-      degrees.set(edge.target_table, (degrees.get(edge.target_table) ?? 0) + 1);
-    }
-  }
-  for (const edge of graph.entity_edges) {
-    const sourceTableId = tableByEntity.get(edge.source);
-    const targetTableId = tableByEntity.get(edge.target);
-    if (!sourceTableId || !targetTableId || sourceTableId === targetTableId) {
-      continue;
-    }
-    degrees.set(sourceTableId, (degrees.get(sourceTableId) ?? 0) + 1);
-    degrees.set(targetTableId, (degrees.get(targetTableId) ?? 0) + 1);
-  }
-  return degrees;
-}
-
-function compareTablesByDegree(
-  degrees: ReadonlyMap<string, number>,
-): (left: LayoutTableInput, right: LayoutTableInput) => number {
-  return (left, right) =>
-    (degrees.get(right.id) ?? 0) - (degrees.get(left.id) ?? 0) ||
-    compareIds(left.id, right.id);
-}
-
-function compareTablesByStableKey(
-  left: LayoutTableInput,
-  right: LayoutTableInput,
-): number {
-  return compareIds(left.id, right.id);
-}
-
-function businessLaneTableAnchors(
-  graph: LayoutGraph,
-  tables: readonly LayoutTableInput[],
-  entities: readonly LayoutEntityInput[],
-  viewport: Viewport,
-  minimumGap: number,
-): Map<string, LayoutPoint> {
-  if (tables.length === 0) return new Map();
-  const degrees = tableDegrees(graph, entities);
-  const compareInLane = compareTablesByDegree(degrees);
-  const knownLanes = PROCESS_CLASS_ORDER.map(() => [] as LayoutTableInput[]);
-  const unknownTables: LayoutTableInput[] = [];
-
-  for (const table of tables) {
-    const classIndex = processClassIndex(table);
-    if (classIndex < PROCESS_CLASS_ORDER.length) {
-      knownLanes[classIndex].push(table);
-    } else {
-      unknownTables.push(table);
-    }
-  }
-
-  const lanes = [
-    ...knownLanes
-      .filter((lane) => lane.length > 0)
-      .map((lane) => [...lane].sort(compareInLane)),
-    ...unknownTables
-      .sort(compareTablesByStableKey)
-      .map((table) => [table]),
-  ];
-  const laneCount = Math.max(1, lanes.length);
-  const aspectRatio = Math.max(viewport.width / viewport.height, 0.6);
-  const density = Math.sqrt(Math.max(1, tables.length) / aspectRatio);
-  const boundedGap = Math.max(
-    minimumGap,
-    Math.min(minimumGap * 1.85, minimumGap * (0.92 + density * 0.16)),
-  );
-  const columnGap = boundedGap;
-  const rowGap = Math.max(
-    minimumGap * 0.72,
-    Math.min(boundedGap * 0.94, minimumGap * (0.74 + density * 0.12)),
-  );
-  const centerColumn = (laneCount - 1) / 2;
-  const anchors = new Map<string, LayoutPoint>();
-
-  for (const [laneIndex, lane] of lanes.entries()) {
-    const x = (laneIndex - centerColumn) * columnGap;
-    const centerRow = (lane.length - 1) / 2;
-    for (const [rowIndex, table] of lane.entries()) {
-      anchors.set(table.id, {
-        x,
-        y: (rowIndex - centerRow) * rowGap,
-      });
-    }
-  }
-
-  return anchors;
-}
-
-function boundedTableScatterSpan(
-  memberCount: number,
-  laneGap: number,
-  largeGraph: boolean,
-): number {
-  if (!largeGraph) return 84;
-  return Math.min(
-    tableScatterSpan(memberCount),
-    Math.max(ENTITY_COLLISION_RADIUS * 5, laneGap * 0.62),
-  );
-}
-
-interface PackedLatticeBlock {
-  members: SimulationEntity[];
-  columns: number;
-  rows: number;
-  widthSlots: number;
-}
-
-function packedLatticeBlock(
-  members: SimulationEntity[],
-  preferredColumns = Math.ceil(Math.sqrt(members.length)),
-): PackedLatticeBlock {
-  const columns = Math.max(1, Math.min(members.length, preferredColumns));
-  const rows = Math.ceil(members.length / columns);
-  return {
-    members,
-    columns,
-    rows,
-    widthSlots: columns - 1 + (rows > 1 ? 0.5 : 0),
-  };
-}
-
-function packTableOwnedComponentLattice(
-  nodes: SimulationEntity[],
-  tableAnchors: ReadonlyMap<string, LayoutPoint>,
-  componentByNode: ReadonlyMap<string, string>,
-) {
-  const membersByTable = new Map<string, SimulationEntity[]>();
-  for (const node of nodes) {
-    const members = membersByTable.get(node.tableId);
-    if (members) members.push(node);
-    else membersByTable.set(node.tableId, [node]);
-  }
-
-  const columnGap = ENTITY_COLLISION_RADIUS * 2 +
-    PACKED_LATTICE_SAFETY_EPSILON;
-  const rowGap = columnGap * Math.sqrt(3) / 2;
-  const horizontalComponentGapSlots = Math.max(
-    2,
-    Math.ceil(
-      (COMPONENT_BOUNDS_PADDING * 2 + PACKED_LATTICE_SAFETY_EPSILON) /
-        columnGap,
-    ),
-  );
-  const verticalComponentGapRows = Math.max(
-    2,
-    Math.ceil(
-      (COMPONENT_BOUNDS_PADDING * 2 + PACKED_LATTICE_SAFETY_EPSILON) /
-        rowGap,
-    ),
-  );
-  for (const [tableId, members] of membersByTable) {
-    const anchor = tableAnchors.get(tableId)!;
-    members.sort((left, right) =>
-      left.y - right.y || left.x - right.x || compareIds(left.id, right.id)
-    );
-    const membersByComponent = new Map<string, SimulationEntity[]>();
-    for (const member of members) {
-      const componentId = componentByNode.get(member.id) ?? member.id;
-      const componentMembers = membersByComponent.get(componentId);
-      if (componentMembers) componentMembers.push(member);
-      else membersByComponent.set(componentId, [member]);
-    }
-    const multiNodeBlocks = [...membersByComponent.values()]
-      .filter((componentMembers) => componentMembers.length > 1)
-      .map((componentMembers) => packedLatticeBlock(componentMembers));
-    const singletonMembers = [...membersByComponent.values()]
-      .filter((componentMembers) => componentMembers.length === 1)
-      .flat();
-    const targetColumns = Math.max(
-      1,
-      ...multiNodeBlocks.map((block) => block.columns),
-      Math.ceil(Math.sqrt(
-        members.length +
-          multiNodeBlocks.length * horizontalComponentGapSlots,
-      )),
-    );
-    const blocks = singletonMembers.length > 0
-      ? [
-        ...multiNodeBlocks,
-        packedLatticeBlock(singletonMembers, targetColumns),
-      ]
-      : multiNodeBlocks;
-
-    let shelfX = 0;
-    let shelfY = 0;
-    let shelfRows = 0;
-    let centroidX = 0;
-    let centroidY = 0;
-    for (const block of blocks) {
-      if (shelfX > 0 && shelfX + block.widthSlots > targetColumns) {
-        shelfX = 0;
-        shelfY += shelfRows - 1 + verticalComponentGapRows;
-        shelfRows = 0;
-      }
-      for (let index = 0; index < block.members.length; index += 1) {
-        const row = Math.floor(index / block.columns);
-        const column = index % block.columns;
-        const x = (shelfX + column + (row % 2) / 2) * columnGap;
-        const y = (shelfY + row) * rowGap;
-        block.members[index].x = x;
-        block.members[index].y = y;
-        centroidX += x;
-        centroidY += y;
-      }
-      shelfX += block.widthSlots + horizontalComponentGapSlots;
-      shelfRows = Math.max(shelfRows, block.rows);
-    }
-    centroidX /= members.length;
-    centroidY /= members.length;
-    for (const member of members) {
-      member.x += anchor.x - centroidX;
-      member.y += anchor.y - centroidY;
-    }
-  }
 }
 
 function relaxPointCollisions<T extends LayoutPoint & { id: string }>(
@@ -1152,52 +891,33 @@ export function computeNebulaLayout(
   const componentSizes = new Map(
     components.map((component) => [component.id, component.nodeIds.length]),
   );
-  const countsByTable = tableMemberCounts(entities);
   const largeGraph = entities.length > LARGE_GRAPH_THRESHOLD;
   const packedOverview = entities.length > PACKED_OVERVIEW_THRESHOLD;
-  const tableAnchorGap = largeGraph
-    ? scalableTableAnchorGap(countsByTable)
-    : TABLE_ANCHOR_GAP;
-  const tableAnchors = businessLaneTableAnchors(
-    graph,
-    tables,
-    entities,
-    viewport,
-    tableAnchorGap,
-  );
-  const componentAnchors = seededRectangularAnchors(
-    (packedOverview
-      ? []
-      : largeGraph
-      ? components.filter((component) => component.nodeIds.length > 1)
-      : components).map((component) => component.id),
+  const componentAnchors = seededOrganicAnchors(
+    components.map((component) => component.id),
     seed ^ 0xc801_3ea4,
     viewport,
     COMPONENT_ANCHOR_GAP,
   );
-  const randomX = randomFromSeed(seed ^ 0xad90_777d);
-  const randomY = randomFromSeed(seed ^ 0x7e95_761e);
+  const emptyTableAnchors = seededOrganicAnchors(
+    tables.map((table) => table.id),
+    seed ^ 0x4cf5_ad43,
+    viewport,
+    COMPONENT_ANCHOR_GAP,
+  );
   const nodes: SimulationEntity[] = entities.map((entity) => {
-    const tableAnchor = tableAnchors.get(entity.table_id)!;
     const componentId = componentByNode.get(entity.id)!;
-    const componentAnchor = componentAnchors.get(componentId) ?? tableAnchor;
-    const componentWeight = largeGraph &&
-        componentSizes.get(componentId) === 1
-      ? 0
-      : largeGraph ? 0.2 : 0.38;
-    const tableWeight = 1 - componentWeight;
-    const scatterSpan = boundedTableScatterSpan(
-      countsByTable.get(entity.table_id) ?? 1,
-      tableAnchorGap,
-      largeGraph,
+    const componentAnchor = componentAnchors.get(componentId) ?? { x: 0, y: 0 };
+    const scatterRadius = Math.min(
+      ENTITY_COLLISION_RADIUS * 1.1,
+      20 + Math.sqrt(componentSizes.get(componentId) ?? 1) * 8,
     );
+    const direction = stableUnitVector(`${seed}:${entity.id}:initial`);
     return {
       id: entity.id,
       tableId: entity.table_id,
-      x: tableAnchor.x * tableWeight + componentAnchor.x * componentWeight +
-        (randomX() - 0.5) * scatterSpan,
-      y: tableAnchor.y * tableWeight + componentAnchor.y * componentWeight +
-        (randomY() - 0.5) * scatterSpan,
+      x: componentAnchor.x + direction.x * scatterRadius,
+      y: componentAnchor.y + direction.y * scatterRadius,
     };
   });
   const linkedNodeIds = new Set(
@@ -1243,12 +963,6 @@ export function computeNebulaLayout(
     )
     .map((edge) => ({ ...edge }));
   const random = randomFromSeed(seed);
-  const charge = forceManyBody<SimulationEntity>().strength(
-    largeGraph ? -165 : -115,
-  );
-  if (simulationNodes.length > 1_000) {
-    charge.distanceMax(960).theta(1.2);
-  }
   const simulation = forceSimulation<SimulationEntity, SimulationEdge>(
     simulationNodes,
   )
@@ -1257,61 +971,45 @@ export function computeNebulaLayout(
       "links",
       forceLink<SimulationEntity, SimulationEdge>(links)
         .id((node) => node.id)
-        .distance((link) => link.weight >= 1 ? 116 : 176)
-        .strength((link) => link.weight >= 1 ? 0.72 : 0.22),
+        .distance((link) =>
+          link.weight >= 1 ? STRONG_LINK_DISTANCE : WEAK_LINK_DISTANCE
+        )
+        .strength((link) =>
+          link.weight >= 1 ? STRONG_LINK_STRENGTH : WEAK_LINK_STRENGTH
+        ),
     )
-    .force("charge", charge)
+    .force("charge", forceManyBody<SimulationEntity>()
+      .strength(ORGANIC_CHARGE)
+      .distanceMax(simulationNodes.length > 1_000 ? 900 : Infinity))
     .force(
       "collision",
       forceCollide<SimulationEntity>(ENTITY_COLLISION_RADIUS)
-        .strength(0.95)
+        .strength(0.98)
         .iterations(2),
-    )
-    .force(
-      "table-x",
-      forceX<SimulationEntity>((node) => tableAnchors.get(node.tableId)!.x)
-        .strength(largeGraph ? 0.1 : 0.055),
-    )
-    .force(
-      "table-y",
-      forceY<SimulationEntity>((node) => tableAnchors.get(node.tableId)!.y)
-        .strength(largeGraph ? 0.1 : 0.055),
     )
     .force(
       "component-x",
       forceX<SimulationEntity>((node) =>
-        (componentAnchors.get(componentByNode.get(node.id)!) ??
-          tableAnchors.get(node.tableId)!).x
-      ).strength(largeGraph ? 0.016 : 0.025),
+        componentAnchors.get(componentByNode.get(node.id) ?? node.id)?.x ?? 0
+      ).strength(ORGANIC_COMPONENT_STRENGTH),
     )
     .force(
       "component-y",
       forceY<SimulationEntity>((node) =>
-        (componentAnchors.get(componentByNode.get(node.id)!) ??
-          tableAnchors.get(node.tableId)!).y
-      ).strength(largeGraph ? 0.016 : 0.025),
+        componentAnchors.get(componentByNode.get(node.id) ?? node.id)?.y ?? 0
+      ).strength(ORGANIC_COMPONENT_STRENGTH),
     )
     .stop();
 
-  const simulationTicks = packedOverview ? PACKED_SIMULATION_TICKS : 360;
-  for (let tick = 0; tick < simulationTicks; tick += 1) simulation.tick();
+  for (let tick = 0; tick < ORGANIC_SIMULATION_TICKS; tick += 1) simulation.tick();
   simulation.stop();
-  if (packedOverview) {
-    packTableOwnedComponentLattice(nodes, tableAnchors, componentByNode);
-    // The packed lattice is table-owned so the business lanes remain legible,
-    // but a connected component can still cross two or more lanes. Re-run the
-    // component bounds pass globally so those cross-lane components cannot
-    // overlap one another after the per-table packing step.
-    separateComponentBounds(components, nodes, false);
-  } else {
-    relaxPointCollisions(
-      nodes,
-      ENTITY_COLLISION_RADIUS * 2,
-      largeGraph ? 144 : 12,
-    );
-    separateComponentBounds(components, nodes);
-  }
-  return buildLayout(graph, tables, edges, nodes, tableAnchors, viewport);
+  separateComponentBounds(components, nodes);
+  relaxPointCollisions(
+    nodes,
+    ENTITY_COLLISION_RADIUS * 2,
+    largeGraph ? 24 : 12,
+  );
+  return buildLayout(graph, tables, edges, nodes, emptyTableAnchors, viewport);
 }
 
 export function computeFallbackScatterLayout(
@@ -1329,25 +1027,36 @@ export function computeFallbackScatterLayout(
   }
 
   const seed = seedFor(graph, options.seedOffset ?? 0);
-  const countsByTable = tableMemberCounts(entities);
+  const { components, componentByNode } = connectedComponents(entities, edges);
+  const componentSizes = new Map(
+    components.map((component) => [component.id, component.nodeIds.length]),
+  );
   const largeGraph = entities.length > LARGE_GRAPH_THRESHOLD;
-  const tableAnchors = seededRectangularAnchors(
+  const componentAnchors = seededOrganicAnchors(
+    components.map((component) => component.id),
+    seed ^ 0xc801_3ea4,
+    viewport,
+    COMPONENT_ANCHOR_GAP,
+  );
+  const emptyTableAnchors = seededOrganicAnchors(
     tables.map((table) => table.id),
     seed ^ 0x4cf5_ad43,
     viewport,
-    largeGraph ? scalableTableAnchorGap(countsByTable) : TABLE_ANCHOR_GAP,
+    COMPONENT_ANCHOR_GAP,
   );
-  const randomX = randomFromSeed(seed ^ 0x9f6a_bc1d);
-  const randomY = randomFromSeed(seed ^ 0x3c6e_f372);
   const nodes: SimulationEntity[] = entities.map((entity) => {
-    const anchor = tableAnchors.get(entity.table_id)!;
-    const memberCount = countsByTable.get(entity.table_id) ?? 1;
-    const span = tableScatterSpan(memberCount);
+    const componentId = componentByNode.get(entity.id)!;
+    const anchor = componentAnchors.get(componentId) ?? { x: 0, y: 0 };
+    const scatterRadius = Math.min(
+      ENTITY_COLLISION_RADIUS * 1.1,
+      20 + Math.sqrt(componentSizes.get(componentId) ?? 1) * 8,
+    );
+    const direction = stableUnitVector(`${seed}:${entity.id}:fallback`);
     return {
       id: entity.id,
       tableId: entity.table_id,
-      x: anchor.x + (randomX() - 0.5) * span,
-      y: anchor.y + (randomY() - 0.5) * span,
+      x: anchor.x + direction.x * scatterRadius,
+      y: anchor.y + direction.y * scatterRadius,
     };
   });
   relaxPointCollisions(
@@ -1359,9 +1068,9 @@ export function computeFallbackScatterLayout(
   if (largeGraph) {
     relaxPointCollisions(nodes, ENTITY_COLLISION_RADIUS * 2, 96);
   }
-  const { components } = connectedComponents(entities, edges);
   separateComponentBounds(components, nodes);
-  return buildLayout(graph, tables, edges, nodes, tableAnchors, viewport);
+  relaxPointCollisions(nodes, ENTITY_COLLISION_RADIUS * 2, largeGraph ? 24 : 12);
+  return buildLayout(graph, tables, edges, nodes, emptyTableAnchors, viewport);
 }
 
 /**

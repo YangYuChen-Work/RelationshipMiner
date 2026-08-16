@@ -220,7 +220,7 @@ describe("computeNebulaLayout", () => {
     expect(Math.max(...maxDistanceByTable.values())).toBeLessThan(1_800);
   });
 
-  it("keeps unknown process tables in stable later columns despite degree and input-order changes", () => {
+  it("keeps table-only organic anchors stable when input order changes", () => {
     const baseTables: LayoutGraph["table_nodes"] = [
       { id: "zz-unknown", display_name: "ZZ Unknown" },
       { id: "me-process", display_name: "MEProcess" },
@@ -244,36 +244,15 @@ describe("computeNebulaLayout", () => {
       ],
       entity_edges: [],
     };
-    const second: LayoutGraph = {
-      ...first,
-      table_nodes: [...baseTables].reverse(),
-      table_edges: [
-        {
-          id: "edge-0",
-          source_table: "aa-unknown",
-          target_table: "me-process",
-        },
-        {
-          id: "edge-1",
-          source_table: "aa-unknown",
-          target_table: "me-operation",
-        },
-      ],
-    };
+    const second: LayoutGraph = { ...first, table_nodes: [...baseTables].reverse() };
     const viewport = { width: 1_000, height: 600 };
     const firstLayout = computeNebulaLayout(first, viewport);
     const secondLayout = computeNebulaLayout(second, viewport);
-    const positions = (layout: GraphLayout) =>
-      new Map(layout.tableNodes.map((node) => [node.id, node.x]));
-    const firstX = positions(firstLayout);
-    const secondX = positions(secondLayout);
 
-    expect(firstX.get("me-process")).toBeLessThan(firstX.get("me-operation")!);
-    expect(firstX.get("me-operation")).toBeLessThan(firstX.get("aa-unknown")!);
-    expect(firstX.get("aa-unknown")).toBeLessThan(firstX.get("zz-unknown")!);
-    expect(secondX.get("me-process")).toBeLessThan(secondX.get("me-operation")!);
-    expect(secondX.get("me-operation")).toBeLessThan(secondX.get("aa-unknown")!);
-    expect(secondX.get("aa-unknown")).toBeLessThan(secondX.get("zz-unknown")!);
+    expect(firstLayout).toEqual(secondLayout);
+    expect(firstLayout.tableNodes.every(({ x, y }) =>
+      Number.isFinite(x) && Number.isFinite(y)
+    )).toBe(true);
   });
 
   it.each([20, 200] as const)(
