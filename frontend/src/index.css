@@ -1794,6 +1794,19 @@ button:disabled {
   box-shadow: 0 5px 18px rgb(4 9 15 / 0.12);
 }
 
+.graph-legend-anchor summary {
+  color: var(--signal-cyan) !important;
+}
+
+.graph-legend-anchor li .text-slate-700,
+.graph-legend-anchor li .text-slate-600 {
+  color: #d8d8d0 !important;
+}
+
+.graph-legend-anchor li .text-slate-500 {
+  color: #a6a79f !important;
+}
+
 /* NodeDetailPanel keeps its semantic aside contract; this selector gives it the new shell without changing its API. */
 .graph-layout > aside {
   min-width: 0;
