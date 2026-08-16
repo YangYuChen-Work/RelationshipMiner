@@ -61,9 +61,9 @@ export default function ProgressIndicator() {
   }));
 
   return (
-    <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="analysis-progress-shell space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       {/* 阶段标题 */}
-      <div className="flex items-center justify-between">
+      <div className="analysis-progress-header flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="size-5 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
           <div>
@@ -95,7 +95,7 @@ export default function ProgressIndicator() {
       </ol>
 
       {/* 进度条 */}
-      <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+      <div className="analysis-progress-bar h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
         <div
           className="h-2.5 rounded-full bg-teal-600 transition-all duration-500 ease-out"
           style={{ width: `${percent}%` }}
@@ -103,11 +103,11 @@ export default function ProgressIndicator() {
       </div>
 
       {/* 阶段描述 */}
-      <p className="text-sm text-slate-600" aria-live="polite">
+      <p className="analysis-progress-copy text-sm text-slate-600" aria-live="polite">
         {businessCopy}
       </p>
 
-      <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <dl className="analysis-progress-metrics grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
           <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
             已选表
@@ -159,7 +159,7 @@ export default function ProgressIndicator() {
       </dl>
 
       {progressMessage || technicalPhase ? (
-        <details className="text-xs text-slate-500">
+        <details className="analysis-progress-details text-xs text-slate-500">
           <summary className="cursor-pointer">技术详情</summary>
           {technicalPhase ? <p className="mt-2">技术阶段：{technicalPhase}</p> : null}
           {progressMessage ? <p className="mt-2">{progressMessage}</p> : null}

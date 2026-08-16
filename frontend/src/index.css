@@ -1077,8 +1077,7 @@ button:disabled {
   margin: 36px auto 0;
 }
 
-.analysis-progress-shell,
-.selection-progress > div {
+.analysis-progress-shell {
   position: relative;
   display: grid;
   gap: 22px;
@@ -1103,8 +1102,7 @@ button:disabled {
   width: 100%;
 }
 
-.analysis-progress-header,
-.selection-progress > div > div:first-child {
+.analysis-progress-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 18px;
@@ -1113,16 +1111,14 @@ button:disabled {
   border-bottom: 1px solid color-mix(in srgb, var(--line-light) 88%, white);
 }
 
-.analysis-progress-header > div:first-child,
-.selection-progress > div > div:first-child > div:first-child {
+.analysis-progress-header > div:first-child {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 16px;
 }
 
-.analysis-progress-header > div:first-child > div:first-child,
-.selection-progress > div > div:first-child > div:first-child > div:first-child {
+.analysis-progress-header > div:first-child > div:first-child {
   width: 22px;
   height: 22px;
   flex: none;
@@ -1131,8 +1127,7 @@ button:disabled {
   border-top-color: transparent !important;
 }
 
-.analysis-progress-header > div:first-child span:first-of-type,
-.selection-progress > div > div:first-child > div:first-child span:first-of-type {
+.analysis-progress-header > div:first-child span:first-of-type {
   display: block;
   color: var(--ink) !important;
   font-family: var(--display-font);
@@ -1143,8 +1138,7 @@ button:disabled {
   text-wrap: balance;
 }
 
-.analysis-progress-header > div:first-child > div:last-child::after,
-.selection-progress > div > div:first-child > div:first-child > div:last-child::after {
+.analysis-progress-header > div:first-child > div:last-child::after {
   display: block;
   margin-top: 6px;
   color: var(--muted);
@@ -1154,8 +1148,7 @@ button:disabled {
   content: "语义分析正在逐段校准业务对象、候选关系与最终图谱。";
 }
 
-.analysis-progress-header > span:last-child,
-.selection-progress > div > div:first-child > span:last-child {
+.analysis-progress-header > span:last-child {
   display: inline-flex;
   min-height: 52px;
   min-width: 92px;
@@ -1172,8 +1165,7 @@ button:disabled {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.72);
 }
 
-.analysis-progress-stages,
-.selection-progress > div > .analysis-progress-stages {
+.analysis-progress-stages {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
@@ -1243,7 +1235,7 @@ button:disabled {
   background: color-mix(in srgb, var(--muted) 48%, white) !important;
 }
 
-.selection-progress > div > div:nth-of-type(2) {
+.analysis-progress-bar {
   height: 18px !important;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--line-light) 84%, white);
@@ -1252,7 +1244,7 @@ button:disabled {
   box-shadow: inset 0 1px 3px rgb(25 33 41 / 0.08);
 }
 
-.selection-progress > div > div:nth-of-type(2) > div {
+.analysis-progress-bar > div {
   height: 100% !important;
   border-radius: inherit;
   background:
@@ -1262,23 +1254,21 @@ button:disabled {
     0 0 18px rgb(94 219 209 / 0.18);
 }
 
-.selection-progress > div > p {
+.analysis-progress-copy {
   margin: -4px 0 0;
   color: var(--muted) !important;
   font-size: 0.9rem !important;
   line-height: 1.75;
 }
 
-.analysis-progress-metrics,
-.selection-progress > div > dl {
+.analysis-progress-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
   margin: 0;
 }
 
-.analysis-progress-metrics > div,
-.selection-progress > div > dl > div {
+.analysis-progress-metrics > div {
   min-width: 0;
   padding: 16px 18px !important;
   border: 1px solid color-mix(in srgb, var(--line-light) 84%, white) !important;
@@ -1288,8 +1278,7 @@ button:disabled {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.76);
 }
 
-.analysis-progress-metrics dt,
-.selection-progress > div > dl dt {
+.analysis-progress-metrics dt {
   color: var(--muted) !important;
   font-size: 0.72rem !important;
   font-weight: 700;
@@ -1298,8 +1287,7 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.analysis-progress-metrics dd,
-.selection-progress > div > dl dd {
+.analysis-progress-metrics dd {
   margin-top: 10px !important;
   color: var(--ink) !important;
   font-family: var(--data-font);
@@ -1308,8 +1296,7 @@ button:disabled {
   line-height: 1.1;
 }
 
-.analysis-progress-details,
-.selection-progress > div > details {
+.analysis-progress-details {
   padding: 16px 18px;
   border-top: 1px solid color-mix(in srgb, var(--line-light) 84%, white);
   color: var(--muted) !important;
@@ -1317,8 +1304,7 @@ button:disabled {
   border-radius: 16px;
 }
 
-.analysis-progress-details summary,
-.selection-progress > div > details summary {
+.analysis-progress-details summary {
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -1329,8 +1315,7 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.analysis-progress-details p,
-.selection-progress > div > details p {
+.analysis-progress-details p {
   margin: 10px 0 0;
   color: var(--muted) !important;
   font-size: 0.8rem;
@@ -1485,25 +1470,6 @@ button:disabled {
   background: #fffdf8 !important;
 }
 
-.graph-workbench [class*="border-slate-200"],
-.graph-workbench [class*="border-slate-300"] {
-  border-color: var(--line-steel) !important;
-}
-
-.graph-workbench [class*="bg-slate-50"],
-.graph-workbench [class*="bg-gray-200"] {
-  background: var(--graphite-800) !important;
-}
-
-.graph-workbench [class*="text-slate-700"],
-.graph-workbench [class*="text-slate-600"] {
-  color: #d8d8d0 !important;
-}
-
-.graph-workbench [class*="text-slate-500"] {
-  color: #a6a79f !important;
-}
-
 .graph-workbench input[type="checkbox"],
 .graph-workbench input[type="range"] {
   accent-color: var(--signal-cyan);
@@ -1640,6 +1606,15 @@ button:disabled {
 .graph-command-rail [role="toolbar"] > div > div > div {
   border-color: var(--line-steel) !important;
   background: var(--graphite-800) !important;
+}
+
+.graph-command-rail [role="toolbar"] .text-slate-700,
+.graph-command-rail [role="toolbar"] .text-slate-600 {
+  color: #d8d8d0 !important;
+}
+
+.graph-command-rail [role="toolbar"] .text-slate-500 {
+  color: #a6a79f !important;
 }
 
 .graph-command-rail [role="toolbar"] input[type="range"] {
@@ -1819,52 +1794,6 @@ button:disabled {
   box-shadow: 0 5px 18px rgb(4 9 15 / 0.12);
 }
 
-.graph-inspector {
-  min-width: 0;
-  overflow-y: auto;
-  color: var(--ink);
-  background: var(--surface-ivory);
-  border-left: 1px solid var(--line-steel);
-}
-
-.graph-inspector header {
-  border-color: var(--line-light) !important;
-}
-
-.graph-inspector h2,
-.graph-inspector h3,
-.graph-inspector h4 {
-  font-family: var(--display-font);
-}
-
-.graph-inspector [class*="border-slate-700"] {
-  border-color: var(--line-light) !important;
-}
-
-.graph-inspector [class*="bg-slate-900"] {
-  background: #fffdf8 !important;
-}
-
-.graph-inspector :is(.text-slate-100, .text-slate-200) {
-  color: var(--ink) !important;
-}
-
-.graph-inspector :is(.text-slate-300, .text-slate-400) {
-  color: #4f5c63 !important;
-}
-
-.graph-inspector .text-slate-500 {
-  color: var(--muted) !important;
-}
-
-.graph-inspector :is(.text-teal-200, .text-teal-300) {
-  color: var(--signal-cyan-ink) !important;
-}
-
-.graph-inspector [class*="hover:border-teal"]:hover {
-  border-color: var(--signal-cyan-deep) !important;
-}
-
 /* NodeDetailPanel keeps its semantic aside contract; this selector gives it the new shell without changing its API. */
 .graph-layout > aside {
   min-width: 0;
@@ -1872,6 +1801,23 @@ button:disabled {
   color: var(--ink);
   background: var(--surface-ivory);
   border-left: 1px solid var(--line-steel);
+}
+
+.graph-stage-shell [role="alert"] {
+  border-color: var(--line-steel) !important;
+  background: var(--graphite-800) !important;
+  color: #d8d8d0 !important;
+}
+
+.graph-stage-shell [role="alert"] button {
+  color: #d8d8d0 !important;
+  border-color: var(--line-steel) !important;
+  background: transparent !important;
+}
+
+.graph-stage-shell [role="alert"] button:hover {
+  color: var(--signal-cyan) !important;
+  border-color: var(--signal-cyan-deep) !important;
 }
 
 .graph-layout > aside header {
@@ -2161,20 +2107,20 @@ section[role="status"].graph-notice {
   line-height: 1.5;
 }
 
-.graph-inspector {
+.graph-layout > aside {
   font-size: 0.9rem;
   line-height: 1.55;
 }
 
-.graph-inspector :is(.text-xs, .text-sm) {
+.graph-layout > aside :is(.text-xs, .text-sm) {
   line-height: 1.5;
 }
 
-.graph-inspector .text-xs {
+.graph-layout > aside .text-xs {
   font-size: 0.74rem !important;
 }
 
-.graph-inspector .text-sm {
+.graph-layout > aside .text-sm {
   font-size: 0.86rem !important;
 }
 
@@ -2222,20 +2168,17 @@ section[role="status"].graph-notice {
     margin-top: 32px;
   }
 
-  .analysis-progress-shell,
-  .selection-progress > div {
+  .analysis-progress-shell {
     gap: 20px;
     padding: 24px;
     border-radius: 18px !important;
   }
 
-  .analysis-progress-stages,
-  .selection-progress > div > .analysis-progress-stages {
+  .analysis-progress-stages {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .analysis-progress-metrics,
-  .selection-progress > div > dl {
+  .analysis-progress-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2281,8 +2224,7 @@ section[role="status"].graph-notice {
     white-space: nowrap;
   }
 
-  .analysis-progress-stages,
-  .selection-progress > div > .analysis-progress-stages {
+  .analysis-progress-stages {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2294,7 +2236,6 @@ section[role="status"].graph-notice {
     min-height: 600px;
   }
 
-  .graph-inspector,
   .graph-layout > aside {
     min-height: 380px;
     border-top: 1px solid var(--line-light);
@@ -2346,35 +2287,30 @@ section[role="status"].graph-notice {
     margin-top: 28px;
   }
 
-  .analysis-progress-shell,
-  .selection-progress > div {
+  .analysis-progress-shell {
     gap: 18px;
     padding: 18px;
     border-radius: 16px !important;
   }
 
-  .analysis-progress-header,
-  .selection-progress > div > div:first-child {
+  .analysis-progress-header {
     grid-template-columns: 1fr;
     gap: 14px;
     padding-bottom: 16px;
   }
 
-  .analysis-progress-header > div:first-child,
-  .selection-progress > div > div:first-child > div:first-child {
+  .analysis-progress-header > div:first-child {
     align-items: flex-start;
   }
 
-  .analysis-progress-header > span:last-child,
-  .selection-progress > div > div:first-child > span:last-child {
+  .analysis-progress-header > span:last-child {
     min-height: 44px;
     width: fit-content;
     min-width: 84px;
     padding-inline: 16px;
   }
 
-  .analysis-progress-stages,
-  .selection-progress > div > .analysis-progress-stages {
+  .analysis-progress-stages {
     grid-template-columns: 1fr;
     gap: 10px;
   }
@@ -2384,19 +2320,16 @@ section[role="status"].graph-notice {
     padding: 12px 14px !important;
   }
 
-  .analysis-progress-metrics,
-  .selection-progress > div > dl {
+  .analysis-progress-metrics {
     grid-template-columns: 1fr;
     gap: 12px;
   }
 
-  .analysis-progress-metrics > div,
-  .selection-progress > div > dl > div {
+  .analysis-progress-metrics > div {
     padding: 14px 16px !important;
   }
 
-  .analysis-progress-details,
-  .selection-progress > div > details {
+  .analysis-progress-details {
     padding: 14px 16px;
   }
 
@@ -2585,7 +2518,6 @@ section[role="status"].graph-notice {
     max-width: calc(100% - 36px);
   }
 
-  .graph-inspector,
   .graph-layout > aside {
     min-height: 360px;
     border-top: 1px solid var(--line-light);

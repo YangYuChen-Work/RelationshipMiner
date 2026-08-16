@@ -49,9 +49,14 @@ describe("ProgressIndicator", () => {
       },
     });
 
-    render(<ProgressIndicator />);
+    const { container } = render(<ProgressIndicator />);
 
+    expect(container.querySelector(".analysis-progress-shell")).toBeInTheDocument();
+    expect(container.querySelector(".analysis-progress-header")).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "分析阶段" })).toBeInTheDocument();
+    expect(container.querySelector(".analysis-progress-stages")).toBeInTheDocument();
+    expect(container.querySelector(".analysis-progress-metrics")).toBeInTheDocument();
+    expect(container.querySelector(".analysis-progress-details")).toBeInTheDocument();
     expect(screen.getByText("寻找候选对象").closest("li")).toHaveAttribute(
       "data-stage-state",
       "current",
@@ -69,14 +74,16 @@ describe("ProgressIndicator", () => {
     useAnalysisStore.setState({
       diagnostics: null,
       currentPhase: "schema",
+      progressMessage: null,
       progressValue: 0.08,
       selectedTables: new Map(),
     });
 
-    render(<ProgressIndicator />);
+    const { container } = render(<ProgressIndicator />);
 
     expect(screen.getAllByText("等待数据").length).toBeGreaterThan(0);
     expect(screen.queryByText("0 个对象")).not.toBeInTheDocument();
+    expect(container.querySelector(".analysis-progress-details")).toBeNull();
   });
 
   it("keeps an unknown backend phase neutral instead of marking the first stage current", () => {
@@ -87,7 +94,7 @@ describe("ProgressIndicator", () => {
       selectedTables: new Map(),
     });
 
-    render(<ProgressIndicator />);
+    const { container } = render(<ProgressIndicator />);
 
     for (const item of screen.getAllByRole("listitem")) {
       expect(item).toHaveAttribute("data-stage-state", "pending");
@@ -99,5 +106,7 @@ describe("ProgressIndicator", () => {
 
     expect(businessCopy).toBeDefined();
     expect(businessCopy?.closest("details")).toBeNull();
+    expect(container.querySelector(".analysis-progress-details")).toBeInTheDocument();
+    expect(screen.getByText("技术阶段：retrieval")).toBeInTheDocument();
   });
 });
