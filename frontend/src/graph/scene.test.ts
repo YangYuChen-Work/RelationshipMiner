@@ -214,14 +214,18 @@ describe("buildScene", () => {
     expect(work.entityDots).toHaveLength(4);
     expect(work.entityLabels).toHaveLength(4);
     expect(detail.entityLabels).toHaveLength(4);
-    expect(overview.layerOpacity.tableEdges).toBeGreaterThan(
-      overview.layerOpacity.entityEdges,
+    expect(overview.layerOpacity.entityEdges).toBeGreaterThan(
+      overview.layerOpacity.tableEdges,
     );
     expect(work.layerOpacity.entityEdges).toBeGreaterThan(
       work.layerOpacity.tableEdges,
     );
     expect(detail.entityEdges[0].direction).toBe("forward");
     expect(detail.entityLabels[0].secondary).toBe("");
+    expect(detail.entityLabels.find((label) => label.nodeId === "order-1"))
+      .toMatchObject({ primary: "Order 1", secondary: "" });
+    expect(detail.entityLabels.find((label) => label.nodeId === "user-1"))
+      .toMatchObject({ primary: "Ada", secondary: "" });
   });
 
   it("rejects auxiliary values as primary names and resolves mixed directions as undirected", () => {
@@ -276,6 +280,10 @@ describe("buildScene", () => {
       primary: "重复对象",
       secondary: "OBJ-A",
       isDuplicate: true,
+    });
+    expect(scene.entityLabels[0]).toMatchObject({
+      primary: "重复对象",
+      secondary: "OBJ-A",
     });
   });
 

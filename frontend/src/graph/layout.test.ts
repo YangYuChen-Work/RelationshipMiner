@@ -156,22 +156,32 @@ describe("computeNebulaLayout", () => {
   );
 
   it.each([20, 200] as const)(
-    "places process tables on ordered business lanes at %i nodes",
+    "does not lock process tables into equal business lanes",
     (entityCount) => {
       const layout = computeNebulaLayout(
         compactLayoutGraph(makeNebulaGraph({ entityCount })),
         { width: 1_280, height: 720 },
       );
-      const xByTable = new Map(
-        layout.tableNodes.map((node) => [node.id, node.x]),
-      );
+      const xs = layout.tableNodes
+        .map((node) => node.x)
+        .sort((left, right) => left - right);
+      const gaps = xs.slice(1).map((x, index) => x - xs[index]);
 
-      expect(xByTable.get("table-0")).toBeLessThan(xByTable.get("table-1")!);
-      expect(xByTable.get("table-1")).toBeLessThan(xByTable.get("table-2")!);
-      expect(xByTable.get("table-2")).toBeLessThan(xByTable.get("table-3")!);
+      expect(Math.max(...gaps) - Math.min(...gaps)).toBeGreaterThan(18);
     },
     15_000,
   );
+
+  it("keeps strong links compact even when endpoints belong to different tables", () => {
+    const graph = layoutGraphFixture(2, 4, [
+      { id: "cross", source: "entity-0", target: "entity-3", weight: 1 },
+    ]);
+    const layout = computeNebulaLayout(graph, { width: 1_280, height: 720 });
+    const nodes = new Map(layout.entityNodes.map((node) => [node.id, node]));
+    const distance = pointDistance(nodes.get("entity-0")!, nodes.get("entity-3")!);
+
+    expect(distance).toBeLessThan(220);
+  });
 
   it("keeps each entity cluster bounded around its owning table anchor", () => {
     const layout = computeNebulaLayout(
