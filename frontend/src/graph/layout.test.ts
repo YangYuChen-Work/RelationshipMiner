@@ -156,6 +156,44 @@ describe("computeNebulaLayout", () => {
   );
 
   it.each([20, 200] as const)(
+    "places process tables on ordered business lanes at %i nodes",
+    (entityCount) => {
+      const layout = computeNebulaLayout(
+        compactLayoutGraph(makeNebulaGraph({ entityCount })),
+        { width: 1_280, height: 720 },
+      );
+      const xByTable = new Map(
+        layout.tableNodes.map((node) => [node.id, node.x]),
+      );
+
+      expect(xByTable.get("table-0")).toBeLessThan(xByTable.get("table-1")!);
+      expect(xByTable.get("table-1")).toBeLessThan(xByTable.get("table-2")!);
+      expect(xByTable.get("table-2")).toBeLessThan(xByTable.get("table-3")!);
+    },
+    15_000,
+  );
+
+  it("keeps each entity cluster bounded around its owning table anchor", () => {
+    const layout = computeNebulaLayout(
+      compactLayoutGraph(makeNebulaGraph({ entityCount: 200 })),
+      { width: 1_280, height: 720 },
+    );
+    const tables = new Map(layout.tableNodes.map((node) => [node.id, node]));
+    const maxDistanceByTable = new Map<string, number>();
+
+    for (const entity of layout.entityNodes) {
+      const table = tables.get(entity.tableId)!;
+      const distance = Math.hypot(entity.x - table.x, entity.y - table.y);
+      maxDistanceByTable.set(
+        entity.tableId,
+        Math.max(maxDistanceByTable.get(entity.tableId) ?? 0, distance),
+      );
+    }
+
+    expect(Math.max(...maxDistanceByTable.values())).toBeLessThan(1_800);
+  });
+
+  it.each([20, 200] as const)(
     "keeps the two shared %i-node fixture components separated by whitespace",
     (entityCount) => {
       const graph = makeNebulaGraph({ entityCount });

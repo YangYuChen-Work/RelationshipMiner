@@ -92,7 +92,9 @@ const UINT32_RANGE = 4_294_967_296;
 const TABLE_ANCHOR_GAP = 320;
 const COMPONENT_ANCHOR_GAP = 260;
 const COMPONENT_BOUNDS_PADDING = ENTITY_COLLISION_RADIUS;
-const LARGE_GRAPH_THRESHOLD = 1_000;
+// Compose the observatory view before the graph reaches four digits. A
+// rectangular table grid becomes a set of dense islands much earlier.
+const LARGE_GRAPH_THRESHOLD = 120;
 
 interface SimulationEntity extends SimulationNodeDatum {
   id: string;
@@ -339,6 +341,115 @@ function scalableTableAnchorGap(
   return Math.max(
     TABLE_ANCHOR_GAP,
     tableScatterSpan(largestTable) * 1.25,
+  );
+}
+
+function tableDegrees(
+  graph: LayoutGraph,
+  entities: readonly LayoutEntityInput[],
+): Map<string, number> {
+  const degrees = new Map(
+    graph.table_nodes.map((table) => [table.id, 0]),
+  );
+  const tableByEntity = new Map(
+    entities.map((entity) => [entity.id, entity.table_id]),
+  );
+  for (const edge of graph.table_edges) {
+    if (degrees.has(edge.source_table)) {
+      degrees.set(edge.source_table, (degrees.get(edge.source_table) ?? 0) + 1);
+    }
+    if (degrees.has(edge.target_table)) {
+      degrees.set(edge.target_table, (degrees.get(edge.target_table) ?? 0) + 1);
+    }
+  }
+  for (const edge of graph.entity_edges) {
+    const sourceTableId = tableByEntity.get(edge.source);
+    const targetTableId = tableByEntity.get(edge.target);
+    if (!sourceTableId || !targetTableId || sourceTableId === targetTableId) {
+      continue;
+    }
+    degrees.set(sourceTableId, (degrees.get(sourceTableId) ?? 0) + 1);
+    degrees.set(targetTableId, (degrees.get(targetTableId) ?? 0) + 1);
+  }
+  return degrees;
+}
+
+function compareTablesByDegree(
+  degrees: ReadonlyMap<string, number>,
+): (left: LayoutTableInput, right: LayoutTableInput) => number {
+  return (left, right) =>
+    (degrees.get(right.id) ?? 0) - (degrees.get(left.id) ?? 0) ||
+    compareIds(left.id, right.id);
+}
+
+function businessLaneTableAnchors(
+  graph: LayoutGraph,
+  tables: readonly LayoutTableInput[],
+  entities: readonly LayoutEntityInput[],
+  viewport: Viewport,
+  minimumGap: number,
+): Map<string, LayoutPoint> {
+  if (tables.length === 0) return new Map();
+  const degrees = tableDegrees(graph, entities);
+  const compareInLane = compareTablesByDegree(degrees);
+  const knownLanes = PROCESS_CLASS_ORDER.map(() => [] as LayoutTableInput[]);
+  const unknownTables: LayoutTableInput[] = [];
+
+  for (const table of tables) {
+    const classIndex = processClassIndex(table);
+    if (classIndex < PROCESS_CLASS_ORDER.length) {
+      knownLanes[classIndex].push(table);
+    } else {
+      unknownTables.push(table);
+    }
+  }
+
+  const lanes = [
+    ...knownLanes
+      .filter((lane) => lane.length > 0)
+      .map((lane) => [...lane].sort(compareInLane)),
+    ...unknownTables
+      .sort(compareInLane)
+      .map((table) => [table]),
+  ];
+  const laneCount = Math.max(1, lanes.length);
+  const aspectRatio = Math.max(viewport.width / viewport.height, 0.6);
+  const density = Math.sqrt(Math.max(1, tables.length) / aspectRatio);
+  const boundedGap = Math.max(
+    minimumGap,
+    Math.min(minimumGap * 1.85, minimumGap * (0.92 + density * 0.16)),
+  );
+  const columnGap = boundedGap;
+  const rowGap = Math.max(
+    minimumGap * 0.72,
+    Math.min(boundedGap * 0.94, minimumGap * (0.74 + density * 0.12)),
+  );
+  const centerColumn = (laneCount - 1) / 2;
+  const anchors = new Map<string, LayoutPoint>();
+
+  for (const [laneIndex, lane] of lanes.entries()) {
+    const x = (laneIndex - centerColumn) * columnGap;
+    const centerRow = (lane.length - 1) / 2;
+    for (const [rowIndex, table] of lane.entries()) {
+      anchors.set(table.id, {
+        x,
+        y: (rowIndex - centerRow) * rowGap,
+      });
+    }
+  }
+
+  return anchors;
+}
+
+function boundedTableScatterSpan(
+  memberCount: number,
+  laneGap: number,
+  largeGraph: boolean,
+): number {
+  if (!largeGraph) return 84;
+  return Math.min(
+    tableScatterSpan(memberCount),
+    Math.max(ENTITY_COLLISION_RADIUS * 5, laneGap * 0.62),
   );
 }
 
@@ -915,16 +1026,21 @@ export function computeNebulaLayout(
   );
   const countsByTable = tableMemberCounts(entities);
   const largeGraph = entities.length > LARGE_GRAPH_THRESHOLD;
-  const tableAnchors = seededRectangularAnchors(
-    tables.map((table) => table.id),
-    seed ^ 0xa341_316c,
+  const tableAnchorGap = largeGraph
+    ? scalableTableAnchorGap(countsByTable)
+    : TABLE_ANCHOR_GAP;
+  const tableAnchors = businessLaneTableAnchors(
+    graph,
+    tables,
+    entities,
     viewport,
-    largeGraph ? scalableTableAnchorGap(countsByTable) : TABLE_ANCHOR_GAP,
+    tableAnchorGap,
   );
   const componentAnchors = seededRectangularAnchors(
-    components
-      .filter((component) => !largeGraph || component.nodeIds.length > 1)
-      .map((component) => component.id),
+    (largeGraph
+      ? components.filter((component) => component.nodeIds.length > 1)
+      : components
+    ).map((component) => component.id),
     seed ^ 0xc801_3ea4,
     viewport,
     COMPONENT_ANCHOR_GAP,
@@ -938,11 +1054,13 @@ export function computeNebulaLayout(
     const componentWeight = largeGraph &&
         componentSizes.get(componentId) === 1
       ? 0
-      : 0.38;
+      : largeGraph ? 0.2 : 0.38;
     const tableWeight = 1 - componentWeight;
-    const scatterSpan = largeGraph
-      ? tableScatterSpan(countsByTable.get(entity.table_id) ?? 1)
-      : 84;
+    const scatterSpan = boundedTableScatterSpan(
+      countsByTable.get(entity.table_id) ?? 1,
+      tableAnchorGap,
+      largeGraph,
+    );
     return {
       id: entity.id,
       tableId: entity.table_id,
@@ -969,9 +1087,11 @@ export function computeNebulaLayout(
     : nodes;
   const links: SimulationEdge[] = edges.map((edge) => ({ ...edge }));
   const random = randomFromSeed(seed);
-  const charge = forceManyBody<SimulationEntity>().strength(-115);
+  const charge = forceManyBody<SimulationEntity>().strength(
+    largeGraph ? -165 : -115,
+  );
   if (simulationNodes.length > 1_000) {
-    charge.distanceMax(720).theta(1.2);
+    charge.distanceMax(960).theta(1.2);
   }
   const simulation = forceSimulation<SimulationEntity, SimulationEdge>(
     simulationNodes,
@@ -981,7 +1101,7 @@ export function computeNebulaLayout(
       "links",
       forceLink<SimulationEntity, SimulationEdge>(links)
         .id((node) => node.id)
-        .distance((link) => link.weight >= 1 ? 92 : 148)
+        .distance((link) => link.weight >= 1 ? 116 : 176)
         .strength((link) => link.weight >= 1 ? 0.72 : 0.22),
     )
     .force("charge", charge)
@@ -994,26 +1114,26 @@ export function computeNebulaLayout(
     .force(
       "table-x",
       forceX<SimulationEntity>((node) => tableAnchors.get(node.tableId)!.x)
-        .strength(0.055),
+        .strength(largeGraph ? 0.1 : 0.055),
     )
     .force(
       "table-y",
       forceY<SimulationEntity>((node) => tableAnchors.get(node.tableId)!.y)
-        .strength(0.055),
+        .strength(largeGraph ? 0.1 : 0.055),
     )
     .force(
       "component-x",
       forceX<SimulationEntity>((node) =>
         (componentAnchors.get(componentByNode.get(node.id)!) ??
           tableAnchors.get(node.tableId)!).x
-      ).strength(0.025),
+      ).strength(largeGraph ? 0.016 : 0.025),
     )
     .force(
       "component-y",
       forceY<SimulationEntity>((node) =>
         (componentAnchors.get(componentByNode.get(node.id)!) ??
           tableAnchors.get(node.tableId)!).y
-      ).strength(0.025),
+      ).strength(largeGraph ? 0.016 : 0.025),
     )
     .stop();
 
@@ -1022,7 +1142,7 @@ export function computeNebulaLayout(
   relaxPointCollisions(
     nodes,
     ENTITY_COLLISION_RADIUS * 2,
-    largeGraph ? 96 : 12,
+    largeGraph ? 144 : 12,
   );
   separateComponentBounds(components, nodes);
   return buildLayout(graph, tables, edges, nodes, tableAnchors, viewport);
