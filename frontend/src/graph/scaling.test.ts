@@ -146,6 +146,46 @@ function boundsOverlap(
     left.bottom > right.top && right.bottom > left.top;
 }
 
+function connectedComponentNodeIds(graph: LayoutGraph): string[][] {
+  const adjacency = new Map(
+    graph.entity_nodes.map((node) => [node.id, new Set<string>()]),
+  );
+  for (const edge of graph.entity_edges) {
+    adjacency.get(edge.source)?.add(edge.target);
+    adjacency.get(edge.target)?.add(edge.source);
+  }
+
+  const remaining = new Set(adjacency.keys());
+  const components: string[][] = [];
+  while (remaining.size > 0) {
+    const [start] = [...remaining].sort();
+    const pending = [start];
+    const component: string[] = [];
+    remaining.delete(start);
+    while (pending.length > 0) {
+      const nodeId = pending.pop()!;
+      component.push(nodeId);
+      for (const neighbor of adjacency.get(nodeId) ?? []) {
+        if (!remaining.delete(neighbor)) continue;
+        pending.push(neighbor);
+      }
+    }
+    components.push(component.sort());
+  }
+  return components;
+}
+
+function componentBoundsFromGraph(
+  graph: LayoutGraph,
+  layout: GraphLayout,
+  padding: number,
+) {
+  const positions = new Map(layout.entityNodes.map((node) => [node.id, node]));
+  return connectedComponentNodeIds(graph).map((nodeIds) =>
+    paddedBounds(nodeIds.map((nodeId) => positions.get(nodeId)!), padding)
+  );
+}
+
 class ScalingLayoutWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
@@ -406,6 +446,15 @@ describe("7000-entity graph scaling", () => {
       expect(memberDistance).toBeLessThan(
         ENTITY_COLLISION_RADIUS * 2 + 1,
       );
+    }
+    const componentBounds = componentBoundsFromGraph(packedGraph, first, 12);
+    for (let left = 0; left < componentBounds.length; left += 1) {
+      for (let right = left + 1; right < componentBounds.length; right += 1) {
+        expect(
+          boundsOverlap(componentBounds[left], componentBounds[right]),
+          `components ${left} and ${right}`,
+        ).toBe(false);
+      }
     }
     expect(second).toEqual(first);
   }, 10_000);
