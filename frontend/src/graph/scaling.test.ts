@@ -126,6 +126,27 @@ function packedCrossTableComponentGraph(): LayoutGraph {
   };
 }
 
+function packedConnectedChainGraph(): LayoutGraph {
+  const entityCount = 1_001;
+  const nodeId = (index: number) =>
+    `chain-entity-${String(index).padStart(4, "0")}`;
+  return {
+    table_nodes: [{ id: "table-0", display_name: "Table 0" }],
+    entity_nodes: Array.from({ length: entityCount }, (_, index) => ({
+      id: nodeId(index),
+      table_id: "table-0",
+      class_name: null,
+    })),
+    table_edges: [],
+    entity_edges: Array.from({ length: entityCount - 1 }, (_, index) => ({
+      id: `chain-edge-${String(index).padStart(4, "0")}`,
+      source: nodeId(index),
+      target: nodeId(index + 1),
+      weight: 1,
+    })),
+  };
+}
+
 function paddedBounds(
   nodes: readonly { x: number; y: number }[],
   padding: number,
@@ -457,6 +478,50 @@ describe("7000-entity graph scaling", () => {
       }
     }
     expect(second).toEqual(first);
+  }, 10_000);
+
+  it("simulates every member of a >1000-node connected component", () => {
+    const packedGraph = packedConnectedChainGraph();
+    const layout = computeNebulaLayout(packedGraph, VIEWPORT);
+    const positions = new Map(
+      layout.entityNodes.map((node) => [node.id, node]),
+    );
+
+    expect(layout.entityNodes).toHaveLength(1_001);
+    expect([...positions.keys()].sort()).toEqual(
+      packedGraph.entity_nodes.map((node) => node.id).sort(),
+    );
+    expect(
+      layout.entityNodes.every((node) =>
+        Number.isFinite(node.x) && Number.isFinite(node.y)
+      ),
+    ).toBe(true);
+
+    const minimumSpacing = ENTITY_COLLISION_RADIUS * 1.9;
+    const spacing = closePairStats(layout.entityNodes, minimumSpacing);
+    expect(spacing.minimumObservedDistance).toBeGreaterThanOrEqual(
+      minimumSpacing,
+    );
+    expect(spacing.closePairs).toBe(0);
+
+    const strongLinks = packedGraph.entity_edges.map((edge) => {
+      const source = positions.get(edge.source)!;
+      const target = positions.get(edge.target)!;
+      return {
+        id: edge.id,
+        distance: Math.hypot(source.x - target.x, source.y - target.y),
+      };
+    });
+    const sortedLinkDistances = strongLinks
+      .map((edge) => edge.distance)
+      .sort((left, right) => left - right);
+    const longestLink = strongLinks.reduce((longest, edge) =>
+      edge.distance > longest.distance ? edge : longest
+    );
+    expect(
+      longestLink.distance,
+      `longest=${JSON.stringify(longestLink)} p95=${sortedLinkDistances[949]} p99=${sortedLinkDistances[989]}`,
+    ).toBeLessThan(400);
   }, 10_000);
 
   it("separates >1000 cross-table components without losing deterministic spacing", () => {

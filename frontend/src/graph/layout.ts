@@ -89,7 +89,6 @@ const COMPONENT_BOUNDS_PADDING = ENTITY_COLLISION_RADIUS;
 // rectangular table grid becomes a set of dense islands much earlier.
 const LARGE_GRAPH_THRESHOLD = 120;
 const PACKED_OVERVIEW_THRESHOLD = 1_000;
-const MAX_PACKED_SIMULATION_NODES = 512;
 const STRONG_LINK_DISTANCE = 112;
 const WEAK_LINK_DISTANCE = 164;
 const STRONG_LINK_STRENGTH = 0.9;
@@ -268,6 +267,67 @@ function connectedComponents(
   }
   components.sort((left, right) => compareIds(left.id, right.id));
   return { components, componentByNode };
+}
+
+function seededConnectedPositions(
+  components: readonly Component[],
+  edges: readonly LayoutEntityEdgeInput[],
+  anchors: ReadonlyMap<string, LayoutPoint>,
+  seed: number,
+): Map<string, LayoutPoint> {
+  const adjacency = new Map<string, string[]>();
+  for (const component of components) {
+    for (const nodeId of component.nodeIds) adjacency.set(nodeId, []);
+  }
+  for (const edge of edges) {
+    if (edge.source === edge.target) continue;
+    adjacency.get(edge.source)?.push(edge.target);
+    adjacency.get(edge.target)?.push(edge.source);
+  }
+  for (const neighbors of adjacency.values()) neighbors.sort(compareIds);
+
+  const positions = new Map<string, LayoutPoint>();
+  const directions = new Map<string, LayoutPoint>();
+  const step = ENTITY_COLLISION_RADIUS * 2.16;
+  for (const component of components) {
+    if (component.nodeIds.length < 2) continue;
+    const rootId = component.nodeIds[0];
+    const anchor = anchors.get(component.id) ?? { x: 0, y: 0 };
+    positions.set(rootId, { ...anchor });
+    directions.set(
+      rootId,
+      stableUnitVector(`${seed}:${component.id}:${rootId}:walk-root`),
+    );
+    const pending = [rootId];
+    for (let cursor = 0; cursor < pending.length; cursor += 1) {
+      const parentId = pending[cursor];
+      const parent = positions.get(parentId)!;
+      const neighbors = adjacency.get(parentId) ?? [];
+      for (let neighborIndex = 0; neighborIndex < neighbors.length; neighborIndex += 1) {
+        const childId = neighbors[neighborIndex];
+        if (positions.has(childId)) continue;
+        const parentDirection = directions.get(parentId) ?? { x: 1, y: 0 };
+        const turn = (
+          hashString(`${seed}:${component.id}:${parentId}:${childId}:turn`) /
+            UINT32_RANGE -
+          0.5
+        ) * 0.7;
+        const direction = {
+          x: parentDirection.x * Math.cos(turn) -
+            parentDirection.y * Math.sin(turn),
+          y: parentDirection.x * Math.sin(turn) +
+            parentDirection.y * Math.cos(turn),
+        };
+        directions.set(childId, direction);
+        positions.set(childId, {
+          x: parent.x + direction.x * step,
+          y: parent.y + direction.y * step,
+        });
+        pending.push(childId);
+      }
+    }
+  }
+  return positions;
 }
 
 function stableUnitVector(key: string): LayoutPoint {
@@ -912,6 +972,14 @@ export function computeNebulaLayout(
     viewport,
     COMPONENT_ANCHOR_GAP,
   );
+  const connectedPositions = packedOverview
+    ? seededConnectedPositions(
+      components,
+      edges,
+      componentAnchors,
+      seed,
+    )
+    : new Map<string, LayoutPoint>();
   const nodes: SimulationEntity[] = entities.map((entity) => {
     const componentId = componentByNode.get(entity.id)!;
     const componentAnchor = componentAnchors.get(componentId) ?? { x: 0, y: 0 };
@@ -919,12 +987,13 @@ export function computeNebulaLayout(
       ENTITY_COLLISION_RADIUS * 1.1,
       20 + Math.sqrt(componentSizes.get(componentId) ?? 1) * 8,
     );
+    const connectedPosition = connectedPositions.get(entity.id);
     const direction = stableUnitVector(`${seed}:${entity.id}:initial`);
     return {
       id: entity.id,
       tableId: entity.table_id,
-      x: componentAnchor.x + direction.x * scatterRadius,
-      y: componentAnchor.y + direction.y * scatterRadius,
+      x: connectedPosition?.x ?? componentAnchor.x + direction.x * scatterRadius,
+      y: connectedPosition?.y ?? componentAnchor.y + direction.y * scatterRadius,
     };
   });
   const linkedNodeIds = new Set(
@@ -937,29 +1006,11 @@ export function computeNebulaLayout(
     representedTables.add(node.tableId);
     representativeNodeIds.add(node.id);
   }
-  const packedSimulationNodeIds = new Set(representativeNodeIds);
-  if (packedOverview) {
-    for (const strong of [true, false]) {
-      for (const edge of edges) {
-        if ((edge.weight >= 1) !== strong) continue;
-        const additionalNodes = Number(
-          !packedSimulationNodeIds.has(edge.source),
-        ) + Number(!packedSimulationNodeIds.has(edge.target));
-        if (
-          packedSimulationNodeIds.size + additionalNodes >
-            MAX_PACKED_SIMULATION_NODES
-        ) {
-          continue;
-        }
-        packedSimulationNodeIds.add(edge.source);
-        packedSimulationNodeIds.add(edge.target);
-      }
-    }
-  }
   const simulationNodes = largeGraph
     ? nodes.filter((node) =>
       packedOverview
-        ? packedSimulationNodeIds.has(node.id)
+        ? (componentSizes.get(componentByNode.get(node.id)!) ?? 0) > 1 ||
+          representativeNodeIds.has(node.id)
         : linkedNodeIds.has(node.id) || representativeNodeIds.has(node.id)
     )
     : nodes;

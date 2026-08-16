@@ -1188,6 +1188,81 @@ describe("GraphCanvas", () => {
     }
   });
 
+  it("drops a selected relation from focus when the rebuilt scene filters it out", async () => {
+    vi.stubEnv("MODE", "development");
+    const callbacks = new Map<number, FrameRequestCallback>();
+    const drawnAlphas: number[] = [];
+    const context = canvasContext();
+    let nextFrame = 0;
+    const request = vi.fn((callback: FrameRequestCallback) => {
+      const id = ++nextFrame;
+      callbacks.set(id, callback);
+      return id;
+    });
+    const cancel = vi.fn((id: number) => callbacks.delete(id));
+    vi.stubGlobal("requestAnimationFrame", request);
+    vi.stubGlobal("cancelAnimationFrame", cancel);
+    vi.mocked(context.fill).mockImplementation(() => {
+      drawnAlphas.push(context.globalAlpha);
+    });
+    vi.mocked(context.stroke).mockImplementation(() => {
+      drawnAlphas.push(context.globalAlpha);
+    });
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(context);
+    const confidenceFilteredGraph: SemanticGraphData = {
+      ...graph,
+      table_edges: graph.table_edges.map((edge) => ({
+        ...edge,
+        strong_count: 0,
+        weak_count: 1,
+      })),
+      entity_edges: graph.entity_edges.map((edge) => ({
+        ...edge,
+        relations: edge.relations.map((relation) => ({
+          ...relation,
+          strength: "weak" as const,
+        })),
+      })),
+    };
+
+    try {
+      act(() => setGraph(confidenceFilteredGraph));
+      render(<GraphCanvas />);
+      await waitFor(() => expect(callbacks.size).toBe(1));
+      const [initialFrame, initialDraw] = [...callbacks.entries()][0];
+      callbacks.delete(initialFrame);
+      await act(async () => {
+        initialDraw(0);
+        await Promise.resolve();
+      });
+      await ready();
+
+      act(() => useAnalysisStore.getState().selectEntityEdge("a--invoice"));
+      await waitFor(() => expect(callbacks.size).toBe(2));
+      const selectedMotionFrame = Math.min(...callbacks.keys());
+
+      drawnAlphas.length = 0;
+      act(() => useAnalysisStore.getState().setConfidenceThreshold(1));
+      await waitFor(() => expect(cancel).toHaveBeenCalledWith(selectedMotionFrame));
+      await act(async () => {
+        for (const [filteredFrame, filteredDraw] of [...callbacks.entries()]) {
+          callbacks.delete(filteredFrame);
+          filteredDraw(32);
+        }
+        await Promise.resolve();
+      });
+      await ready();
+
+      expect(callbacks.size).toBe(0);
+      expect(useAnalysisStore.getState().selectedEntityEdgeId).toBe("a--invoice");
+      expect(drawnAlphas).not.toContain(0.07);
+      expect(drawnAlphas).not.toContain(0.028);
+      expect(drawnAlphas).toContain(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("uses DPR backing dimensions and coalesces rendering into one animation frame", async () => {
     vi.stubGlobal("devicePixelRatio", 2);
     const request = vi.fn((callback: FrameRequestCallback) => {

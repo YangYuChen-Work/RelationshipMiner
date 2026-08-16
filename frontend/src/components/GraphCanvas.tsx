@@ -192,6 +192,56 @@ function reducedMotionRequested(): boolean {
   );
 }
 
+function renderableFocus(
+  focus: GraphFocus,
+  selectedEntityEdgeId: string | null,
+  selectedTableEdgeId: string | null,
+  scene: RenderScene | null,
+  sceneGeneration: number,
+): {
+  focus: GraphFocus;
+  selectedEntityEdgeId: string | null;
+  selectedTableEdgeId: string | null;
+} {
+  if (!scene || sceneGeneration === 0) {
+    return {
+      focus: { activeNodeId: null, nodeIds: new Set(), edgeIds: new Set() },
+      selectedEntityEdgeId: null,
+      selectedTableEdgeId: null,
+    };
+  }
+
+  const entityNodeIds = new Set(scene.entityDots.map((node) => node.id));
+  const entityEdgeIds = new Set(scene.entityEdges.map((edge) => edge.id));
+  const tableEdgeIds = new Set(scene.tableEdges.map((edge) => edge.id));
+  const activeNodeId = focus.activeNodeId !== null &&
+      entityNodeIds.has(focus.activeNodeId)
+    ? focus.activeNodeId
+    : null;
+
+  return {
+    focus: activeNodeId === null
+      ? { activeNodeId: null, nodeIds: new Set(), edgeIds: new Set() }
+      : {
+        activeNodeId,
+        nodeIds: new Set(
+          [...focus.nodeIds].filter((nodeId) => entityNodeIds.has(nodeId)),
+        ),
+        edgeIds: new Set(
+          [...focus.edgeIds].filter((edgeId) => entityEdgeIds.has(edgeId)),
+        ),
+      },
+    selectedEntityEdgeId: selectedEntityEdgeId !== null &&
+        entityEdgeIds.has(selectedEntityEdgeId)
+      ? selectedEntityEdgeId
+      : null,
+    selectedTableEdgeId: selectedTableEdgeId !== null &&
+        tableEdgeIds.has(selectedTableEdgeId)
+      ? selectedTableEdgeId
+      : null,
+  };
+}
+
 export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -313,13 +363,28 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     () => resolveGraphFocus(focusIndex, selectedNodeId, hoveredNodeId),
     [focusIndex, hoveredNodeId, selectedNodeId],
   );
-  focusRef.current = graphFocus;
-  selectedEntityEdgeRef.current = selectedEntityEdgeId;
-  selectedTableEdgeRef.current = selectedTableEdgeId;
+  const effectiveFocus = useMemo(
+    () => renderableFocus(
+      graphFocus,
+      selectedEntityEdgeId,
+      selectedTableEdgeId,
+      sceneRef.current,
+      sceneGeneration,
+    ),
+    [
+      graphFocus,
+      sceneGeneration,
+      selectedEntityEdgeId,
+      selectedTableEdgeId,
+    ],
+  );
+  focusRef.current = effectiveFocus.focus;
+  selectedEntityEdgeRef.current = effectiveFocus.selectedEntityEdgeId;
+  selectedTableEdgeRef.current = effectiveFocus.selectedTableEdgeId;
   const hasFocusedMotion =
-    graphFocus.activeNodeId !== null ||
-    selectedEntityEdgeId !== null ||
-    selectedTableEdgeId !== null;
+    effectiveFocus.focus.activeNodeId !== null ||
+    effectiveFocus.selectedEntityEdgeId !== null ||
+    effectiveFocus.selectedTableEdgeId !== null;
   const searchableEntities = useMemo(
     () => (projectedGraph?.entity_nodes ?? []).flatMap((entity) => {
       const presentation = businessPresentations.get(entity.id);
@@ -1157,13 +1222,13 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     currentInputs.relayoutRequest === relayoutRequest &&
     sameTransform(currentInputs.transform, transformRef.current);
   const isFocused = Boolean(
-    graphFocus.activeNodeId ||
-    selectedEntityEdgeId ||
-    selectedTableEdgeId,
+    effectiveFocus.focus.activeNodeId ||
+    effectiveFocus.selectedEntityEdgeId ||
+    effectiveFocus.selectedTableEdgeId,
   );
-  const activeFocusLabel = graphFocus.activeNodeId
-    ? businessPresentations.get(graphFocus.activeNodeId)?.primary
-    : selectedEntityEdgeId || selectedTableEdgeId
+  const activeFocusLabel = effectiveFocus.focus.activeNodeId
+    ? businessPresentations.get(effectiveFocus.focus.activeNodeId)?.primary
+    : effectiveFocus.selectedEntityEdgeId || effectiveFocus.selectedTableEdgeId
       ? "当前关系"
       : null;
   return (
