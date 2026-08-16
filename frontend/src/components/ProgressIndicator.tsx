@@ -42,16 +42,18 @@ export default function ProgressIndicator() {
   const knownPhaseLabel = PHASE_LABELS[currentPhase];
   const phaseLabel = knownPhaseLabel || "正在处理业务对象关系";
   const technicalPhase = currentPhase && !knownPhaseLabel ? currentPhase : null;
+  const businessCopy = knownPhaseLabel ?? (progressMessage || "正在处理业务对象关系");
   const clampedProgress = Math.min(Math.max(progressValue, 0), 1);
   const percent = Math.round(clampedProgress * 100);
-  const currentStageIndex = Math.max(
-    ANALYSIS_STAGES.findIndex((stage) => stage.key === currentPhase),
-    0,
+  const currentStageIndex = ANALYSIS_STAGES.findIndex(
+    (stage) => stage.key === currentPhase,
   );
   const stages = ANALYSIS_STAGES.map((stage, index) => ({
     ...stage,
     state:
-      index < currentStageIndex
+      currentStageIndex === -1
+        ? "pending"
+        : index < currentStageIndex
         ? "complete"
         : index === currentStageIndex
           ? "current"
@@ -102,7 +104,7 @@ export default function ProgressIndicator() {
 
       {/* 阶段描述 */}
       <p className="text-sm text-slate-600" aria-live="polite">
-        正在生成业务关系图
+        {businessCopy}
       </p>
 
       <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

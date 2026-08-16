@@ -78,4 +78,26 @@ describe("ProgressIndicator", () => {
     expect(screen.getAllByText("等待数据").length).toBeGreaterThan(0);
     expect(screen.queryByText("0 个对象")).not.toBeInTheDocument();
   });
+
+  it("keeps an unknown backend phase neutral instead of marking the first stage current", () => {
+    useAnalysisStore.setState({
+      currentPhase: "retrieval",
+      progressMessage: "正在提取关系数据",
+      progressValue: 0.34,
+      selectedTables: new Map(),
+    });
+
+    render(<ProgressIndicator />);
+
+    for (const item of screen.getAllByRole("listitem")) {
+      expect(item).toHaveAttribute("data-stage-state", "pending");
+    }
+
+    const businessCopy = screen
+      .getAllByText("正在提取关系数据")
+      .find((node) => !node.closest("details"));
+
+    expect(businessCopy).toBeDefined();
+    expect(businessCopy?.closest("details")).toBeNull();
+  });
 });
