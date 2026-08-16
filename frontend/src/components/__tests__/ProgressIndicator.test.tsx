@@ -74,7 +74,7 @@ describe("ProgressIndicator", () => {
     useAnalysisStore.setState({
       diagnostics: null,
       currentPhase: "schema",
-      progressMessage: null,
+      progressMessage: "",
       progressValue: 0.08,
       selectedTables: new Map(),
     });
