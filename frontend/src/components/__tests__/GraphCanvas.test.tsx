@@ -947,10 +947,8 @@ describe("GraphCanvas", () => {
     }).tableNodes.find((node) => node.id === "accounts")!;
     const [x, y] = focused.apply([accounts.x, accounts.y]);
     expect(focused).not.toEqual(displaced);
-    expect(x).toBeGreaterThanOrEqual(0);
-    expect(x).toBeLessThanOrEqual(960);
-    expect(y).toBeGreaterThanOrEqual(0);
-    expect(y).toBeLessThanOrEqual(600);
+    expect(x).toBeCloseTo(480, 5);
+    expect(y).toBeCloseTo(300, 5);
     expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
     expect(useAnalysisStore.getState().selectedTableEdgeId).toBeNull();
   });
@@ -1279,8 +1277,8 @@ describe("GraphCanvas", () => {
 
     drawnAlphas.length = 0;
     act(() => useAnalysisStore.getState().setHoveredNode("entity-000"));
-    expect(drawnAlphas).toContain(0.16);
-    expect(drawnAlphas).toContain(0.06);
+    expect(drawnAlphas).toContain(0.07);
+    expect(drawnAlphas).toContain(0.028);
     expect(worker.messages).toHaveLength(1);
 
     drawnAlphas.length = 0;
@@ -1288,8 +1286,8 @@ describe("GraphCanvas", () => {
       useAnalysisStore.getState().setHoveredNode(null);
       useAnalysisStore.getState().setSelectedNode("entity-000");
     });
-    expect(drawnAlphas).toContain(0.16);
-    expect(drawnAlphas).toContain(0.06);
+    expect(drawnAlphas).toContain(0.07);
+    expect(drawnAlphas).toContain(0.028);
     expect(worker.messages).toHaveLength(1);
   }, 15_000);
 
@@ -1353,12 +1351,13 @@ describe("GraphCanvas", () => {
 
     drawnAlphas.length = 0;
     fireEvent.pointerMove(canvas, { clientX: point[0], clientY: point[1] });
-    expect(drawnAlphas).toContain(0.16);
-    expect(drawnAlphas).toContain(0.06);
+    expect(drawnAlphas).not.toContain(0.07);
+    expect(drawnAlphas).toContain(0.028);
+    expect(useAnalysisStore.getState().hoveredNodeId).toBe("a");
 
     drawnAlphas.length = 0;
     fireEvent.pointerLeave(canvas);
-    expect(drawnAlphas).not.toContain(0.16);
+    expect(drawnAlphas).not.toContain(0.07);
     expect(drawnAlphas).toContain(1);
     expect(useAnalysisStore.getState().hoveredNodeId).toBeNull();
   });
