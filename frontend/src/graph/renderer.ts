@@ -10,19 +10,20 @@ import type {
   ScreenPoint,
 } from "./scene";
 
-const GRID_SIZE = 24;
+const GRID_SIZE = 28;
 const MAX_ENTITY_LABELS = 500;
 const LABEL_VIEWPORT_PADDING = 24;
-const ENTITY_SELECTED = "#2dd4bf";
-const GRAPH_BACKGROUND = "#f3f5f7";
-const GRAPH_GRID = "#e4e8ed";
-const ENTITY_EDGE = "#aeb6c1";
-const TABLE_EDGE = "#8d98a7";
-const PRIMARY_TEXT = "#252b35";
-const SECONDARY_TEXT = "#667085";
-const NODE_OUTLINE = "#ffffff";
-const UNRELATED_NODE_OPACITY = 0.16;
-const UNRELATED_EDGE_OPACITY = 0.06;
+const ENTITY_SELECTED = "#5edbd1";
+const GRAPH_BACKGROUND = "#0e151d";
+const GRAPH_GRID = "#1a2a34";
+const ENTITY_EDGE = "#4f6872";
+const TABLE_EDGE = "#6f8a8e";
+const PRIMARY_TEXT = "#f4f0e8";
+const SECONDARY_TEXT = "#8d9aa0";
+const NODE_OUTLINE = "#b8ded7";
+const ACTIVE_NODE_OUTLINE = "#c7a675";
+const UNRELATED_NODE_OPACITY = 0.07;
+const UNRELATED_EDGE_OPACITY = 0.028;
 const FOCUS_EDGE_WIDTH = 2.2;
 const EMPTY_EDGE_IDS: ReadonlySet<string> = new Set();
 
@@ -109,6 +110,12 @@ function focusedDrawState(
       focusedTableNodeIds.add(edge.targetId);
     }
     activeNodeId = null;
+  }
+
+  const entityById = new Map(scene.entityDots.map((node) => [node.id, node]));
+  for (const nodeId of focusedNodeIds) {
+    const entity = entityById.get(nodeId);
+    if (entity) focusedTableNodeIds.add(entity.tableId);
   }
 
   return {
@@ -251,7 +258,7 @@ function drawEntityNode(
   );
   context.fillStyle = entity.color ?? "#7dd3fc";
   context.fill();
-  context.strokeStyle = NODE_OUTLINE;
+  context.strokeStyle = active ? ACTIVE_NODE_OUTLINE : NODE_OUTLINE;
   context.lineWidth = active ? 3 : 1.5;
   context.stroke();
 }
@@ -288,7 +295,7 @@ function drawTableNode(
   context.lineWidth = 1.5;
   context.stroke();
   context.fillStyle = PRIMARY_TEXT;
-  context.font = "600 12px system-ui, sans-serif";
+  context.font = "650 12px Manrope, Noto Sans SC, sans-serif";
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.fillText(
@@ -335,13 +342,13 @@ function drawEntityLabel(
 ): void {
   const labelTop = label.screen.y + label.screenRadius + 6;
   context.fillStyle = PRIMARY_TEXT;
-  context.font = "600 11px system-ui, sans-serif";
+  context.font = "650 11px Manrope, Noto Sans SC, sans-serif";
   context.textAlign = "center";
   context.textBaseline = "top";
   context.fillText(label.primary, label.screen.x, labelTop);
   if (label.secondary) {
     context.fillStyle = SECONDARY_TEXT;
-    context.font = "9px system-ui, sans-serif";
+    context.font = "9px Manrope, Noto Sans SC, sans-serif";
     context.textBaseline = "top";
     context.fillText(label.secondary, label.screen.x, labelTop + 14);
   }
@@ -372,11 +379,11 @@ function drawEdgeLabel(
   label: SceneEdgeLabel,
   focused: boolean,
 ): void {
-  context.font = "600 10px system-ui, sans-serif";
+  context.font = "600 10px Manrope, Noto Sans SC, sans-serif";
   context.textAlign = "start";
   context.textBaseline = "middle";
   if (focused) {
-    context.fillStyle = "rgba(255, 255, 255, 0.94)";
+    context.fillStyle = "rgba(18, 28, 37, 0.94)";
     context.fillRect(
       label.screen.x - label.maxWidth / 2 - 5,
       label.screen.y - 10,
@@ -384,7 +391,9 @@ function drawEdgeLabel(
       20,
     );
   }
-  context.fillStyle = label.lineStyle === "solid" ? PRIMARY_TEXT : SECONDARY_TEXT;
+  context.fillStyle = focused
+    ? ENTITY_SELECTED
+    : label.lineStyle === "solid" ? PRIMARY_TEXT : SECONDARY_TEXT;
   context.fillText(
     label.text,
     label.screen.x - label.maxWidth / 2,

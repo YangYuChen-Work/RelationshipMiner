@@ -93,18 +93,24 @@ interface DrawRecord {
   x?: number;
   y?: number;
   arc?: { x: number; y: number };
+  pathKind?: "nodeArc" | "backdropArc" | "path";
 }
 
 function recordingContext() {
   const records: DrawRecord[] = [];
   const nodeFills: { x: number; y: number; alpha: number }[] = [];
   let lastArc: { x: number; y: number } | null = null;
+  let lastPathKind: DrawRecord["pathKind"] = "path";
   const context = {
-    arc: vi.fn((x: number, y: number) => {
+    arc: vi.fn((x: number, y: number, radius: number, startAngle: number, endAngle: number) => {
       lastArc = { x, y };
+      lastPathKind = startAngle === 0 && endAngle === Math.PI * 2 && radius > 40
+        ? "backdropArc"
+        : "nodeArc";
     }),
     beginPath: vi.fn(() => {
       lastArc = null;
+      lastPathKind = "path";
     }),
     clearRect: vi.fn(),
     closePath: vi.fn(),
@@ -115,6 +121,7 @@ function recordingContext() {
         lineWidth: this.lineWidth,
         fillStyle: this.fillStyle,
         arc: lastArc ?? undefined,
+        pathKind: lastPathKind,
       });
       if (lastArc) {
         nodeFills.push({ ...lastArc, alpha: this.globalAlpha });
@@ -160,6 +167,7 @@ function recordingContext() {
         lineWidth: this.lineWidth,
         strokeStyle: this.strokeStyle,
         arc: lastArc ?? undefined,
+        pathKind: lastPathKind,
       });
     }),
     fillStyle: "",
@@ -187,27 +195,38 @@ function options(focusNodeId: string | null = null) {
 }
 
 describe("drawGraphScene", () => {
-  it("paints the approved light canvas and low-contrast relationship colors", () => {
+  it("paints the approved graphite canvas and restrained relationship colors", () => {
     const { context, records } = recordingContext();
 
     drawGraphScene(context, scene(), options());
 
     expect(records).toContainEqual(expect.objectContaining({
       kind: "fillRect",
-      fillStyle: "#f3f5f7",
+      fillStyle: "#0e151d",
     }));
     expect(records).toContainEqual(expect.objectContaining({
       kind: "stroke",
-      strokeStyle: "#e4e8ed",
+      strokeStyle: "#1a2a34",
     }));
     expect(records).toContainEqual(expect.objectContaining({
       kind: "stroke",
-      strokeStyle: "#aeb6c1",
+      strokeStyle: "#4f6872",
     }));
     expect(records).toContainEqual(expect.objectContaining({
       kind: "stroke",
-      strokeStyle: "#8d98a7",
+      strokeStyle: "#6f8a8e",
     }));
+  });
+
+  it("keeps the overview canvas free of orbit circles and radial spokes", () => {
+    const { context, records } = recordingContext();
+
+    drawGraphScene(context, scene(0.2), options());
+
+    expect(records.filter((record) =>
+      record.kind === "stroke" && record.pathKind === "backdropArc"
+    )).toHaveLength(0);
+    expect(context.moveTo).not.toHaveBeenCalledWith(480, 300);
   });
 
   it("keeps entity nodes solid and gives every node a white outline", () => {
@@ -224,7 +243,7 @@ describe("drawGraphScene", () => {
       }));
       expect(records).toContainEqual(expect.objectContaining({
         kind: "stroke",
-        strokeStyle: "#ffffff",
+        strokeStyle: "#b8ded7",
         lineWidth: 1.5,
         arc: node.screen,
       }));
@@ -241,7 +260,7 @@ describe("drawGraphScene", () => {
     expect(records).toContainEqual(expect.objectContaining({
       kind: "fillText",
       text: "Alpha",
-      fillStyle: "#252b35",
+      fillStyle: "#f4f0e8",
       textAlign: "center",
       textBaseline: "top",
       x: alpha.screen.x,
@@ -263,7 +282,7 @@ describe("drawGraphScene", () => {
     }));
     expect(records).toContainEqual(expect.objectContaining({
       kind: "stroke",
-      strokeStyle: "#ffffff",
+      strokeStyle: "#c7a675",
       lineWidth: 3,
       arc: alpha.screen,
     }));
@@ -290,17 +309,17 @@ describe("drawGraphScene", () => {
     drawGraphScene(context, scene(), options("a"));
 
     expect(records.some((record) =>
-      record.kind === "fill" && record.alpha === 0.16
+      record.kind === "fill" && record.alpha === 0.07
     )).toBe(true);
     const unrelatedEdgeIndex = records.findIndex((record) =>
-      record.kind === "stroke" && record.alpha === 0.06
+      record.kind === "stroke" && record.alpha === 0.028
     );
     const relatedEdgeIndex = records.findIndex((record) =>
       record.kind === "stroke" && record.lineWidth === 2.2
     );
     expect(unrelatedEdgeIndex).toBeGreaterThanOrEqual(0);
     expect(relatedEdgeIndex).toBeGreaterThan(unrelatedEdgeIndex);
-    expect(records[relatedEdgeIndex].alpha).toBeGreaterThan(0.06);
+    expect(records[relatedEdgeIndex].alpha).toBeGreaterThan(0.028);
   });
 
   it("draws normal relationships as quadratic curves and directional detail as arrowheads", () => {
