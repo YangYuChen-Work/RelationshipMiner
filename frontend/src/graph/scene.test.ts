@@ -226,6 +226,8 @@ describe("buildScene", () => {
       .toMatchObject({ primary: "Order 1", secondary: "" });
     expect(detail.entityLabels.find((label) => label.nodeId === "user-1"))
       .toMatchObject({ primary: "Ada", secondary: "" });
+    expect(work.entityLabels.find((label) => label.nodeId === "order-1"))
+      .toMatchObject({ primary: "Order 1", secondary: "" });
   });
 
   it("rejects auxiliary values as primary names and resolves mixed directions as undirected", () => {

@@ -183,6 +183,23 @@ describe("computeNebulaLayout", () => {
     expect(distance).toBeLessThan(220);
   });
 
+  it("lets linked table groups settle closer than unrelated table groups", () => {
+    const graph = layoutGraphFixture(4, 8, [
+      { id: "link-a", source: "entity-0", target: "entity-3", weight: 1 },
+      { id: "link-b", source: "entity-1", target: "entity-2", weight: 1 },
+    ]);
+    const layout = computeNebulaLayout(graph, { width: 1_280, height: 720 });
+    const tables = new Map(layout.tableNodes.map((node) => [node.id, node]));
+    const tableDistance = (leftTable: number, rightTable: number) =>
+      pointDistance(
+        tables.get(`table-${leftTable}`)!,
+        tables.get(`table-${rightTable}`)!,
+      );
+
+    expect((tableDistance(0, 3) + tableDistance(1, 2)) / 2)
+      .toBeLessThan((tableDistance(0, 1) + tableDistance(2, 3)) / 2);
+  });
+
   it("keeps each entity cluster bounded around its owning table anchor", () => {
     const layout = computeNebulaLayout(
       compactLayoutGraph(makeNebulaGraph({ entityCount: 200 })),
