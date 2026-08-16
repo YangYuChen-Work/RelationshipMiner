@@ -95,6 +95,9 @@ const COMPONENT_BOUNDS_PADDING = ENTITY_COLLISION_RADIUS;
 // Compose the observatory view before the graph reaches four digits. A
 // rectangular table grid becomes a set of dense islands much earlier.
 const LARGE_GRAPH_THRESHOLD = 120;
+const PACKED_OVERVIEW_THRESHOLD = 1_000;
+const MAX_PACKED_SIMULATION_NODES = 512;
+const PACKED_SIMULATION_TICKS = 120;
 
 interface SimulationEntity extends SimulationNodeDatum {
   id: string;
@@ -458,6 +461,46 @@ function boundedTableScatterSpan(
     tableScatterSpan(memberCount),
     Math.max(ENTITY_COLLISION_RADIUS * 5, laneGap * 0.62),
   );
+}
+
+function packTableOwnedStaggeredLattice(
+  nodes: SimulationEntity[],
+  tableAnchors: ReadonlyMap<string, LayoutPoint>,
+) {
+  const membersByTable = new Map<string, SimulationEntity[]>();
+  for (const node of nodes) {
+    const members = membersByTable.get(node.tableId);
+    if (members) members.push(node);
+    else membersByTable.set(node.tableId, [node]);
+  }
+
+  const columnGap = ENTITY_COLLISION_RADIUS * 2;
+  const rowGap = columnGap * Math.sqrt(3) / 2;
+  for (const [tableId, members] of membersByTable) {
+    const anchor = tableAnchors.get(tableId)!;
+    members.sort((left, right) =>
+      left.y - right.y || left.x - right.x || compareIds(left.id, right.id)
+    );
+    const columns = Math.max(1, Math.ceil(Math.sqrt(members.length)));
+    let centroidX = 0;
+    let centroidY = 0;
+    for (let index = 0; index < members.length; index += 1) {
+      const row = Math.floor(index / columns);
+      const column = index % columns;
+      const x = column * columnGap + (row % 2) * columnGap / 2;
+      const y = row * rowGap;
+      members[index].x = x;
+      members[index].y = y;
+      centroidX += x;
+      centroidY += y;
+    }
+    centroidX /= members.length;
+    centroidY /= members.length;
+    for (const member of members) {
+      member.x += anchor.x - centroidX;
+      member.y += anchor.y - centroidY;
+    }
+  }
 }
 
 function relaxPointCollisions<T extends LayoutPoint & { id: string }>(
@@ -1033,6 +1076,7 @@ export function computeNebulaLayout(
   );
   const countsByTable = tableMemberCounts(entities);
   const largeGraph = entities.length > LARGE_GRAPH_THRESHOLD;
+  const packedOverview = entities.length > PACKED_OVERVIEW_THRESHOLD;
   const tableAnchorGap = largeGraph
     ? scalableTableAnchorGap(countsByTable)
     : TABLE_ANCHOR_GAP;
@@ -1044,10 +1088,11 @@ export function computeNebulaLayout(
     tableAnchorGap,
   );
   const componentAnchors = seededRectangularAnchors(
-    (largeGraph
+    (packedOverview
+      ? []
+      : largeGraph
       ? components.filter((component) => component.nodeIds.length > 1)
-      : components
-    ).map((component) => component.id),
+      : components).map((component) => component.id),
     seed ^ 0xc801_3ea4,
     viewport,
     COMPONENT_ANCHOR_GAP,
@@ -1087,12 +1132,38 @@ export function computeNebulaLayout(
     representedTables.add(node.tableId);
     representativeNodeIds.add(node.id);
   }
+  const packedSimulationNodeIds = new Set(representativeNodeIds);
+  if (packedOverview) {
+    for (const strong of [true, false]) {
+      for (const edge of edges) {
+        if ((edge.weight >= 1) !== strong) continue;
+        const additionalNodes = Number(
+          !packedSimulationNodeIds.has(edge.source),
+        ) + Number(!packedSimulationNodeIds.has(edge.target));
+        if (
+          packedSimulationNodeIds.size + additionalNodes >
+            MAX_PACKED_SIMULATION_NODES
+        ) {
+          continue;
+        }
+        packedSimulationNodeIds.add(edge.source);
+        packedSimulationNodeIds.add(edge.target);
+      }
+    }
+  }
   const simulationNodes = largeGraph
     ? nodes.filter((node) =>
-      linkedNodeIds.has(node.id) || representativeNodeIds.has(node.id)
+      packedOverview
+        ? packedSimulationNodeIds.has(node.id)
+        : linkedNodeIds.has(node.id) || representativeNodeIds.has(node.id)
     )
     : nodes;
-  const links: SimulationEdge[] = edges.map((edge) => ({ ...edge }));
+  const simulationNodeIds = new Set(simulationNodes.map((node) => node.id));
+  const links: SimulationEdge[] = edges
+    .filter((edge) =>
+      simulationNodeIds.has(edge.source) && simulationNodeIds.has(edge.target)
+    )
+    .map((edge) => ({ ...edge }));
   const random = randomFromSeed(seed);
   const charge = forceManyBody<SimulationEntity>().strength(
     largeGraph ? -165 : -115,
@@ -1144,14 +1215,19 @@ export function computeNebulaLayout(
     )
     .stop();
 
-  for (let tick = 0; tick < 360; tick += 1) simulation.tick();
+  const simulationTicks = packedOverview ? PACKED_SIMULATION_TICKS : 360;
+  for (let tick = 0; tick < simulationTicks; tick += 1) simulation.tick();
   simulation.stop();
-  relaxPointCollisions(
-    nodes,
-    ENTITY_COLLISION_RADIUS * 2,
-    largeGraph ? 144 : 12,
-  );
-  separateComponentBounds(components, nodes);
+  if (packedOverview) {
+    packTableOwnedStaggeredLattice(nodes, tableAnchors);
+  } else {
+    relaxPointCollisions(
+      nodes,
+      ENTITY_COLLISION_RADIUS * 2,
+      largeGraph ? 144 : 12,
+    );
+    separateComponentBounds(components, nodes);
+  }
   return buildLayout(graph, tables, edges, nodes, tableAnchors, viewport);
 }
 

@@ -226,6 +226,10 @@ describe("7000-entity graph scaling", () => {
     expect(layout.entityNodes).toHaveLength(ENTITY_COUNT);
     expect(layout.tableNodes.length).toBeLessThanOrEqual(10);
     expect(scene.entityLabels).toHaveLength(0);
+    const tableRows = layout.tableNodes.map((table) => table.y);
+    expect(Math.max(...tableRows) - Math.min(...tableRows)).toBeLessThan(
+      0.001,
+    );
     expect(
       closePairStats(
         layout.entityNodes,
