@@ -122,6 +122,50 @@ function getSize(element: HTMLElement) {
   };
 }
 
+function mix(left: number, right: number, progress: number): number {
+  return left + (right - left) * progress;
+}
+
+function interpolateLayout(
+  from: GraphLayout,
+  to: GraphLayout,
+  progress: number,
+): GraphLayout {
+  const fromTables = new Map(from.tableNodes.map((node) => [node.id, node]));
+  const fromEntities = new Map(from.entityNodes.map((node) => [node.id, node]));
+  const fromTableEdges = new Map(from.tableEdges.map((edge) => [edge.id, edge]));
+  const fromEntityEdges = new Map(from.entityEdges.map((edge) => [edge.id, edge]));
+  const point = (left: { x: number; y: number } | undefined, right: { x: number; y: number }) => ({
+    x: mix(left?.x ?? right.x, right.x, progress),
+    y: mix(left?.y ?? right.y, right.y, progress),
+  });
+  return {
+    tableNodes: to.tableNodes.map((node) => ({
+      ...node,
+      ...point(fromTables.get(node.id), node),
+    })),
+    entityNodes: to.entityNodes.map((node) => ({
+      ...node,
+      ...point(fromEntities.get(node.id), node),
+    })),
+    tableEdges: to.tableEdges.map((edge) => ({
+      ...edge,
+      from: point(fromTableEdges.get(edge.id)?.from, edge.from),
+      to: point(fromTableEdges.get(edge.id)?.to, edge.to),
+    })),
+    entityEdges: to.entityEdges.map((edge) => ({
+      ...edge,
+      from: point(fromEntityEdges.get(edge.id)?.from, edge.from),
+      to: point(fromEntityEdges.get(edge.id)?.to, edge.to),
+    })),
+  };
+}
+
+function layoutEase(progress: number): number {
+  const clamped = Math.min(1, Math.max(0, progress));
+  return 1 - Math.pow(1 - clamped, 3);
+}
+
 function graphSummary(
   entityCount: number,
   tableCount: number,
@@ -182,6 +226,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     world: { x: number; y: number };
   } | null>(null);
   const dragPreviewFrameRef = useRef<number | null>(null);
+  const layoutTransitionFrameRef = useRef<number | null>(null);
   const dragMovedRef = useRef(false);
   const suppressClickRef = useRef(false);
   const pinRelayoutRequestRef = useRef(0);
@@ -196,6 +241,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchResultId, setActiveSearchResultId] = useState<string | null>(null);
+  const [layoutPending, setLayoutPending] = useState(false);
   const [sceneGeneration, setSceneGeneration] = useState(0);
   const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
 
@@ -243,6 +289,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   const setHoveredNode = useAnalysisStore((state) => state.setHoveredNode);
   const setSelectedNode = useAnalysisStore((state) => state.setSelectedNode);
   const requestNodeFocus = useAnalysisStore((state) => state.requestNodeFocus);
+  const requestFitView = useAnalysisStore((state) => state.requestFitView);
   const selectEntityEdge = useAnalysisStore((state) => state.selectEntityEdge);
   const selectTableEdge = useAnalysisStore((state) => state.selectTableEdge);
   const focusIndex = useMemo(
@@ -390,6 +437,48 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     invalidate(generation);
   }, [businessPresentations, invalidate, tablePresentations]);
 
+  const animateLayout = useCallback((
+    sourceGraph: NonNullable<typeof graph>,
+    fromLayout: GraphLayout,
+    toLayout: GraphLayout,
+  ) => {
+    if (layoutTransitionFrameRef.current !== null) {
+      cancelAnimationFrame(layoutTransitionFrameRef.current);
+      layoutTransitionFrameRef.current = null;
+    }
+    const reducedMotion = import.meta.env.MODE === "test" || (
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
+    );
+    if (reducedMotion) {
+      sceneSourceRef.current = { graph: sourceGraph, layout: toLayout };
+      commitScene(sourceGraph, toLayout);
+      setLayout(toLayout);
+      setLayoutPending(false);
+      return;
+    }
+    const startedAt = performance.now();
+    const duration = 460;
+    const frame = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const nextLayout = interpolateLayout(
+        fromLayout,
+        toLayout,
+        layoutEase(progress),
+      );
+      sceneSourceRef.current = { graph: sourceGraph, layout: nextLayout };
+      commitScene(sourceGraph, nextLayout);
+      if (progress < 1) {
+        layoutTransitionFrameRef.current = requestAnimationFrame(frame);
+        return;
+      }
+      layoutTransitionFrameRef.current = null;
+      sceneSourceRef.current = { graph: sourceGraph, layout: toLayout };
+      setLayout(toLayout);
+      setLayoutPending(false);
+    };
+    layoutTransitionFrameRef.current = requestAnimationFrame(frame);
+  }, [commitScene, graph]);
+
   const retireScene = useCallback(() => {
     const generation = sceneGenerationRef.current + 1;
     sceneGenerationRef.current = generation;
@@ -455,8 +544,10 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       retireScene();
       setLayout(null);
       setLayoutError(null);
+      setLayoutPending(false);
       return;
     }
+    const previousLayout = sceneSourceRef.current?.layout ?? null;
     if (pinRelayoutRequestRef.current !== relayoutRequest) {
       pinRelayoutRequestRef.current = relayoutRequest;
       pinnedPositionsRef.current.clear();
@@ -475,6 +566,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       dragPreviewFrameRef.current = null;
     }
     let active = true;
+    setLayoutPending(true);
     sceneSourceRef.current = null;
     retireScene();
     setLayout(null);
@@ -501,24 +593,34 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
               initialTransform,
             );
           }
-          sceneSourceRef.current = {
-            graph: currentProjection,
-            layout: positionedLayout,
-          };
-          commitScene(currentProjection, positionedLayout);
-          setLayout(positionedLayout);
+          if (previousLayout && relayoutRequest > 0) {
+            animateLayout(currentProjection, previousLayout, positionedLayout);
+          } else {
+            sceneSourceRef.current = {
+              graph: currentProjection,
+              layout: positionedLayout,
+            };
+            commitScene(currentProjection, positionedLayout);
+            setLayout(positionedLayout);
+            setLayoutPending(false);
+          }
         }
       },
       (error: unknown) => {
         if (!active || error instanceof StaleLayoutRequestError) return;
         setLayoutError(error instanceof Error ? error.message : "无法计算图谱布局。");
+        setLayoutPending(false);
       },
     );
     return () => {
       active = false;
       client.reset();
+      if (layoutTransitionFrameRef.current !== null) {
+        cancelAnimationFrame(layoutTransitionFrameRef.current);
+        layoutTransitionFrameRef.current = null;
+      }
     };
-  }, [commitScene, graph, relayoutRequest, retireScene, viewport]);
+  }, [animateLayout, commitScene, graph, relayoutRequest, retireScene, viewport]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -562,8 +664,30 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     if (!nodeId || !layout || !zoomRef.current || !canvasRef.current) return;
     const entity = layout.entityNodes.find((node) => node.id === nodeId);
     if (!entity) return;
-    d3.select(canvasRef.current).call(zoomRef.current.transform, d3.zoomIdentity.translate(viewport.width / 2, viewport.height / 2).scale(transformRef.current.k).translate(-entity.x, -entity.y));
-  }, [focusNodeRequest, layout, viewport]);
+    const focusIds = new Set([
+      nodeId,
+      ...(focusIndex.neighborsByNode.get(nodeId) ?? []),
+    ]);
+    const focusPoints = layout.entityNodes.filter((node) => focusIds.has(node.id));
+    const minX = Math.min(...focusPoints.map((point) => point.x));
+    const maxX = Math.max(...focusPoints.map((point) => point.x));
+    const minY = Math.min(...focusPoints.map((point) => point.y));
+    const maxY = Math.max(...focusPoints.map((point) => point.y));
+    const focusPadding = 180;
+    const detailScale = Math.max(
+      MIN_ZOOM,
+      Math.min(
+        MAX_ZOOM,
+        Math.min(
+          (viewport.width - focusPadding) / Math.max(1, maxX - minX + focusPadding),
+          (viewport.height - focusPadding) / Math.max(1, maxY - minY + focusPadding),
+        ),
+      ),
+    );
+    const focusCenterX = (minX + maxX) / 2 || entity.x;
+    const focusCenterY = (minY + maxY) / 2 || entity.y;
+    d3.select(canvasRef.current).call(zoomRef.current.transform, d3.zoomIdentity.translate(viewport.width / 2, viewport.height / 2).scale(detailScale).translate(-focusCenterX, -focusCenterY));
+  }, [focusIndex, focusNodeRequest, layout, viewport]);
 
   useEffect(() => () => {
     sceneGenerationRef.current += 1;
@@ -578,6 +702,10 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     }
     animationFrameRef.current = null;
     dragPreviewFrameRef.current = null;
+    if (layoutTransitionFrameRef.current !== null) {
+      cancelAnimationFrame(layoutTransitionFrameRef.current);
+    }
+    layoutTransitionFrameRef.current = null;
     scheduledGenerationRef.current = null;
     layoutClientRef.current?.dispose();
     layoutClientRef.current = null;
@@ -919,6 +1047,15 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     rebuildCurrentScene();
   }, [acquireCanvasContext, rebuildCurrentScene]);
 
+  const clearGraphFocus = useCallback(() => {
+    setSelectedNode(null);
+    selectEntityEdge(null);
+    selectTableEdge(null);
+    setSearchQuery("");
+    setActiveSearchResultId(null);
+    requestFitView();
+  }, [requestFitView, selectEntityEdge, selectTableEdge, setSelectedNode]);
+
   const selectHit = useCallback((target: HitTarget | null) => {
     if (!target) {
       setSelectedNode(null);
@@ -958,8 +1095,18 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     currentInputs.fitViewRequest === fitViewRequest &&
     currentInputs.relayoutRequest === relayoutRequest &&
     sameTransform(currentInputs.transform, transformRef.current);
+  const isFocused = Boolean(
+    graphFocus.activeNodeId ||
+    selectedEntityEdgeId ||
+    selectedTableEdgeId,
+  );
+  const activeFocusLabel = graphFocus.activeNodeId
+    ? businessPresentations.get(graphFocus.activeNodeId)?.primary
+    : selectedEntityEdgeId || selectedTableEdgeId
+      ? "当前关系"
+      : null;
   return (
-    <div ref={containerRef} role="group" aria-label={graphSummary(entityCount, tableCount, edgeCount, fullEntityCount, fullEdgeCount)} className="relative h-full min-h-[420px] overflow-hidden rounded-xl border border-slate-700/70 bg-[#0d1926]">
+    <div ref={containerRef} role="group" aria-label={graphSummary(entityCount, tableCount, edgeCount, fullEntityCount, fullEdgeCount)} className="graph-canvas-frame relative h-full min-h-[420px] overflow-hidden rounded-xl border border-slate-700/70 bg-[#0d1926]">
       <canvas
         ref={canvasRef}
         role="img"
@@ -1036,10 +1183,29 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         }}
       />
       <span aria-live="polite" className="sr-only">{keyboardAnnouncement}</span>
+      {fullEntityCount <= 1_000 && <div className="graph-view-indicator">
+        {layoutPending ? (
+          <span className="graph-view-status">正在整理全网布局…</span>
+        ) : isFocused ? (
+          <div className="graph-focus-status">
+            <span>
+              <small>局部业务路径</small>
+              <strong>{activeFocusLabel ?? "已聚焦关系"}</strong>
+            </span>
+            <button type="button" onClick={clearGraphFocus}>回到总览</button>
+          </div>
+        ) : (
+          <div className="graph-overview-status">
+            <small>GLOBAL RELATION UNIVERSE</small>
+            <strong>总业务关系宇宙</strong>
+            <span>搜索或选中对象，进入可解释的局部业务路径</span>
+          </div>
+        )}
+      </div>}
       {canvasError && (
         <div
           role="alert"
-          className="absolute bottom-3 left-3 right-3 z-10 rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-800 shadow-sm"
+          className="graph-canvas-error absolute bottom-3 left-3 right-3 z-10 rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-800 shadow-sm"
         >
           <p>{canvasError}</p>
           <button
@@ -1054,7 +1220,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       {graph && (
         <form
           role="search"
-          className="absolute right-3 top-3 flex gap-1 rounded-md bg-slate-950/85 p-1.5"
+          className="graph-canvas-search absolute right-3 top-3 flex gap-1 rounded-md bg-slate-950/85 p-1.5"
           onSubmit={(event) => {
             event.preventDefault();
             focusSearchResult(0);
@@ -1063,6 +1229,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
           <input
             type="search"
             aria-label="查找实体"
+            placeholder="搜索业务对象"
             value={searchQuery}
             onChange={(event) => {
               setSearchQuery(event.target.value);
@@ -1085,7 +1252,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
           )}
           <button
             type="submit"
-            className="rounded bg-teal-400 px-2 py-1 text-xs font-semibold text-slate-950"
+            className="rounded bg-[var(--signal-cyan)] px-2 py-1 text-xs font-semibold text-[var(--graphite-950)]"
           >
             定位
           </button>

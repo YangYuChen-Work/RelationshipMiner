@@ -3,6 +3,7 @@ import GraphCanvas from "./GraphCanvas";
 import GraphToolbar from "./GraphToolbar";
 import GraphLegend from "./GraphLegend";
 import NodeDetailPanel from "./NodeDetailPanel";
+import DataChainStrip from "./DataChainStrip";
 import { useAnalysisStore } from "../store/analysis";
 
 function AnalysisNotice() {
@@ -18,7 +19,7 @@ function AnalysisNotice() {
     return (
       <section
         role="alert"
-        className="mx-3 mt-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
+        className="graph-notice mx-3 mt-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
       >
         <p className="font-semibold">对象关系暂时无法完成判断。</p>
         <p className="mt-1 text-xs">已保留当前可用的业务对象和关系，可稍后重试。</p>
@@ -56,7 +57,7 @@ function AnalysisNotice() {
       ? "已展示目前可用的业务关系，结果可能继续补充。"
       : "当前还没有可展示的业务关系。";
     return (
-      <section role="status" className="mx-3 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <section role="status" className="graph-notice mx-3 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
         <p className="font-semibold">{title}</p>
         <p className="mt-1 text-xs">{businessImpact}</p>
         <details className="mt-2 text-xs text-amber-800">
@@ -81,23 +82,24 @@ function AnalysisNotice() {
 
 export default function GraphWorkbench() {
   return (
-    <section data-business-workbench className="flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden bg-[#f3f5f7] text-slate-800">
+    <section data-business-workbench className="graph-workbench">
       <GraphToolbar />
       <AnalysisNotice />
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="business-graph-stage relative min-h-0 overflow-hidden border-r border-slate-200 bg-[#f3f5f7]">
+      <main className="graph-layout">
+        <section className="graph-stage-shell">
           <div className="h-full min-h-0 p-3 [&>div]:h-full [&_canvas]:h-full">
             <CanvasErrorBoundary>
               <GraphCanvas suppressStatusOverlay />
             </CanvasErrorBoundary>
           </div>
-          <div className="pointer-events-none absolute left-4 top-16 z-20 sm:left-6 sm:top-6">
+          <div className="graph-legend-anchor">
             <GraphLegend />
           </div>
         </section>
         <NodeDetailPanel />
       </main>
+      <DataChainStrip />
     </section>
   );
 }

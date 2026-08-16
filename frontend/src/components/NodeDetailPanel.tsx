@@ -109,7 +109,10 @@ function RelationDetails({
         <h4 className="font-semibold text-slate-100">
           {businessRelationLabel(relation)}
         </h4>
-        <span className="rounded-full bg-teal-400/10 px-2 py-1 text-xs text-teal-200">
+        <span
+          aria-label={`关系可靠程度：${confidenceBand(relation.confidence)}`}
+          className="rounded-full bg-teal-400/10 px-2 py-1 text-xs text-teal-200"
+        >
           {confidenceBand(relation.confidence)}
         </span>
       </div>
@@ -136,7 +139,7 @@ function RelationDetails({
       <Disclosure summary="技术依据">
         <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-slate-300">
           <div><dt className="text-slate-500">原始关系类型</dt><dd className="break-all font-mono">{relation.relation_type || "—"}</dd></div>
-          <div><dt className="text-slate-500">精确置信度</dt><dd>{confidenceLabel(relation.confidence)}</dd></div>
+          <div><dt className="text-slate-500">可靠程度数值</dt><dd>{confidenceLabel(relation.confidence)}</dd></div>
           <div><dt className="text-slate-500">方向</dt><dd>{relation.direction}</dd></div>
           <div><dt className="text-slate-500">强度</dt><dd>{relation.strength}</dd></div>
           <div><dt className="text-slate-500">源 class_name</dt><dd className="break-all font-mono">{source.class_name ?? "—"}</dd></div>
@@ -242,7 +245,7 @@ function TableEdgeDetails({
       </section>
       <dl className="grid grid-cols-2 gap-3 rounded-lg border border-slate-700/70 p-3 text-sm">
         <div><dt className="text-xs text-slate-400">业务关系</dt><dd>{labels}</dd></div>
-        <div><dt className="text-xs text-slate-400">可信程度</dt><dd>{confidenceBand(edge.average_confidence)}</dd></div>
+        <div><dt className="text-xs text-slate-400">关系可靠程度</dt><dd>{confidenceBand(edge.average_confidence)}</dd></div>
         <div><dt className="text-xs text-slate-400">明确关系</dt><dd>{edge.strong_count}</dd></div>
         <div><dt className="text-xs text-slate-400">可能有关</dt><dd>{edge.weak_count}</dd></div>
         <div><dt className="text-xs text-slate-400">支持对象对</dt><dd>{edge.entity_edge_count}</dd></div>
@@ -290,7 +293,7 @@ function TableEdgeDetails({
           <div><dt className="text-slate-500">源表 ID</dt><dd className="font-mono">{edge.source_table}</dd></div>
           <div><dt className="text-slate-500">目标表 ID</dt><dd className="font-mono">{edge.target_table}</dd></div>
           <div><dt className="text-slate-500">原始关系类型</dt><dd className="font-mono">{edge.relation_types.join(" · ") || "—"}</dd></div>
-          <div><dt className="text-slate-500">精确平均置信度</dt><dd>{confidenceLabel(edge.average_confidence)}</dd></div>
+          <div><dt className="text-slate-500">平均可靠程度数值</dt><dd>{confidenceLabel(edge.average_confidence)}</dd></div>
           <div><dt className="text-slate-500">支持关系 ID</dt><dd className="break-all font-mono">{edge.supporting_entity_edges.join(" · ") || "—"}</dd></div>
         </dl>
       </Disclosure>
