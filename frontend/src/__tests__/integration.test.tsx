@@ -1057,7 +1057,9 @@ describe("Integration: full user flow", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("正在读取业务数据")).toBeInTheDocument();
+      expect(
+        document.querySelector(".analysis-progress-copy"),
+      ).toHaveTextContent("正在读取业务数据");
       expect(screen.getByText("10%")).toBeInTheDocument();
     });
 
@@ -1068,7 +1070,9 @@ describe("Integration: full user flow", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("正在整理业务对象")).toBeInTheDocument();
+      expect(
+        document.querySelector(".analysis-progress-copy"),
+      ).toHaveTextContent("正在整理业务对象");
     });
 
     await ws.sendMessage({
@@ -1090,7 +1094,9 @@ describe("Integration: full user flow", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("正在判断对象关系")).toBeInTheDocument();
+      expect(
+        document.querySelector(".analysis-progress-copy"),
+      ).toHaveTextContent("正在判断对象关系");
       expect(screen.getByText("80%")).toBeInTheDocument();
     });
 
@@ -1814,7 +1820,9 @@ describe("Integration: full user flow", () => {
       progress: 0.6,
     });
     await waitFor(() => {
-      expect(screen.getByText("正在寻找可能有关的对象")).toBeInTheDocument();
+      expect(
+        document.querySelector(".analysis-progress-copy"),
+      ).toHaveTextContent("正在寻找可能有关的对象");
       expect(screen.getByText("60%")).toBeInTheDocument();
     });
     expect(useAnalysisStore.getState().activeSocket).toBe(socket);

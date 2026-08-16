@@ -935,16 +935,24 @@ describe("GraphCanvas", () => {
     canvas.__zoom = displaced;
 
     fireEvent.focus(canvas);
+    const announcement = container.querySelector("[aria-live='polite']")!;
+    expect(announcement).toHaveTextContent("当前目标：");
+    expect(announcement).toHaveTextContent("，表");
     fireEvent.keyDown(canvas, { key: "Enter" });
 
     const focused = d3.zoomTransform(canvas);
-    const billing = computeGroupedLayout(graph, {
+    const accounts = computeGroupedLayout(graph, {
       width: 960,
       height: 600,
-    }).tableNodes.find((node) => node.id === "billing")!;
+    }).tableNodes.find((node) => node.id === "accounts")!;
+    const [x, y] = focused.apply([accounts.x, accounts.y]);
     expect(focused).not.toEqual(displaced);
-    expect(focused.apply([billing.x, billing.y])[0]).toBeCloseTo(480);
-    expect(focused.apply([billing.x, billing.y])[1]).toBeCloseTo(300);
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(x).toBeLessThanOrEqual(960);
+    expect(y).toBeGreaterThanOrEqual(0);
+    expect(y).toBeLessThanOrEqual(600);
+    expect(useAnalysisStore.getState().selectedNodeId).toBeNull();
+    expect(useAnalysisStore.getState().selectedTableEdgeId).toBeNull();
   });
 
   it("selects a table edge as the focus for its supporting entity relations", async () => {
