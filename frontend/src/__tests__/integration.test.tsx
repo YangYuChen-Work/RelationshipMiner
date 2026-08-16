@@ -19,6 +19,7 @@ import type {
 } from "../api/analysis";
 import { computeGroupedLayout, type GraphLayout } from "../graph/layout";
 import { quadraticPoint } from "../graph/edgeGeometry";
+import { hitTest } from "../graph/hitTest";
 import { buildScene } from "../graph/scene";
 import { buildBusinessTablePresentationIndex } from "../graph/businessTables";
 import { useAnalysisStore } from "../store/analysis";
@@ -1246,10 +1247,18 @@ describe("Integration: full user flow", () => {
 
     const search = screen.getByRole("searchbox", { name: "查找实体" });
     fireEvent.change(search, { target: { value: "通信天线装配 GY0000203" } });
+    const sceneGenerationBeforeSearch = Number(
+      canvas.getAttribute("data-scene-generation"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "定位" }));
     await waitFor(() => {
       expect(useAnalysisStore.getState().selectedNodeId)
         .toBe("satellite_assembly_records:1");
+    });
+    await waitFor(() => {
+      expect(Number(canvas.getAttribute("data-scene-generation")))
+        .toBeGreaterThan(sceneGenerationBeforeSearch);
+      expect(canvas).toHaveAttribute("data-scene-ready", "true");
     });
     expect(screen.getByRole("heading", { name: "通信天线装配" }))
       .toBeInTheDocument();
@@ -1276,7 +1285,13 @@ describe("Integration: full user flow", () => {
     const edge = scene.entityEdges.find((item) =>
       item.id === "satellite_assembly_records:1--satellite_assembly_records:3"
     )!;
-    const edgePoint = quadraticPoint(edge.geometry, 0.5);
+    // The table aggregate marker is intentionally centered on this two-node
+    // component, so exercise the unobstructed part of the relationship curve.
+    const edgePoint = quadraticPoint(edge.geometry, 0.25);
+    expect(hitTest(scene, edgePoint)).toEqual({
+      kind: "entity-edge",
+      id: "satellite_assembly_records:1--satellite_assembly_records:3",
+    });
     fireEvent.click(canvas, { clientX: edgePoint.x, clientY: edgePoint.y });
 
     await waitFor(() => {

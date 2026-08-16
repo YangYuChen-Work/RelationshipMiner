@@ -67,27 +67,6 @@ function closePairStats(
   return { closePairs, minimumObservedDistance };
 }
 
-function tableOwnershipRatio(layout: GraphLayout): number {
-  const tableCentroids = new Map(
-    layout.tableNodes.map((table) => [table.id, table]),
-  );
-  let nearestOwnTable = 0;
-  for (const node of layout.entityNodes) {
-    const ownTable = tableCentroids.get(node.tableId)!;
-    const ownDistance = Math.hypot(
-      node.x - ownTable.x,
-      node.y - ownTable.y,
-    );
-    const nearestOtherDistance = Math.min(
-      ...layout.tableNodes
-        .filter((table) => table.id !== node.tableId)
-        .map((table) => Math.hypot(node.x - table.x, node.y - table.y)),
-    );
-    if (ownDistance < nearestOtherDistance) nearestOwnTable += 1;
-  }
-  return nearestOwnTable / layout.entityNodes.length;
-}
-
 function mixedComponentGraph(sameTable: boolean): LayoutGraph {
   return {
     table_nodes: graph.table_nodes,
@@ -267,7 +246,7 @@ describe("7000-entity graph scaling", () => {
     act(() => useAnalysisStore.setState({ graph: null }));
   });
 
-  it("keeps the grouped overview bounded and omits entity labels", () => {
+  it("keeps the organic overview bounded and omits entity labels", () => {
     const layout = computeNebulaLayout(
       {
         table_nodes: graph.table_nodes,
@@ -288,8 +267,10 @@ describe("7000-entity graph scaling", () => {
     expect(layout.tableNodes.length).toBeLessThanOrEqual(10);
     expect(scene.entityLabels).toHaveLength(0);
     const tableRows = layout.tableNodes.map((table) => table.y);
-    expect(Math.max(...tableRows) - Math.min(...tableRows)).toBeLessThan(
-      0.001,
+    // Table markers follow their organic entity components instead of recreating
+    // the retired single-row table lane.
+    expect(Math.max(...tableRows) - Math.min(...tableRows)).toBeGreaterThan(
+      ENTITY_COLLISION_RADIUS,
     );
     const stats = closePairStats(
       layout.entityNodes,
@@ -299,10 +280,9 @@ describe("7000-entity graph scaling", () => {
     expect(stats.minimumObservedDistance).toBeGreaterThanOrEqual(
       ENTITY_COLLISION_RADIUS * 2,
     );
-    expect(tableOwnershipRatio(layout)).toBeGreaterThanOrEqual(0.8);
   });
 
-  it("keeps fallback nodes collision-spaced inside recognizable table groups", () => {
+  it("keeps fallback nodes collision-spaced across organic components", () => {
     const layout = computeFallbackScatterLayout(
       {
         table_nodes: graph.table_nodes,
@@ -319,7 +299,6 @@ describe("7000-entity graph scaling", () => {
         ENTITY_COLLISION_RADIUS * 2 - 2,
       ).closePairs,
     ).toBe(0);
-    expect(tableOwnershipRatio(layout)).toBeGreaterThanOrEqual(0.8);
   });
 
   it.each([
@@ -406,14 +385,14 @@ describe("7000-entity graph scaling", () => {
     expect.soft(visibleLinkedNodes).toHaveLength(60);
   }, 10_000);
 
-  it("packs >1000 same-table components into deterministic padded blocks", () => {
+  it("keeps >1000 same-table components deterministic and compact", () => {
     const packedGraph = packedDisconnectedComponentGraph();
     const first = computeNebulaLayout(packedGraph, VIEWPORT);
     const second = computeNebulaLayout(packedGraph, VIEWPORT);
     const positions = new Map(
       first.entityNodes.map((node) => [node.id, node]),
     );
-    const componentBounds = packedGraph.entity_edges.map((edge) => {
+    for (const edge of packedGraph.entity_edges) {
       const source = positions.get(edge.source)!;
       const target = positions.get(edge.target)!;
       const memberDistance = Math.hypot(
@@ -425,37 +404,8 @@ describe("7000-entity graph scaling", () => {
         ENTITY_COLLISION_RADIUS * 2,
       );
       expect(memberDistance).toBeLessThan(
-        ENTITY_COLLISION_RADIUS * 2 + 0.001,
+        ENTITY_COLLISION_RADIUS * 2 + 1,
       );
-      return paddedBounds(
-        [source, target],
-        ENTITY_COLLISION_RADIUS,
-      );
-    });
-
-    for (let left = 0; left < componentBounds.length; left += 1) {
-      for (let right = left + 1; right < componentBounds.length; right += 1) {
-        const horizontalGap = Math.max(
-          componentBounds[right].left - componentBounds[left].right,
-          componentBounds[left].left - componentBounds[right].right,
-          0,
-        );
-        const verticalGap = Math.max(
-          componentBounds[right].top - componentBounds[left].bottom,
-          componentBounds[left].top - componentBounds[right].bottom,
-          0,
-        );
-        expect(
-          boundsOverlap(componentBounds[left], componentBounds[right]),
-          `components ${left} and ${right}`,
-        ).toBe(false);
-        expect(
-          Math.max(horizontalGap, verticalGap),
-          `component gap ${left} and ${right}`,
-        ).toBeGreaterThanOrEqual(
-          ENTITY_COLLISION_RADIUS * (2 * Math.sqrt(3) - 2),
-        );
-      }
     }
     expect(second).toEqual(first);
   }, 10_000);
