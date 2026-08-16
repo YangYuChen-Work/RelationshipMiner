@@ -1091,6 +1091,103 @@ describe("GraphCanvas", () => {
     expect(d3.zoomTransform(canvas)).toEqual(d3.zoomIdentity);
   });
 
+  it("keeps the 560ms relayout transition alive and cancels its pending frame before scheduling the next one", async () => {
+    vi.stubEnv("MODE", "development");
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    const request = vi.fn((callback: FrameRequestCallback) => {
+      const id = ++nextFrame;
+      callbacks.set(id, callback);
+      return id;
+    });
+    const cancel = vi.fn((id: number) => callbacks.delete(id));
+    vi.stubGlobal("requestAnimationFrame", request);
+    vi.stubGlobal("cancelAnimationFrame", cancel);
+    vi.spyOn(performance, "now").mockReturnValue(0);
+
+    try {
+      render(<GraphCanvas />);
+      await waitFor(() => expect(callbacks.size).toBe(1));
+      const [initialFrame, initialDraw] = [...callbacks.entries()][0];
+      callbacks.delete(initialFrame);
+      await act(async () => {
+        initialDraw(0);
+        await Promise.resolve();
+      });
+      await ready();
+
+      act(() => useAnalysisStore.getState().requestRelayout());
+      await waitFor(() => expect(callbacks.size).toBe(1));
+      const [firstTransitionFrame, firstTransition] = [...callbacks.entries()][0];
+      callbacks.delete(firstTransitionFrame);
+      await act(async () => {
+        firstTransition(500);
+        await Promise.resolve();
+      });
+
+      expect(callbacks.size).toBe(2);
+      const pendingTransitionFrame = Math.max(...callbacks.keys());
+
+      act(() => useAnalysisStore.getState().requestRelayout());
+      await waitFor(() => expect(callbacks.size).toBe(1));
+      const nextTransitionFrame = [...callbacks.keys()][0];
+      const cancelCall = cancel.mock.calls.findIndex(([id]) =>
+        id === pendingTransitionFrame
+      );
+      const scheduleCall = request.mock.results.findIndex((result) =>
+        result.value === nextTransitionFrame
+      );
+
+      expect(cancelCall).toBeGreaterThanOrEqual(0);
+      expect(cancel.mock.invocationCallOrder[cancelCall]).toBeLessThan(
+        request.mock.invocationCallOrder[scheduleCall],
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("continues focused motion only while active and cancels its frame when focus clears", async () => {
+    vi.stubEnv("MODE", "development");
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    const request = vi.fn((callback: FrameRequestCallback) => {
+      const id = ++nextFrame;
+      callbacks.set(id, callback);
+      return id;
+    });
+    const cancel = vi.fn((id: number) => callbacks.delete(id));
+    vi.stubGlobal("requestAnimationFrame", request);
+    vi.stubGlobal("cancelAnimationFrame", cancel);
+
+    try {
+      render(<GraphCanvas />);
+      await waitFor(() => expect(callbacks.size).toBe(1));
+      const [initialFrame, initialDraw] = [...callbacks.entries()][0];
+      callbacks.delete(initialFrame);
+      await act(async () => {
+        initialDraw(0);
+        await Promise.resolve();
+      });
+      await ready();
+      expect(callbacks.size).toBe(0);
+
+      act(() => useAnalysisStore.getState().setSelectedNode("a"));
+      await waitFor(() => expect(callbacks.size).toBe(2));
+      const [motionFrame, motionCallback] = [...callbacks.entries()]
+        .sort(([left], [right]) => left - right)[0];
+      callbacks.delete(motionFrame);
+      act(() => motionCallback(1200));
+      const nextMotionFrame = Math.max(...callbacks.keys());
+
+      act(() => useAnalysisStore.getState().setSelectedNode(null));
+      expect(cancel).toHaveBeenCalledWith(nextMotionFrame);
+      expect(callbacks.size).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("uses DPR backing dimensions and coalesces rendering into one animation frame", async () => {
     vi.stubGlobal("devicePixelRatio", 2);
     const request = vi.fn((callback: FrameRequestCallback) => {
@@ -1289,8 +1386,8 @@ describe("GraphCanvas", () => {
       confidenceThreshold: 0,
     });
 
-    expect(overview.layerOpacity.tableEdges)
-      .toBeGreaterThan(overview.layerOpacity.entityEdges);
+    expect(overview.layerOpacity.entityEdges)
+      .toBeGreaterThan(overview.layerOpacity.tableEdges);
     expect(work.layerOpacity.entityEdges)
       .toBeGreaterThan(work.layerOpacity.tableEdges);
 

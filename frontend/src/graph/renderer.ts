@@ -25,6 +25,7 @@ const ACTIVE_NODE_OUTLINE = "#c7a675";
 const UNRELATED_NODE_OPACITY = 0.07;
 const UNRELATED_EDGE_OPACITY = 0.028;
 const FOCUS_EDGE_WIDTH = 2.2;
+const FOCUS_PULSE_DASH = [7, 21];
 const EMPTY_EDGE_IDS: ReadonlySet<string> = new Set();
 
 export interface GraphDragPreview {
@@ -40,6 +41,7 @@ export interface DrawGraphOptions {
   readonly focus: GraphFocus;
   readonly selectedEntityEdgeId: string | null;
   readonly selectedTableEdgeId: string | null;
+  readonly motionPhase?: number;
   readonly dragPreview?: {
     readonly preview: GraphDragPreview;
     readonly screen: ScreenPoint;
@@ -163,6 +165,18 @@ function drawCurve(
   stroke: string,
   width: number,
 ): void {
+  traceCurve(context, edge);
+  context.strokeStyle = stroke;
+  context.lineWidth = width;
+  context.setLineDash?.(edge.lineStyle === "dashed" ? [6, 5] : []);
+  context.stroke();
+  context.setLineDash?.([]);
+}
+
+function traceCurve(
+  context: CanvasRenderingContext2D,
+  edge: SceneEdge,
+): void {
   context.beginPath();
   context.moveTo(edge.geometry.from.x, edge.geometry.from.y);
   context.quadraticCurveTo?.(
@@ -171,11 +185,43 @@ function drawCurve(
     edge.geometry.to.x,
     edge.geometry.to.y,
   );
+}
+
+function normalizeMotionPhase(phase: number | undefined): number {
+  if (!Number.isFinite(phase)) return 0;
+  return ((phase! % 1) + 1) % 1;
+}
+
+function drawFocusedEdgePulse(
+  context: CanvasRenderingContext2D,
+  edges: readonly SceneEdge[],
+  stroke: string,
+  motionPhase: number,
+): void {
+  if (edges.length === 0) return;
+  context.save();
+  context.globalAlpha = 0.72;
   context.strokeStyle = stroke;
-  context.lineWidth = width;
-  context.setLineDash?.(edge.lineStyle === "dashed" ? [6, 5] : []);
-  context.stroke();
+  context.lineWidth = 1.1;
+  context.lineCap = "round";
+  context.setLineDash?.(FOCUS_PULSE_DASH);
+  context.lineDashOffset = motionPhase === 0
+    ? 0
+    : -motionPhase * (FOCUS_PULSE_DASH[0] + FOCUS_PULSE_DASH[1]);
+  context.shadowColor = stroke;
+  context.shadowBlur = 4;
+  for (const edge of edges) {
+    traceCurve(context, edge);
+    context.stroke();
+  }
+  context.restore();
+  // Some test and embedded Canvas implementations do not restore properties.
+  context.globalAlpha = 1;
+  context.lineCap = "butt";
   context.setLineDash?.([]);
+  context.lineDashOffset = 0;
+  context.shadowBlur = 0;
+  context.shadowColor = "transparent";
 }
 
 function arrowTip(edge: SceneEdge) {
@@ -247,7 +293,10 @@ function drawEntityNode(
   context: CanvasRenderingContext2D,
   entity: SceneEntityNode,
   active: boolean,
+  motionPhase = 0,
+  showActiveHalo = true,
 ): void {
+  if (active && showActiveHalo) drawActiveNodeHalo(context, entity, motionPhase);
   context.beginPath();
   context.arc(
     entity.screen.x,
@@ -263,16 +312,50 @@ function drawEntityNode(
   context.stroke();
 }
 
+function drawActiveNodeHalo(
+  context: CanvasRenderingContext2D,
+  entity: SceneEntityNode,
+  motionPhase: number,
+): void {
+  const pulse = Math.sin(motionPhase * Math.PI * 2);
+  const innerRadius = entity.screenRadius * (1.22 + pulse * 0.05);
+  const outerRadius = entity.screenRadius * (1.46 - pulse * 0.04);
+  context.save();
+  context.lineWidth = 1.3;
+  context.globalAlpha = 0.3;
+  context.strokeStyle = ACTIVE_NODE_OUTLINE;
+  context.beginPath();
+  context.arc(entity.screen.x, entity.screen.y, innerRadius, 0, Math.PI * 2);
+  context.stroke();
+  context.globalAlpha = 0.16;
+  context.strokeStyle = ENTITY_SELECTED;
+  context.beginPath();
+  context.arc(entity.screen.x, entity.screen.y, outerRadius, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+  // Some test and embedded Canvas implementations do not restore properties.
+  context.globalAlpha = 1;
+  context.lineWidth = 1;
+}
+
 function drawEntityNodes(
   context: CanvasRenderingContext2D,
   nodes: readonly SceneEntityNode[],
   alpha: number,
   activeNodeId: string | null,
+  motionPhase = 0,
+  showActiveHalo = true,
 ): void {
   if (nodes.length === 0) return;
   semanticLayer(context, alpha, () => {
     for (const node of nodes) {
-      drawEntityNode(context, node, node.id === activeNodeId);
+      drawEntityNode(
+        context,
+        node,
+        node.id === activeNodeId,
+        motionPhase,
+        showActiveHalo,
+      );
     }
   });
 }
@@ -423,6 +506,7 @@ export function drawGraphScene(
   options: DrawGraphOptions,
 ): void {
   const state = focusedDrawState(scene, options);
+  const motionPhase = normalizeMotionPhase(options.motionPhase);
   const excludedNodeId = options.dragPreview?.preview.node.id ?? null;
   const excludedEdgeIds = options.dragPreview?.preview.incidentEdgeIds;
   const entityEdges = excludedEdgeIds
@@ -537,8 +621,22 @@ export function drawGraphScene(
     FOCUS_EDGE_WIDTH,
     1,
   );
+  drawFocusedEdgePulse(
+    context,
+    relatedTableEdges,
+    TABLE_EDGE,
+    motionPhase,
+  );
+  drawFocusedEdgePulse(
+    context,
+    relatedEntityEdges,
+    ENTITY_SELECTED,
+    motionPhase,
+  );
 
-  if (activeNode) drawEntityNodes(context, [activeNode], 1, activeNode.id);
+  if (activeNode) {
+    drawEntityNodes(context, [activeNode], 1, activeNode.id, motionPhase);
+  }
 
   const relatedLabels = entityLabels
     .filter((label) =>
@@ -651,7 +749,7 @@ export function drawGraphDragPreview(
     ...preview.node,
     screen: { ...screen },
   };
-  drawEntityNodes(context, [node], 1, node.id);
+  drawEntityNodes(context, [node], 1, node.id, 0, false);
   semanticLayer(context, 1, () =>
     drawEntityLabel(context, {
       nodeId: node.id,

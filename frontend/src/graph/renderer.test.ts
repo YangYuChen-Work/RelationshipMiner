@@ -85,6 +85,10 @@ interface DrawRecord {
   kind: "fill" | "stroke" | "fillRect" | "fillText";
   alpha: number;
   lineWidth: number;
+  lineDash?: number[];
+  lineDashOffset?: number;
+  shadowBlur?: number;
+  shadowColor?: string;
   fillStyle?: string | CanvasGradient | CanvasPattern;
   strokeStyle?: string | CanvasGradient | CanvasPattern;
   textAlign?: CanvasTextAlign;
@@ -93,6 +97,7 @@ interface DrawRecord {
   x?: number;
   y?: number;
   arc?: { x: number; y: number };
+  radius?: number;
   pathKind?: "nodeArc" | "backdropArc" | "path";
 }
 
@@ -100,16 +105,20 @@ function recordingContext() {
   const records: DrawRecord[] = [];
   const nodeFills: { x: number; y: number; alpha: number }[] = [];
   let lastArc: { x: number; y: number } | null = null;
+  let lastArcRadius: number | undefined;
   let lastPathKind: DrawRecord["pathKind"] = "path";
+  let lineDash: number[] = [];
   const context = {
     arc: vi.fn((x: number, y: number, radius: number, startAngle: number, endAngle: number) => {
       lastArc = { x, y };
+      lastArcRadius = radius;
       lastPathKind = startAngle === 0 && endAngle === Math.PI * 2 && radius > 40
         ? "backdropArc"
         : "nodeArc";
     }),
     beginPath: vi.fn(() => {
       lastArc = null;
+      lastArcRadius = undefined;
       lastPathKind = "path";
     }),
     clearRect: vi.fn(),
@@ -121,6 +130,7 @@ function recordingContext() {
         lineWidth: this.lineWidth,
         fillStyle: this.fillStyle,
         arc: lastArc ?? undefined,
+        radius: lastArcRadius,
         pathKind: lastPathKind,
       });
       if (lastArc) {
@@ -159,14 +169,19 @@ function recordingContext() {
     quadraticCurveTo: vi.fn(),
     restore: vi.fn(),
     save: vi.fn(),
-    setLineDash: vi.fn(),
+    setLineDash: vi.fn((segments: number[]) => { lineDash = [...segments]; }),
     stroke: vi.fn(function (this: CanvasRenderingContext2D) {
       records.push({
         kind: "stroke",
         alpha: this.globalAlpha,
         lineWidth: this.lineWidth,
+        lineDash,
+        lineDashOffset: this.lineDashOffset,
+        shadowBlur: this.shadowBlur,
+        shadowColor: this.shadowColor,
         strokeStyle: this.strokeStyle,
         arc: lastArc ?? undefined,
+        radius: lastArcRadius,
         pathKind: lastPathKind,
       });
     }),
@@ -175,7 +190,10 @@ function recordingContext() {
     globalAlpha: 1,
     lineCap: "butt" as CanvasLineCap,
     lineJoin: "miter" as CanvasLineJoin,
+    lineDashOffset: 0,
     lineWidth: 1,
+    shadowBlur: 0,
+    shadowColor: "transparent",
     strokeStyle: "",
     textAlign: "start" as CanvasTextAlign,
     textBaseline: "alphabetic" as CanvasTextBaseline,
@@ -286,6 +304,71 @@ describe("drawGraphScene", () => {
       lineWidth: 3,
       arc: alpha.screen,
     }));
+  });
+
+  it("pulses focused entity edges and halos the active node without changing faded curves or label text", () => {
+    const duplicateGraph: SemanticGraphData = {
+      ...graph,
+      entity_nodes: graph.entity_nodes.map((entity) => {
+        if (entity.id === "a") return { ...entity, display_code: "ALPHA-A" };
+        if (entity.id === "b") {
+          return { ...entity, display_name: "Alpha", display_code: "ALPHA-B" };
+        }
+        return entity;
+      }),
+    };
+    const currentScene = buildScene({
+      graph: duplicateGraph,
+      layout: computeGroupedLayout(duplicateGraph, { width: 960, height: 600 }),
+      transform: { k: 1.4, x: 120, y: 80 },
+      confidenceThreshold: 0,
+    });
+    const alpha = currentScene.entityDots.find((node) => node.id === "a")!;
+    const atRest = recordingContext();
+    const midPulse = recordingContext();
+
+    drawGraphScene(atRest.context, currentScene, {
+      ...options("a"),
+      motionPhase: 0,
+    });
+    drawGraphScene(midPulse.context, currentScene, {
+      ...options("a"),
+      motionPhase: 0.5,
+    });
+
+    const restPulse = atRest.records.find((record) =>
+      record.kind === "stroke" &&
+      record.strokeStyle === "#5edbd1" &&
+      record.lineDash?.length
+    );
+    const movingPulse = midPulse.records.find((record) =>
+      record.kind === "stroke" &&
+      record.strokeStyle === "#5edbd1" &&
+      record.lineDash?.length
+    );
+    expect(restPulse?.lineDashOffset).toBe(0);
+    expect(movingPulse?.lineDashOffset).not.toBe(0);
+    expect(movingPulse?.shadowBlur).toBeGreaterThan(0);
+    expect(midPulse.records).toContainEqual(expect.objectContaining({
+      kind: "stroke",
+      strokeStyle: "#c7a675",
+      arc: alpha.screen,
+      radius: expect.any(Number),
+    }));
+    expect(midPulse.records.some((record) =>
+      record.kind === "stroke" &&
+      record.arc?.x === alpha.screen.x &&
+      record.arc?.y === alpha.screen.y &&
+      (record.radius ?? 0) > alpha.screenRadius
+    )).toBe(true);
+    expect(midPulse.records.some((record) =>
+      record.kind === "stroke" && record.alpha === 0.028
+    )).toBe(true);
+    const labels = midPulse.records
+      .filter((record) => record.kind === "fillText")
+      .map((record) => record.text);
+    expect(labels).toContain("Alpha");
+    expect(labels).toContain("ALPHA-A");
   });
 
   it("uses semantic layer opacity when there is no focus", () => {
@@ -479,12 +562,12 @@ describe("drawGraphScene", () => {
       incident.geometry.to.x,
       incident.geometry.to.y,
     ]);
-    expect(curves).toContainEqual([
-      incident.geometry.control.x + 50,
-      incident.geometry.control.y + 30,
-      incident.geometry.to.x,
-      incident.geometry.to.y,
-    ]);
+    expect(curves.some(([controlX, controlY, toX, toY]) =>
+      Math.abs(controlX - (incident.geometry.control.x + 50)) < 0.001 &&
+      Math.abs(controlY - (incident.geometry.control.y + 30)) < 0.001 &&
+      Math.abs(toX - incident.geometry.to.x) < 0.001 &&
+      Math.abs(toY - incident.geometry.to.y) < 0.001
+    )).toBe(true);
     expect(curves).toContainEqual([
       unrelated.geometry.control.x,
       unrelated.geometry.control.y,

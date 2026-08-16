@@ -36,6 +36,7 @@ const FALLBACK_WIDTH = 960;
 const FALLBACK_HEIGHT = 600;
 const MIN_ZOOM = 0.02;
 const MAX_ZOOM = 2.5;
+const FOCUS_MOTION_CYCLE_MS = 2400;
 const CANVAS_CONTEXT_ERROR =
   "无法创建 Canvas 2D 上下文，当前浏览器不支持图谱画布。";
 
@@ -185,6 +186,12 @@ function pointFromEvent(canvas: HTMLCanvasElement, event: PointerEvent | MouseEv
   return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 }
 
+function reducedMotionRequested(): boolean {
+  return import.meta.env.MODE === "test" || (
+    window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
+  );
+}
+
 export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -206,6 +213,8 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   } | null>(null);
   const transformRef = useRef<GraphTransform>({ k: 1, x: 0, y: 0 });
   const animationFrameRef = useRef<number | null>(null);
+  const motionAnimationFrameRef = useRef<number | null>(null);
+  const motionPhaseRef = useRef(0);
   const lastHitRef = useRef<HitTarget | null>(null);
   const lastHitGenerationRef = useRef<number | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
@@ -307,6 +316,10 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
   focusRef.current = graphFocus;
   selectedEntityEdgeRef.current = selectedEntityEdgeId;
   selectedTableEdgeRef.current = selectedTableEdgeId;
+  const hasFocusedMotion =
+    graphFocus.activeNodeId !== null ||
+    selectedEntityEdgeId !== null ||
+    selectedTableEdgeId !== null;
   const searchableEntities = useMemo(
     () => (projectedGraph?.entity_nodes ?? []).flatMap((entity) => {
       const presentation = businessPresentations.get(entity.id);
@@ -386,6 +399,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         focus: focusRef.current,
         selectedEntityEdgeId: selectedEntityEdgeRef.current,
         selectedTableEdgeId: selectedTableEdgeRef.current,
+        motionPhase: motionPhaseRef.current,
       });
       drawnGenerationRef.current = generation;
       if (keyboardTargetRef.current) {
@@ -395,6 +409,36 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     });
     if (animationFrameRef.current === -1) animationFrameRef.current = frame;
   }, [acquireCanvasContext]);
+
+  useEffect(() => {
+    if (!hasFocusedMotion || !sceneRef.current || reducedMotionRequested()) {
+      motionPhaseRef.current = 0;
+      return;
+    }
+    let active = true;
+    const startedAt = performance.now() - motionPhaseRef.current * FOCUS_MOTION_CYCLE_MS;
+    const frame = (now: number) => {
+      if (!active || reducedMotionRequested()) {
+        motionAnimationFrameRef.current = null;
+        motionPhaseRef.current = 0;
+        invalidate();
+        return;
+      }
+      motionPhaseRef.current = ((now - startedAt) % FOCUS_MOTION_CYCLE_MS) /
+        FOCUS_MOTION_CYCLE_MS;
+      invalidate();
+      motionAnimationFrameRef.current = requestAnimationFrame(frame);
+    };
+    motionAnimationFrameRef.current = requestAnimationFrame(frame);
+    return () => {
+      active = false;
+      if (motionAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(motionAnimationFrameRef.current);
+      }
+      motionAnimationFrameRef.current = null;
+      motionPhaseRef.current = 0;
+    };
+  }, [hasFocusedMotion, invalidate, sceneGeneration]);
 
   useEffect(() => {
     hoveredNodeRef.current = hoveredNodeId;
@@ -446,10 +490,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       cancelAnimationFrame(layoutTransitionFrameRef.current);
       layoutTransitionFrameRef.current = null;
     }
-    const reducedMotion = import.meta.env.MODE === "test" || (
-      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
-    );
-    if (reducedMotion) {
+    if (reducedMotionRequested()) {
       sceneSourceRef.current = { graph: sourceGraph, layout: toLayout };
       commitScene(sourceGraph, toLayout);
       setLayout(toLayout);
@@ -457,7 +498,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       return;
     }
     const startedAt = performance.now();
-    const duration = 460;
+    const duration = 560;
     const frame = (now: number) => {
       const progress = Math.min(1, (now - startedAt) / duration);
       const nextLayout = interpolateLayout(
@@ -485,7 +526,12 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     if (animationFrameRef.current !== null && animationFrameRef.current !== -1) {
       cancelAnimationFrame(animationFrameRef.current);
     }
+    if (motionAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(motionAnimationFrameRef.current);
+    }
     animationFrameRef.current = null;
+    motionAnimationFrameRef.current = null;
+    motionPhaseRef.current = 0;
     scheduledGenerationRef.current = null;
     sceneRef.current = null;
     drawnGenerationRef.current = null;
@@ -703,6 +749,9 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
     if (animationFrameRef.current !== null && animationFrameRef.current !== -1) {
       cancelAnimationFrame(animationFrameRef.current);
     }
+    if (motionAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(motionAnimationFrameRef.current);
+    }
     if (
       dragPreviewFrameRef.current !== null &&
       dragPreviewFrameRef.current !== -1
@@ -710,6 +759,8 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
       cancelAnimationFrame(dragPreviewFrameRef.current);
     }
     animationFrameRef.current = null;
+    motionAnimationFrameRef.current = null;
+    motionPhaseRef.current = 0;
     dragPreviewFrameRef.current = null;
     if (layoutTransitionFrameRef.current !== null) {
       cancelAnimationFrame(layoutTransitionFrameRef.current);
@@ -763,6 +814,7 @@ export default function GraphCanvas({ suppressStatusOverlay = false }: GraphCanv
         focus: focusRef.current,
         selectedEntityEdgeId: selectedEntityEdgeRef.current,
         selectedTableEdgeId: selectedTableEdgeRef.current,
+        motionPhase: motionPhaseRef.current,
         dragPreview: {
           preview: preview.preview,
           screen: preview.screen,
